@@ -30,8 +30,11 @@ impl Db {
 
     pub fn reopen(&self) -> Result<(), String> {
         let new = super::open_db(&self.path)?;
-        let mut guard = self.conn.lock();
-        *guard = new;
+        {
+            let mut guard = self.conn.lock();
+            *guard = new;
+        }
+        self.coalesce_near_adjacent()?;
         Ok(())
     }
 
@@ -221,6 +224,7 @@ impl Db {
 
     pub fn close_slice(&self, id: &str, end: DateTime<Utc>) -> Result<(), String> {
         self.with_conn(|conn| {
+            let end = Self::clamp_close_end(conn, id, end)?;
             let changed = conn
                 .execute(
                     "UPDATE time_slices SET end = ?2 WHERE id = ?1 AND end IS NULL",
@@ -232,6 +236,57 @@ impl Db {
             }
             Ok(())
         })
+    }
+
+    /// Clamp a running slice's close time so it cannot overrun a later slice that
+    /// was inserted while tracking (allowed by COALESCE(end, now) overlap checks).
+    fn clamp_close_end(
+        conn: &Connection,
+        id: &str,
+        requested_end: DateTime<Utc>,
+    ) -> Result<DateTime<Utc>, String> {
+        let start_s: Option<String> = conn
+            .query_row(
+                "SELECT start FROM time_slices WHERE id = ?1 AND end IS NULL",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let Some(start_s) = start_s else {
+            return Err("No running slice to close".into());
+        };
+        let start = DateTime::parse_from_rfc3339(&start_s)
+            .map_err(|e| e.to_string())?
+            .with_timezone(&Utc);
+
+        let bound_s: Option<String> = conn
+            .query_row(
+                "SELECT start FROM time_slices
+                 WHERE id != ?1
+                   AND start > ?2
+                   AND start < ?3
+                 ORDER BY start ASC
+                 LIMIT 1",
+                params![id, start.to_rfc3339(), requested_end.to_rfc3339()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+
+        let end = if let Some(bound_s) = bound_s {
+            let bound = DateTime::parse_from_rfc3339(&bound_s)
+                .map_err(|e| e.to_string())?
+                .with_timezone(&Utc);
+            requested_end.min(bound)
+        } else {
+            requested_end
+        };
+
+        if end <= start {
+            return Err("Cannot close: end would not be after start".into());
+        }
+        Ok(end)
     }
 
     /// Close an optional running slice and open a replacement in one transaction.
@@ -252,10 +307,11 @@ impl Db {
                 .map_err(|e| e.to_string())?;
             let result = (|| {
                 if let Some(id) = old_id {
+                    let end = Self::clamp_close_end(conn, id, now)?;
                     let changed = conn
                         .execute(
                             "UPDATE time_slices SET end = ?2 WHERE id = ?1 AND end IS NULL",
-                            params![id, now.to_rfc3339()],
+                            params![id, end.to_rfc3339()],
                         )
                         .map_err(|e| e.to_string())?;
                     if changed == 0 {
@@ -404,6 +460,174 @@ impl Db {
         Ok(slice)
     }
 
+    /// Merge closed slices that touch or nearly touch this one and share the same task.
+    pub fn merge_adjacent_same_task(&self, id: &str) -> Result<TimeSlice, String> {
+        let mut current_id = id.to_string();
+        loop {
+            let slice = self
+                .get_slice(&current_id)?
+                .ok_or_else(|| "Slice not found".to_string())?;
+            let Some(end) = slice.end else {
+                return Ok(slice);
+            };
+
+            if let Some(prev) = self.find_near_prev(&slice.task_id, slice.start)? {
+                self.merge_pair(&prev.id, &slice.id, prev.start, end)?;
+                current_id = prev.id;
+                continue;
+            }
+
+            if let Some(next) = self.find_near_next(&slice.task_id, end)? {
+                let next_end = next
+                    .end
+                    .ok_or_else(|| "Cannot merge with a running slice".to_string())?;
+                self.merge_pair(&slice.id, &next.id, slice.start, next_end)?;
+                continue;
+            }
+
+            return Ok(slice);
+        }
+    }
+
+    /// Merge all same-task closed pairs with a gap under one minute until stable.
+    pub fn coalesce_near_adjacent(&self) -> Result<(), String> {
+        loop {
+            let Some((earlier, later)) = self.find_any_near_pair()? else {
+                return Ok(());
+            };
+            let later_end = later
+                .end
+                .ok_or_else(|| "Cannot merge a running slice".to_string())?;
+            self.merge_pair(&earlier.id, &later.id, earlier.start, later_end)?;
+        }
+    }
+
+    fn near_gap(earlier_end: DateTime<Utc>, later_start: DateTime<Utc>) -> bool {
+        let gap = later_start - earlier_end;
+        gap >= chrono::Duration::zero() && gap < chrono::Duration::seconds(60)
+    }
+
+    fn find_near_prev(
+        &self,
+        task_id: &str,
+        start: DateTime<Utc>,
+    ) -> Result<Option<TimeSlice>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, task_id, start, end FROM time_slices
+                     WHERE task_id = ?1 AND end IS NOT NULL",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![task_id], map_slice)
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows
+                .into_iter()
+                .filter(|s| s.end.is_some_and(|e| Self::near_gap(e, start)))
+                .max_by_key(|s| s.end))
+        })
+    }
+
+    fn find_near_next(
+        &self,
+        task_id: &str,
+        end: DateTime<Utc>,
+    ) -> Result<Option<TimeSlice>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, task_id, start, end FROM time_slices
+                     WHERE task_id = ?1 AND end IS NOT NULL",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![task_id], map_slice)
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows
+                .into_iter()
+                .filter(|s| Self::near_gap(end, s.start))
+                .min_by_key(|s| s.start))
+        })
+    }
+
+    fn find_any_near_pair(&self) -> Result<Option<(TimeSlice, TimeSlice)>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, task_id, start, end FROM time_slices
+                     WHERE end IS NOT NULL
+                     ORDER BY start",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], map_slice)
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            for i in 0..rows.len() {
+                for j in (i + 1)..rows.len() {
+                    if rows[i].task_id != rows[j].task_id {
+                        continue;
+                    }
+                    let earlier_end = rows[i].end.expect("closed");
+                    if Self::near_gap(earlier_end, rows[j].start) {
+                        return Ok(Some((rows[i].clone(), rows[j].clone())));
+                    }
+                }
+            }
+            Ok(None)
+        })
+    }
+
+    fn merge_pair(
+        &self,
+        keep_id: &str,
+        drop_id: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<(), String> {
+        if end <= start {
+            return Err("Merged range invalid".into());
+        }
+        self.with_conn(|conn| {
+            conn.execute_batch("BEGIN IMMEDIATE")
+                .map_err(|e| e.to_string())?;
+            let result = (|| {
+                let deleted = conn
+                    .execute("DELETE FROM time_slices WHERE id = ?1", [drop_id])
+                    .map_err(|e| e.to_string())?;
+                if deleted == 0 {
+                    return Err("Slice to merge not found".into());
+                }
+                let updated = conn
+                    .execute(
+                        "UPDATE time_slices SET start = ?2, end = ?3 WHERE id = ?1",
+                        params![keep_id, start.to_rfc3339(), end.to_rfc3339()],
+                    )
+                    .map_err(|e| e.to_string())?;
+                if updated == 0 {
+                    return Err("Survivor slice not found".into());
+                }
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    Err(e)
+                }
+            }
+        })
+    }
+
     pub fn split_slice(&self, input: SplitSliceInput) -> Result<(TimeSlice, TimeSlice), String> {
         let slice = self
             .get_slice(&input.id)?
@@ -464,26 +688,29 @@ impl Db {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<(), String> {
+        // Running slices (end NULL) only occupy through "now", not forever.
+        let now = Utc::now().to_rfc3339();
         self.with_conn(|conn| {
             let sql = if exclude_id.is_some() {
                 "SELECT id FROM time_slices
                  WHERE id != ?3
                    AND start < ?2
-                   AND (end IS NULL OR end > ?1)
+                   AND COALESCE(end, ?4) > ?1
                  LIMIT 1"
             } else {
                 "SELECT id FROM time_slices
                  WHERE start < ?2
-                   AND (end IS NULL OR end > ?1)
+                   AND COALESCE(end, ?3) > ?1
                  LIMIT 1"
             };
             let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
             let found = if let Some(id) = exclude_id {
-                stmt.query_row(params![start.to_rfc3339(), end.to_rfc3339(), id], |r| {
-                    r.get::<_, String>(0)
-                })
+                stmt.query_row(
+                    params![start.to_rfc3339(), end.to_rfc3339(), id, now],
+                    |r| r.get::<_, String>(0),
+                )
             } else {
-                stmt.query_row(params![start.to_rfc3339(), end.to_rfc3339()], |r| {
+                stmt.query_row(params![start.to_rfc3339(), end.to_rfc3339(), now], |r| {
                     r.get::<_, String>(0)
                 })
             }
@@ -766,6 +993,134 @@ mod tests {
             })
             .unwrap_err();
         assert!(err.contains("inside"));
+    }
+
+    #[test]
+    fn move_merges_adjacent_same_task() {
+        let (_dir, db) = test_db();
+        let a = sample_task(&db, "A");
+        let b = sample_task(&db, "B");
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let first = db.insert_closed_slice(&a.id, t0, t1).unwrap();
+        let second = db.insert_closed_slice(&b.id, t1, t2).unwrap();
+
+        db.update_slice(UpdateSliceInput {
+            id: second.id.clone(),
+            task_id: Some(a.id.clone()),
+            start: None,
+            end: None,
+        })
+        .unwrap();
+        let merged = db.merge_adjacent_same_task(&second.id).unwrap();
+        assert_eq!(merged.start, t0);
+        assert_eq!(merged.end, Some(t2));
+        assert_eq!(merged.task_id, a.id);
+        assert!(db.get_slice(&first.id).unwrap().is_none() || merged.id == first.id);
+        assert_eq!(
+            db.list_slices_between(t0, t2 + Duration::seconds(1))
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn merges_same_task_with_sub_minute_gap() {
+        let (_dir, db) = test_db();
+        let a = sample_task(&db, "A");
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
+        let t2 = t1 + Duration::seconds(30);
+        let t3 = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        db.insert_closed_slice(&a.id, t0, t1).unwrap();
+        let second = db.insert_closed_slice(&a.id, t2, t3).unwrap();
+        db.coalesce_near_adjacent().unwrap();
+        let slices = db
+            .list_slices_between(t0, t3 + Duration::seconds(1))
+            .unwrap();
+        assert_eq!(slices.len(), 1);
+        assert_eq!(slices[0].start, t0);
+        assert_eq!(slices[0].end, Some(t3));
+        assert!(db.get_slice(&second.id).unwrap().is_none() || slices[0].id == second.id);
+    }
+
+    #[test]
+    fn move_does_not_merge_across_gap() {
+        let (_dir, db) = test_db();
+        let a = sample_task(&db, "A");
+        let b = sample_task(&db, "B");
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let t3 = Utc.with_ymd_and_hms(2026, 1, 1, 13, 0, 0).unwrap();
+        db.insert_closed_slice(&a.id, t0, t1).unwrap();
+        let second = db.insert_closed_slice(&b.id, t2, t3).unwrap();
+
+        db.update_slice(UpdateSliceInput {
+            id: second.id.clone(),
+            task_id: Some(a.id.clone()),
+            start: None,
+            end: None,
+        })
+        .unwrap();
+        let result = db.merge_adjacent_same_task(&second.id).unwrap();
+        assert_eq!(result.id, second.id);
+        assert_eq!(
+            db.list_slices_between(t0, t3 + Duration::seconds(1))
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn does_not_merge_when_gap_at_least_one_minute() {
+        let (_dir, db) = test_db();
+        let a = sample_task(&db, "A");
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
+        let t2 = t1 + Duration::seconds(60);
+        let t3 = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        db.insert_closed_slice(&a.id, t0, t1).unwrap();
+        db.insert_closed_slice(&a.id, t2, t3).unwrap();
+        db.coalesce_near_adjacent().unwrap();
+        assert_eq!(
+            db.list_slices_between(t0, t3 + Duration::seconds(1))
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn running_slice_does_not_block_future_closed_slice() {
+        let (_dir, db) = test_db();
+        let t = sample_task(&db, "Run");
+        let now = Utc::now();
+        let run_start = now - Duration::minutes(10);
+        let running = db.replace_running_slice(None, &t.id, run_start).unwrap();
+
+        let future_start = now + Duration::minutes(5);
+        let future_end = future_start + Duration::minutes(30);
+        let created = db
+            .insert_closed_slice(&t.id, future_start, future_end)
+            .unwrap();
+        assert_eq!(created.start, future_start);
+
+        let overlap_start = run_start + Duration::minutes(1);
+        let overlap_end = now - Duration::minutes(1);
+        let err = db
+            .insert_closed_slice(&t.id, overlap_start, overlap_end)
+            .unwrap_err();
+        assert!(err.contains("overlaps"));
+
+        // Closing past the future slice must clamp so the non-overlap invariant holds.
+        db.close_slice(&running.id, future_end + Duration::minutes(10))
+            .unwrap();
+        let closed = db.get_slice(&running.id).unwrap().unwrap();
+        assert_eq!(closed.end, Some(future_start));
     }
 
     #[test]

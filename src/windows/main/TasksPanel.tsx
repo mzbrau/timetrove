@@ -1,18 +1,50 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../shared/api";
+import { normalizeHexColor } from "../../shared/format";
 import type { Task, TrackerState } from "../../shared/types";
+import { ConfirmBar } from "./ConfirmBar";
 
-export function TasksPanel({ state }: { state: TrackerState | null }) {
+type Draft = {
+  name: string;
+  color: string;
+  description: string;
+  notes: string;
+};
+
+function draftFromTask(task: Task): Draft {
+  return {
+    name: task.name,
+    color: normalizeHexColor(task.color),
+    description: task.description,
+    notes: task.notes,
+  };
+}
+
+type Props = {
+  state: TrackerState | null;
+  onDirtyChange?: (dirty: boolean) => void;
+  saveRequestId?: number;
+  onSaved?: () => void;
+};
+
+export function TasksPanel({
+  state,
+  onDirtyChange,
+  saveRequestId = 0,
+  onSaved,
+}: Props) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
-  const [draft, setDraft] = useState({
+  const [filterQuery, setFilterQuery] = useState("");
+  const [draft, setDraft] = useState<Draft>({
     name: "",
     color: "#0f766e",
     description: "",
     notes: "",
   });
   const [error, setError] = useState<string | null>(null);
+  const [pendingSelectId, setPendingSelectId] = useState<string | null>(null);
 
   const load = async () => {
     const list = await api.listTasks(true);
@@ -24,19 +56,65 @@ export function TasksPanel({ state }: { state: TrackerState | null }) {
     load().catch((e) => setError(String(e)));
   }, []);
 
-  const visible = tasks.filter((t) => showArchived || !t.archived);
+  const filter = filterQuery.trim().toLowerCase();
+  const visible = tasks.filter(
+    (t) =>
+      (showArchived || !t.archived) &&
+      (!filter || t.name.toLowerCase().includes(filter)),
+  );
   const selected = tasks.find((t) => t.id === selectedId) ?? null;
 
   useEffect(() => {
     if (selected) {
-      setDraft({
-        name: selected.name,
-        color: selected.color,
-        description: selected.description,
-        notes: selected.notes,
-      });
+      setDraft(draftFromTask(selected));
     }
   }, [selectedId, selected?.updatedAt]);
+
+  const isDirty = useMemo(() => {
+    if (!selected) return false;
+    const baseline = draftFromTask(selected);
+    return (
+      draft.name !== baseline.name ||
+      draft.color !== baseline.color ||
+      draft.description !== baseline.description ||
+      draft.notes !== baseline.notes
+    );
+  }, [selected, draft]);
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  const save = async () => {
+    if (!selected) return;
+    const color = normalizeHexColor(draft.color);
+    await api.updateTask({
+      id: selected.id,
+      name: draft.name,
+      color,
+      description: draft.description,
+      notes: draft.notes,
+    });
+    setDraft((d) => ({ ...d, color }));
+    await load();
+    onSaved?.();
+  };
+
+  const lastSaveRequest = useRef(0);
+  useEffect(() => {
+    if (saveRequestId <= 0 || saveRequestId === lastSaveRequest.current) return;
+    lastSaveRequest.current = saveRequestId;
+    void save().catch((e) => setError(String(e)));
+  }, [saveRequestId]);
+
+  const requestSelect = (id: string) => {
+    if (id === selectedId) return;
+    if (isDirty) {
+      setPendingSelectId(id);
+      return;
+    }
+    setSelectedId(id);
+  };
 
   return (
     <div className="tasks-layout">
@@ -46,6 +124,10 @@ export function TasksPanel({ state }: { state: TrackerState | null }) {
             type="button"
             onClick={async () => {
               try {
+                if (isDirty) {
+                  setPendingSelectId("__new__");
+                  return;
+                }
                 const task = await api.createTask({
                   name: `New task ${new Date().toLocaleTimeString()}`,
                 });
@@ -67,15 +149,25 @@ export function TasksPanel({ state }: { state: TrackerState | null }) {
             Archived
           </label>
         </div>
+        <input
+          className="task-filter"
+          type="search"
+          placeholder="Filter tasks…"
+          value={filterQuery}
+          onChange={(e) => setFilterQuery(e.target.value)}
+        />
         <ul>
           {visible.map((task) => (
             <li key={task.id}>
               <button
                 type="button"
                 className={task.id === selectedId ? "selected" : ""}
-                onClick={() => setSelectedId(task.id)}
+                onClick={() => requestSelect(task.id)}
               >
-                <span className="dot" style={{ background: task.color }} />
+                <span
+                  className="dot"
+                  style={{ backgroundColor: normalizeHexColor(task.color) }}
+                />
                 <span>
                   {task.name}
                   {task.archived ? " (archived)" : ""}
@@ -88,6 +180,50 @@ export function TasksPanel({ state }: { state: TrackerState | null }) {
 
       <div className="task-detail">
         {error && <div className="err">{error}</div>}
+        {pendingSelectId && (
+          <ConfirmBar
+            message="You have unsaved changes."
+            confirmLabel="Save"
+            secondaryLabel="Discard"
+            cancelLabel="Cancel"
+            onConfirm={async () => {
+              try {
+                await save();
+                const next = pendingSelectId;
+                setPendingSelectId(null);
+                if (next === "__new__") {
+                  const task = await api.createTask({
+                    name: `New task ${new Date().toLocaleTimeString()}`,
+                  });
+                  await load();
+                  setSelectedId(task.id);
+                } else {
+                  setSelectedId(next);
+                }
+              } catch (e) {
+                setError(String(e));
+              }
+            }}
+            onSecondary={async () => {
+              const next = pendingSelectId;
+              setPendingSelectId(null);
+              if (next === "__new__") {
+                try {
+                  const task = await api.createTask({
+                    name: `New task ${new Date().toLocaleTimeString()}`,
+                  });
+                  await load();
+                  setSelectedId(task.id);
+                } catch (e) {
+                  setError(String(e));
+                }
+              } else {
+                setSelectedId(next);
+              }
+            }}
+            onCancel={() => setPendingSelectId(null)}
+          />
+        )}
         {!selected ? (
           <p className="muted">Select or create a task.</p>
         ) : (
@@ -101,11 +237,32 @@ export function TasksPanel({ state }: { state: TrackerState | null }) {
             </label>
             <label>
               Color
-              <input
-                type="color"
-                value={draft.color}
-                onChange={(e) => setDraft({ ...draft, color: e.target.value })}
-              />
+              <div className="color-row">
+                <input
+                  type="color"
+                  value={draft.color}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      color: normalizeHexColor(e.target.value),
+                    })
+                  }
+                />
+                <input
+                  className="mono"
+                  type="text"
+                  value={draft.color}
+                  onChange={(e) =>
+                    setDraft({ ...draft, color: e.target.value })
+                  }
+                  onBlur={() =>
+                    setDraft((d) => ({
+                      ...d,
+                      color: normalizeHexColor(d.color),
+                    }))
+                  }
+                />
+              </div>
             </label>
             <label>
               Description
@@ -129,10 +286,11 @@ export function TasksPanel({ state }: { state: TrackerState | null }) {
               <button
                 type="button"
                 className="btn"
+                disabled={!isDirty}
                 onClick={async () => {
                   try {
-                    await api.updateTask({ id: selected.id, ...draft });
-                    await load();
+                    setError(null);
+                    await save();
                   } catch (e) {
                     setError(String(e));
                   }
@@ -143,9 +301,12 @@ export function TasksPanel({ state }: { state: TrackerState | null }) {
               <button
                 type="button"
                 onClick={() => api.startTask(selected.id)}
-                disabled={selected.archived}
+                disabled={
+                  selected.archived ||
+                  state?.currentTask?.id === selected.id
+                }
               >
-                {state?.currentTask?.id === selected.id ? "Tracking" : "Start"}
+                Start
               </button>
               <button
                 type="button"

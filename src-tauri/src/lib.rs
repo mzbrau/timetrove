@@ -47,6 +47,8 @@ pub fn run() {
         let db_path = app_dir.join("time-keeper.db");
         let conn = open_db(&db_path).map_err(|e| e.to_string())?;
         let database = db::Db::new(conn, db_path);
+        // Legacy near-adjacent same-task cleanup (idempotent; not done on day reads).
+        database.coalesce_near_adjacent()?;
         let engine = Engine::new(database);
         app.manage(engine.clone());
 
