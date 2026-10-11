@@ -103,5 +103,15 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
 
+    if version < 4 {
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN starred INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (4)", [])
+            .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }

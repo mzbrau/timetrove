@@ -42,6 +42,14 @@ pub fn update_task(
 }
 
 #[tauri::command]
+pub fn get_task_booking_summary(
+    engine: State<'_, Arc<Engine>>,
+    task_id: String,
+) -> Result<TaskBookingSummary, String> {
+    engine.db().task_booking_summary(&task_id)
+}
+
+#[tauri::command]
 pub fn start_task(
     engine: State<'_, Arc<Engine>>,
     app: AppHandle,

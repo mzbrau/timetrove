@@ -1,4 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
+import { formatHms } from "../../shared/format";
 import { useTrackerState } from "../../shared/useTrackerState";
 import { TasksPanel } from "./TasksPanel";
 import { TimesheetPanel } from "./TimesheetPanel";
@@ -17,9 +19,41 @@ export function MainApp() {
   const [tasksDirty, setTasksDirty] = useState(false);
   const [pendingTab, setPendingTab] = useState<Tab | null>(null);
   const [saveRequestId, setSaveRequestId] = useState(0);
+  const [tick, setTick] = useState(0);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const receivedAtRef = useRef(Date.now());
+  const prevStateRef = useRef(state);
+
+  useEffect(() => {
+    void getVersion()
+      .then(setAppVersion)
+      .catch(() => setAppVersion(null));
+  }, []);
 
   const bannerError = error || state?.dbError || null;
   const showBanner = Boolean(bannerError && bannerError !== dismissedError);
+
+  // Sync baseline in the same render as new dailyTotalMs (avoid useEffect lag → jump).
+  if (state !== prevStateRef.current) {
+    prevStateRef.current = state;
+    receivedAtRef.current = Date.now();
+  }
+
+  useEffect(() => {
+    if (!state?.tracking) return;
+    const id = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [state?.tracking]);
+
+  const dailyTotalLabel = (() => {
+    if (!state) return "00:00:00";
+    let ms = state.dailyTotalMs;
+    if (state.tracking) {
+      void tick;
+      ms += Math.max(0, Date.now() - receivedAtRef.current);
+    }
+    return formatHms(ms);
+  })();
 
   const onDirtyChange = useCallback((dirty: boolean) => {
     setTasksDirty(dirty);
@@ -53,7 +87,14 @@ export function MainApp() {
 
       <header className="topbar">
         <div className="brand">
-          <h1>Time Keeper</h1>
+          <img
+            className="brand-logo"
+            src="/timetrove-logo.png"
+            alt=""
+            width={32}
+            height={32}
+          />
+          <h1>TimeTrove</h1>
         </div>
         <div className="status-band">
           <div className="status-row">
@@ -71,7 +112,7 @@ export function MainApp() {
             <span
               className={`mono day-total ${state?.goalMet ? "met" : "under"}`}
             >
-              {state?.dailyTotalDisplay ?? "00:00"}
+              {dailyTotalLabel}
             </span>
           </div>
           <div className="status-actions">
@@ -155,6 +196,12 @@ export function MainApp() {
         {tab === "entries" && <EntriesPanel state={state} />}
         {tab === "settings" && <SettingsPanel />}
       </main>
+
+      {appVersion && (
+        <span className="app-version mono muted" aria-label={`Version ${appVersion}`}>
+          v{appVersion}
+        </span>
+      )}
     </div>
   );
 }

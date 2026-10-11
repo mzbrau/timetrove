@@ -10,6 +10,7 @@ pub struct Task {
     pub description: String,
     pub notes: String,
     pub archived: bool,
+    pub starred: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -108,6 +109,19 @@ pub struct UpdateTaskInput {
     pub description: Option<String>,
     pub notes: Option<String>,
     pub archived: Option<bool>,
+    pub starred: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskBookingSummary {
+    pub this_week_ms: i64,
+    pub this_week_display: String,
+    pub this_week_start: String,
+    pub last_week_ms: i64,
+    pub last_week_display: String,
+    pub last_week_start: String,
+    pub last_booked_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

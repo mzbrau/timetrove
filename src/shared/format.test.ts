@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatGap, formatHm, normalizeHexColor } from "./format";
+import { formatGap, formatHm, formatHms, normalizeHexColor } from "./format";
 
 describe("formatGap", () => {
   it("formats minutes only under an hour", () => {
@@ -25,6 +25,17 @@ describe("formatHm", () => {
     expect(formatHm(30_000)).toBe("00:01");
     expect(formatHm(89_999)).toBe("00:01");
     expect(formatHm(90_000)).toBe("00:02");
+  });
+});
+
+describe("formatHms", () => {
+  it("formats as HH:MM:SS floored", () => {
+    expect(formatHms(0)).toBe("00:00:00");
+    expect(formatHms(5 * 60_000 + 23_000)).toBe("00:05:23");
+    expect(formatHms(5 * 3_600_000 + 23 * 60_000 + 9_000)).toBe("05:23:09");
+    expect(formatHms(999)).toBe("00:00:00");
+    expect(formatHms(25 * 3_600_000)).toBe("25:00:00");
+    expect(formatHms(-1)).toBe("00:00:00");
   });
 });
 

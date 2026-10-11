@@ -1,8 +1,8 @@
-# Time Keeper
+# TimeTrove
 
 Personal, single-user, local-only time tracking for a developer’s machine. Goal: accurate day-to-day tracking with minimal friction, then a clean weekly timesheet.
 
-Inspired by [Grindstone](https://www.epiforge.com/grindstone/) (work items + time slices + idle correction). Time Keeper keeps that core loop and improves polish: colors, keyboard-first switching, a compact gap dialog, an always-visible daily total, a built-in timesheet, and a codebase we can extend (Jira, charts, etc. later).
+Inspired by [Grindstone](https://www.epiforge.com/grindstone/) (work items + time slices + idle correction). TimeTrove keeps that core loop and improves polish: colors, keyboard-first switching, a compact gap dialog, an always-visible daily total, a built-in timesheet, and a codebase we can extend (Jira, charts, etc. later).
 
 ---
 
@@ -203,7 +203,7 @@ Grindstone already covers most of the core. Gaps that justify a custom tool:
 - No global keyboard task switch
 - No Jira (planned post-v1 here)
 - No clear daily goal / hours-today signal in the always-visible chrome
-- Poor behavior when the DB connection fails (error popup spam) — Time Keeper should surface **one** clear error/recovery path
+- Poor behavior when the DB connection fails (error popup spam) — TimeTrove should surface **one** clear error/recovery path
 - Cannot iterate on annoyances or add features freely
 
 ---

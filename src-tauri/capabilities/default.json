@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for all Time Keeper windows",
+  "description": "Capabilities for all TimeTrove windows",
   "windows": ["main", "tracker", "switcher", "gap"],
   "permissions": [
     "core:default",

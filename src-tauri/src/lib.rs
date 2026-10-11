@@ -44,7 +44,7 @@ pub fn run() {
             .app_data_dir()
             .map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
-        let db_path = app_dir.join("time-keeper.db");
+        let db_path = app_dir.join("timetrove.db");
         let conn = open_db(&db_path).map_err(|e| e.to_string())?;
         let database = db::Db::new(conn, db_path);
         // Legacy near-adjacent same-task cleanup (idempotent; not done on day reads).
@@ -115,6 +115,7 @@ pub fn run() {
             eng.on_resume_or_startup_gap(&handle);
             loop {
                 std::thread::sleep(Duration::from_secs(5));
+                eng.checkpoint_if_due();
                 eng.check_idle(&handle);
                 refresh_tray_tooltip(&handle, &eng);
 
@@ -152,6 +153,7 @@ pub fn run() {
             commands::list_tasks,
             commands::create_task,
             commands::update_task,
+            commands::get_task_booking_summary,
             commands::start_task,
             commands::stop_tracking,
             commands::switch_task,
@@ -180,7 +182,7 @@ pub fn run() {
             commands::shift_week,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building Time Keeper");
+        .expect("error while building TimeTrove");
 
     app.run(|app_handle, event| {
         match event {

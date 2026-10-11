@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   Settings,
   Task,
+  TaskBookingSummary,
   TimeSlice,
   Timesheet,
   TrackerState,
@@ -24,7 +25,10 @@ export const api = {
     description?: string;
     notes?: string;
     archived?: boolean;
+    starred?: boolean;
   }) => invoke<Task>("update_task", { input }),
+  getTaskBookingSummary: (taskId: string) =>
+    invoke<TaskBookingSummary>("get_task_booking_summary", { taskId }),
   startTask: (taskId: string) => invoke<TrackerState>("start_task", { taskId }),
   stopTracking: () => invoke<TrackerState>("stop_tracking"),
   switchTask: (taskId: string) => invoke<TrackerState>("switch_task", { taskId }),

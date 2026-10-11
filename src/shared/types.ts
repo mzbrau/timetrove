@@ -5,8 +5,19 @@ export interface Task {
   description: string;
   notes: string;
   archived: boolean;
+  starred: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TaskBookingSummary {
+  thisWeekMs: number;
+  thisWeekDisplay: string;
+  thisWeekStart: string;
+  lastWeekMs: number;
+  lastWeekDisplay: string;
+  lastWeekStart: string;
+  lastBookedAt: string | null;
 }
 
 export type EnginePhase =

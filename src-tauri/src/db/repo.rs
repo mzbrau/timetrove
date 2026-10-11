@@ -1,5 +1,5 @@
 use crate::domain::*;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, DatabaseName, OptionalExtension};
 use std::path::{Path, PathBuf};
@@ -56,13 +56,13 @@ impl Db {
         self.with_conn(|conn| {
             let mut stmt = if include_archived {
                 conn.prepare(
-                    "SELECT id, name, color, description, notes, archived, created_at, updated_at
-                     FROM tasks ORDER BY name COLLATE NOCASE",
+                    "SELECT id, name, color, description, notes, archived, starred, created_at, updated_at
+                     FROM tasks ORDER BY starred DESC, name COLLATE NOCASE",
                 )
             } else {
                 conn.prepare(
-                    "SELECT id, name, color, description, notes, archived, created_at, updated_at
-                     FROM tasks WHERE archived = 0 ORDER BY name COLLATE NOCASE",
+                    "SELECT id, name, color, description, notes, archived, starred, created_at, updated_at
+                     FROM tasks WHERE archived = 0 ORDER BY starred DESC, name COLLATE NOCASE",
                 )
             }
             .map_err(|e| e.to_string())?;
@@ -78,7 +78,7 @@ impl Db {
     pub fn get_task(&self, id: &str) -> Result<Option<Task>, String> {
         self.with_conn(|conn| {
             conn.query_row(
-                "SELECT id, name, color, description, notes, archived, created_at, updated_at
+                "SELECT id, name, color, description, notes, archived, starred, created_at, updated_at
                  FROM tasks WHERE id = ?1",
                 [id],
                 map_task,
@@ -119,13 +119,14 @@ impl Db {
             description: input.description.unwrap_or_default(),
             notes: input.notes.unwrap_or_default(),
             archived: false,
+            starred: false,
             created_at: now,
             updated_at: now,
         };
         self.with_conn(|conn| {
             conn.execute(
-                "INSERT INTO tasks (id, name, color, description, notes, archived, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7)",
+                "INSERT INTO tasks (id, name, color, description, notes, archived, starred, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, ?6, ?7)",
                 params![
                     task.id,
                     task.name,
@@ -171,10 +172,13 @@ impl Db {
         if let Some(archived) = input.archived {
             task.archived = archived;
         }
+        if let Some(starred) = input.starred {
+            task.starred = starred;
+        }
         task.updated_at = Utc::now();
         self.with_conn(|conn| {
             conn.execute(
-                "UPDATE tasks SET name=?2, color=?3, description=?4, notes=?5, archived=?6, updated_at=?7
+                "UPDATE tasks SET name=?2, color=?3, description=?4, notes=?5, archived=?6, starred=?7, updated_at=?8
                  WHERE id=?1",
                 params![
                     task.id,
@@ -183,6 +187,7 @@ impl Db {
                     task.description,
                     task.notes,
                     task.archived as i32,
+                    task.starred as i32,
                     task.updated_at.to_rfc3339(),
                 ],
             )
@@ -824,6 +829,48 @@ impl Db {
         })
     }
 
+    /// Persisted tracking heartbeat (not part of user-facing Settings).
+    pub fn get_last_good_at(&self) -> Result<Option<DateTime<Utc>>, String> {
+        self.with_conn(|conn| {
+            let value: Option<String> = conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key = 'last_good_at'",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            match value {
+                Some(s) if !s.is_empty() => {
+                    let dt = DateTime::parse_from_rfc3339(&s)
+                        .map_err(|e| e.to_string())?
+                        .with_timezone(&Utc);
+                    Ok(Some(dt))
+                }
+                _ => Ok(None),
+            }
+        })
+    }
+
+    pub fn set_last_good_at(&self, at: Option<DateTime<Utc>>) -> Result<(), String> {
+        self.with_conn(|conn| match at {
+            Some(dt) => {
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('last_good_at', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![dt.to_rfc3339()],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+            None => {
+                conn.execute("DELETE FROM settings WHERE key = 'last_good_at'", [])
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        })
+    }
+
     pub fn daily_total_ms(&self, now: DateTime<Utc>) -> Result<i64, String> {
         let day = now.with_timezone(&chrono::Local).date_naive();
         let (start, end) = local_day_bounds(day);
@@ -835,6 +882,64 @@ impl Db {
         }
         Ok(total)
     }
+
+    /// Monday-week booked totals for a task (this week + last week) and last activity.
+    pub fn task_booking_summary(&self, task_id: &str) -> Result<TaskBookingSummary, String> {
+        if self.get_task(task_id)?.is_none() {
+            return Err("Task not found".into());
+        }
+
+        let this_monday = week_start_monday(today_local());
+        let last_monday = this_monday - Duration::days(7);
+        let (this_start, _) = local_day_bounds(this_monday);
+        let (next_start, _) = local_day_bounds(this_monday + Duration::days(7));
+        let (last_start, _) = local_day_bounds(last_monday);
+        let now = Utc::now();
+
+        let sum_for = |slices: &[TimeSlice], w0: DateTime<Utc>, w1: DateTime<Utc>| -> i64 {
+            let mut ms = 0i64;
+            for s in slices {
+                if s.task_id != task_id {
+                    continue;
+                }
+                let end = s.end.unwrap_or(now);
+                ms += overlap_ms(s.start, end, w0, w1);
+            }
+            ms
+        };
+
+        let this_slices = self.list_slices_between(this_start, next_start)?;
+        let last_slices = self.list_slices_between(last_start, this_start)?;
+        let this_week_ms = sum_for(&this_slices, this_start, next_start);
+        let last_week_ms = sum_for(&last_slices, last_start, this_start);
+        let last_booked_at = self.last_booked_at(task_id)?;
+
+        Ok(TaskBookingSummary {
+            this_week_ms,
+            this_week_display: format_hhmm(this_week_ms),
+            this_week_start: format_day(this_monday),
+            last_week_ms,
+            last_week_display: format_hhmm(last_week_ms),
+            last_week_start: format_day(last_monday),
+            last_booked_at,
+        })
+    }
+
+    fn last_booked_at(&self, task_id: &str) -> Result<Option<DateTime<Utc>>, String> {
+        self.with_conn(|conn| {
+            let s: Option<String> = conn
+                .query_row(
+                    "SELECT MAX(COALESCE(end, start)) FROM time_slices WHERE task_id = ?1",
+                    [task_id],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            match s {
+                Some(raw) => Ok(Some(parse_dt(&raw).map_err(|e| e.to_string())?)),
+                None => Ok(None),
+            }
+        })
+    }
 }
 
 fn map_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
@@ -845,8 +950,9 @@ fn map_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         description: row.get(3)?,
         notes: row.get(4)?,
         archived: row.get::<_, i32>(5)? != 0,
-        created_at: parse_dt(&row.get::<_, String>(6)?)?,
-        updated_at: parse_dt(&row.get::<_, String>(7)?)?,
+        starred: row.get::<_, i32>(6)? != 0,
+        created_at: parse_dt(&row.get::<_, String>(7)?)?,
+        updated_at: parse_dt(&row.get::<_, String>(8)?)?,
     })
 }
 
@@ -916,12 +1022,90 @@ mod tests {
                 description: Some("desc".into()),
                 notes: None,
                 archived: Some(true),
+                starred: None,
             })
             .unwrap();
         assert_eq!(updated.name, "Beta");
         assert!(updated.archived);
+        assert!(!updated.starred);
         assert_eq!(db.list_tasks(false).unwrap().len(), 0);
         assert_eq!(db.list_tasks(true).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn starred_tasks_sort_before_alpha() {
+        let (_dir, db) = test_db();
+        let zebra = sample_task(&db, "Zebra");
+        let _alpha = sample_task(&db, "Alpha");
+        let _beta = sample_task(&db, "Beta");
+        db.update_task(UpdateTaskInput {
+            id: zebra.id.clone(),
+            name: None,
+            color: None,
+            description: None,
+            notes: None,
+            archived: None,
+            starred: Some(true),
+        })
+        .unwrap();
+
+        let names: Vec<_> = db
+            .list_tasks(false)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(names, vec!["Zebra", "Alpha", "Beta"]);
+    }
+
+    #[test]
+    fn task_booking_summary_weeks_and_last_booked() {
+        let (_dir, db) = test_db();
+        let task = sample_task(&db, "Booked");
+        let idle = sample_task(&db, "Idle");
+
+        let this_monday = week_start_monday(today_local());
+        let last_monday = this_monday - Duration::days(7);
+        let (this_start, _) = local_day_bounds(this_monday);
+        let (last_start, _) = local_day_bounds(last_monday);
+
+        db.insert_closed_slice(
+            &task.id,
+            this_start + Duration::hours(9),
+            this_start + Duration::hours(11),
+        )
+        .unwrap();
+        db.insert_closed_slice(
+            &task.id,
+            last_start + Duration::hours(10),
+            last_start + Duration::hours(11) + Duration::minutes(30),
+        )
+        .unwrap();
+
+        let summary = db.task_booking_summary(&task.id).unwrap();
+        assert_eq!(summary.this_week_ms, 2 * 3_600_000);
+        assert_eq!(summary.this_week_display, "02:00");
+        assert_eq!(summary.last_week_ms, 90 * 60_000);
+        assert_eq!(summary.last_week_display, "01:30");
+        assert!(summary.last_booked_at.is_some());
+
+        let old_end = this_start - Duration::days(20);
+        db.insert_closed_slice(
+            &idle.id,
+            old_end - Duration::hours(1),
+            old_end,
+        )
+        .unwrap();
+        let idle_summary = db.task_booking_summary(&idle.id).unwrap();
+        assert_eq!(idle_summary.this_week_ms, 0);
+        assert_eq!(idle_summary.last_week_ms, 0);
+        assert_eq!(idle_summary.last_booked_at, Some(old_end));
+
+        let never = sample_task(&db, "Never");
+        let never_summary = db.task_booking_summary(&never.id).unwrap();
+        assert_eq!(never_summary.this_week_ms, 0);
+        assert_eq!(never_summary.last_week_ms, 0);
+        assert!(never_summary.last_booked_at.is_none());
     }
 
     #[test]
@@ -1176,6 +1360,18 @@ mod tests {
         assert_eq!(loaded.daily_goal_mins, 300);
         assert_eq!(loaded.theme, "light");
         assert!(!loaded.autostart);
+    }
+
+    #[test]
+    fn last_good_at_round_trip() {
+        let (_dir, db) = test_db();
+        assert!(db.get_last_good_at().unwrap().is_none());
+        let at = Utc::now() - Duration::minutes(3);
+        db.set_last_good_at(Some(at)).unwrap();
+        let loaded = db.get_last_good_at().unwrap().unwrap();
+        assert_eq!(loaded.timestamp(), at.timestamp());
+        db.set_last_good_at(None).unwrap();
+        assert!(db.get_last_good_at().unwrap().is_none());
     }
 
     #[test]

@@ -11,7 +11,7 @@ pub fn setup_tray(app: &AppHandle, engine: Arc<Engine>) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let hide_bar = MenuItem::with_id(app, "hide_bar", "Hide tracker bar", true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let open_main = MenuItem::with_id(app, "open_main", "Open Time Keeper", true, None::<&str>)
+    let open_main = MenuItem::with_id(app, "open_main", "Open TimeTrove", true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let start_stop = MenuItem::with_id(app, "start_stop", "Start / Stop", true, None::<&str>)
         .map_err(|e| e.to_string())?;
@@ -33,7 +33,7 @@ pub fn setup_tray(app: &AppHandle, engine: Arc<Engine>) -> Result<(), String> {
     TrayIconBuilder::with_id("main")
         .icon(icon)
         .menu(&menu)
-        .tooltip("Time Keeper")
+        .tooltip("TimeTrove")
         .on_menu_event(move |app, event| {
             match event.id.as_ref() {
                 "show_bar" => {
