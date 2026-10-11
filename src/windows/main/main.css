@@ -1,0 +1,247 @@
+.main-app {
+  min-height: 100vh;
+  padding: var(--s5) var(--s6);
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s5);
+  margin-bottom: var(--s5);
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.status-band {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s2) 0;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.day-total {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin-left: var(--s2);
+}
+
+.day-total.under {
+  color: var(--goal-under);
+}
+
+.day-total.met {
+  color: var(--goal-met);
+}
+
+.status-actions {
+  display: flex;
+  gap: var(--s2);
+}
+
+.status-actions button,
+.tabs button,
+.btn,
+.tasks-layout button,
+.timesheet-toolbar button,
+.entries button,
+.settings button {
+  border: 1px solid var(--line);
+  background: var(--control-bg);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: var(--s2) var(--s3);
+}
+
+.status-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tabs {
+  display: flex;
+  gap: var(--s2);
+  margin-bottom: var(--s4);
+}
+
+.tabs button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--s4);
+  min-height: 480px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.muted {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.tasks-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: var(--s4);
+  min-height: 420px;
+}
+
+.task-list {
+  border-right: 1px solid var(--line);
+  padding-right: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.task-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  flex: 1;
+}
+
+.task-list li button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  text-align: left;
+  margin-bottom: var(--s1);
+}
+
+.task-list li button.selected {
+  background: var(--accent-soft);
+  border-color: rgba(61, 155, 143, 0.35);
+}
+
+.task-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.task-detail label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.task-detail input,
+.task-detail textarea,
+.entries input,
+.entries select,
+.settings input,
+.settings select {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: var(--s2) var(--s3);
+  background: var(--control-bg);
+  color: var(--ink);
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.timesheet-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--s4);
+  gap: var(--s3);
+}
+
+.timesheet-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.timesheet-table th,
+.timesheet-table td {
+  border-bottom: 1px solid var(--line);
+  padding: var(--s2) var(--s2);
+  text-align: right;
+}
+
+.timesheet-table th:first-child,
+.timesheet-table td:first-child {
+  text-align: left;
+}
+
+.timesheet-table .task-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.entries-toolbar {
+  display: flex;
+  gap: var(--s2);
+  align-items: end;
+  margin-bottom: var(--s4);
+  flex-wrap: wrap;
+}
+
+.entries table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.entries th,
+.entries td {
+  border-bottom: 1px solid var(--line);
+  padding: var(--s2) var(--s2);
+  text-align: left;
+  font-size: 0.92rem;
+}
+
+.settings {
+  display: grid;
+  gap: var(--s4);
+  max-width: 520px;
+}
+
+.settings label {
+  display: grid;
+  gap: var(--s1);
+}
+
+.settings .hint {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.settings .err {
+  color: var(--danger);
+  margin: 0;
+}
