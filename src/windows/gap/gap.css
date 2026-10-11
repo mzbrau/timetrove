@@ -1,0 +1,126 @@
+html,
+body,
+#root {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+.gap {
+  height: 100vh;
+  padding: var(--s4);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.duration {
+  font-size: 2.6rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.band-short .duration {
+  color: var(--gap-short);
+}
+
+.band-medium .duration {
+  color: var(--gap-medium);
+}
+
+.band-long .duration {
+  color: var(--gap-long);
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.actions button,
+.search .back,
+.search li button {
+  border: 1px solid var(--line);
+  background: var(--control-bg);
+  color: var(--ink);
+  border-radius: 12px;
+  padding: var(--s3) var(--s3);
+  text-align: left;
+}
+
+.actions button.primary {
+  background: var(--accent-soft);
+  border-color: rgba(61, 155, 143, 0.35);
+}
+
+.actions button.danger {
+  color: var(--danger);
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1.4rem;
+  margin-right: var(--s2);
+  padding: 0.1rem 0.35rem;
+  border-radius: 6px;
+  background: var(--kbd-bg);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85rem;
+}
+
+.search {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-height: 0;
+  flex: 1;
+}
+
+.search input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: var(--s3);
+  background: var(--control-bg);
+  color: var(--ink);
+}
+
+.search ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  flex: 1;
+}
+
+.search li button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s1);
+}
+
+.search li button.selected {
+  background: var(--accent-soft);
+  border-color: rgba(61, 155, 143, 0.45);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.err {
+  color: var(--danger);
+  font-size: 0.9rem;
+}

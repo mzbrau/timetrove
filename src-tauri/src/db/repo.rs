@@ -1,0 +1,640 @@
+use crate::domain::*;
+use chrono::{DateTime, Utc};
+use parking_lot::Mutex;
+use rusqlite::{params, Connection, DatabaseName, OptionalExtension};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use uuid::Uuid;
+
+pub struct Db {
+    conn: Mutex<Connection>,
+    path: PathBuf,
+}
+
+impl Db {
+    pub fn new(conn: Connection, path: PathBuf) -> Arc<Self> {
+        Arc::new(Self {
+            conn: Mutex::new(conn),
+            path,
+        })
+    }
+
+    pub fn path(&self) -> &PathBuf {
+        &self.path
+    }
+
+    pub fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
+        let conn = self.conn.lock();
+        f(&conn)
+    }
+
+    pub fn reopen(&self) -> Result<(), String> {
+        let new = super::open_db(&self.path)?;
+        let mut guard = self.conn.lock();
+        *guard = new;
+        Ok(())
+    }
+
+    /// Consistent online backup (includes committed WAL pages).
+    pub fn backup_to(&self, dest: &Path) -> Result<(), String> {
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        if dest.exists() {
+            std::fs::remove_file(dest).map_err(|e| e.to_string())?;
+        }
+        self.with_conn(|conn| {
+            conn.backup(DatabaseName::Main, dest, None)
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    pub fn list_tasks(&self, include_archived: bool) -> Result<Vec<Task>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = if include_archived {
+                conn.prepare(
+                    "SELECT id, name, color, description, notes, archived, created_at, updated_at
+                     FROM tasks ORDER BY name COLLATE NOCASE",
+                )
+            } else {
+                conn.prepare(
+                    "SELECT id, name, color, description, notes, archived, created_at, updated_at
+                     FROM tasks WHERE archived = 0 ORDER BY name COLLATE NOCASE",
+                )
+            }
+            .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], map_task)
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })
+    }
+
+    pub fn get_task(&self, id: &str) -> Result<Option<Task>, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT id, name, color, description, notes, archived, created_at, updated_at
+                 FROM tasks WHERE id = ?1",
+                [id],
+                map_task,
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    pub fn existing_colors(&self) -> Result<Vec<String>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT color FROM tasks")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| r.get(0))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })
+    }
+
+    pub fn create_task(&self, input: CreateTaskInput) -> Result<Task, String> {
+        let name = input.name.trim().to_string();
+        if name.is_empty() {
+            return Err("Task name is required".into());
+        }
+        let color = match input.color {
+            Some(c) if !c.trim().is_empty() => c,
+            _ => next_color(&self.existing_colors()?),
+        };
+        let now = Utc::now();
+        let task = Task {
+            id: Uuid::new_v4().to_string(),
+            name,
+            color,
+            description: input.description.unwrap_or_default(),
+            notes: input.notes.unwrap_or_default(),
+            archived: false,
+            created_at: now,
+            updated_at: now,
+        };
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO tasks (id, name, color, description, notes, archived, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7)",
+                params![
+                    task.id,
+                    task.name,
+                    task.color,
+                    task.description,
+                    task.notes,
+                    task.created_at.to_rfc3339(),
+                    task.updated_at.to_rfc3339(),
+                ],
+            )
+            .map_err(|e| {
+                if e.to_string().contains("UNIQUE") {
+                    "A task with that name already exists".into()
+                } else {
+                    e.to_string()
+                }
+            })?;
+            Ok(())
+        })?;
+        Ok(task)
+    }
+
+    pub fn update_task(&self, input: UpdateTaskInput) -> Result<Task, String> {
+        let mut task = self
+            .get_task(&input.id)?
+            .ok_or_else(|| "Task not found".to_string())?;
+        if let Some(name) = input.name {
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                return Err("Task name is required".into());
+            }
+            task.name = name;
+        }
+        if let Some(color) = input.color {
+            task.color = color;
+        }
+        if let Some(description) = input.description {
+            task.description = description;
+        }
+        if let Some(notes) = input.notes {
+            task.notes = notes;
+        }
+        if let Some(archived) = input.archived {
+            task.archived = archived;
+        }
+        task.updated_at = Utc::now();
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE tasks SET name=?2, color=?3, description=?4, notes=?5, archived=?6, updated_at=?7
+                 WHERE id=?1",
+                params![
+                    task.id,
+                    task.name,
+                    task.color,
+                    task.description,
+                    task.notes,
+                    task.archived as i32,
+                    task.updated_at.to_rfc3339(),
+                ],
+            )
+            .map_err(|e| {
+                if e.to_string().contains("UNIQUE") {
+                    "A task with that name already exists".into()
+                } else {
+                    e.to_string()
+                }
+            })?;
+            Ok(())
+        })?;
+        Ok(task)
+    }
+
+    pub fn running_slice(&self) -> Result<Option<TimeSlice>, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT id, task_id, start, end FROM time_slices WHERE end IS NULL LIMIT 1",
+                [],
+                map_slice,
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    pub fn get_slice(&self, id: &str) -> Result<Option<TimeSlice>, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT id, task_id, start, end FROM time_slices WHERE id = ?1",
+                [id],
+                map_slice,
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+        })
+    }
+
+    pub fn close_slice(&self, id: &str, end: DateTime<Utc>) -> Result<(), String> {
+        self.with_conn(|conn| {
+            let changed = conn
+                .execute(
+                    "UPDATE time_slices SET end = ?2 WHERE id = ?1 AND end IS NULL",
+                    params![id, end.to_rfc3339()],
+                )
+                .map_err(|e| e.to_string())?;
+            if changed == 0 {
+                return Err("No running slice to close".into());
+            }
+            Ok(())
+        })
+    }
+
+    /// Close an optional running slice and open a replacement in one transaction.
+    pub fn replace_running_slice(
+        &self,
+        old_id: Option<&str>,
+        task_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<TimeSlice, String> {
+        let slice = TimeSlice {
+            id: Uuid::new_v4().to_string(),
+            task_id: task_id.to_string(),
+            start: now,
+            end: None,
+        };
+        self.with_conn(|conn| {
+            conn.execute_batch("BEGIN IMMEDIATE")
+                .map_err(|e| e.to_string())?;
+            let result = (|| {
+                if let Some(id) = old_id {
+                    let changed = conn
+                        .execute(
+                            "UPDATE time_slices SET end = ?2 WHERE id = ?1 AND end IS NULL",
+                            params![id, now.to_rfc3339()],
+                        )
+                        .map_err(|e| e.to_string())?;
+                    if changed == 0 {
+                        return Err("No running slice to close".into());
+                    }
+                } else {
+                    let existing: Option<String> = conn
+                        .query_row(
+                            "SELECT id FROM time_slices WHERE end IS NULL LIMIT 1",
+                            [],
+                            |r| r.get(0),
+                        )
+                        .optional()
+                        .map_err(|e| e.to_string())?;
+                    if existing.is_some() {
+                        return Err("A task is already being tracked".into());
+                    }
+                }
+                conn.execute(
+                    "INSERT INTO time_slices (id, task_id, start, end) VALUES (?1, ?2, ?3, NULL)",
+                    params![slice.id, slice.task_id, slice.start.to_rfc3339()],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    Err(e)
+                }
+            }
+        })?;
+        Ok(slice)
+    }
+
+    pub fn insert_closed_slice(
+        &self,
+        task_id: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<TimeSlice, String> {
+        if end <= start {
+            return Err("End must be after start".into());
+        }
+        self.ensure_no_overlap(None, start, end)?;
+        let slice = TimeSlice {
+            id: Uuid::new_v4().to_string(),
+            task_id: task_id.to_string(),
+            start,
+            end: Some(end),
+        };
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO time_slices (id, task_id, start, end) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    slice.id,
+                    slice.task_id,
+                    slice.start.to_rfc3339(),
+                    end.to_rfc3339()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+        Ok(slice)
+    }
+
+    pub fn list_slices_between(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<TimeSlice>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, task_id, start, end FROM time_slices
+                     WHERE start < ?2 AND (end IS NULL OR end > ?1)
+                     ORDER BY start",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![start.to_rfc3339(), end.to_rfc3339()], map_slice)
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })
+    }
+
+    pub fn list_slices_for_day_display(
+        &self,
+        day_start: DateTime<Utc>,
+        day_end: DateTime<Utc>,
+    ) -> Result<Vec<TimeSlice>, String> {
+        self.list_slices_between(day_start, day_end)
+    }
+
+    pub fn delete_slice(&self, id: &str) -> Result<(), String> {
+        self.with_conn(|conn| {
+            let n = conn
+                .execute("DELETE FROM time_slices WHERE id = ?1", [id])
+                .map_err(|e| e.to_string())?;
+            if n == 0 {
+                return Err("Slice not found".into());
+            }
+            Ok(())
+        })
+    }
+
+    pub fn update_slice(&self, input: UpdateSliceInput) -> Result<TimeSlice, String> {
+        let mut slice = self
+            .get_slice(&input.id)?
+            .ok_or_else(|| "Slice not found".to_string())?;
+        if let Some(task_id) = input.task_id {
+            slice.task_id = task_id;
+        }
+        if let Some(start) = input.start {
+            slice.start = start;
+        }
+        if let Some(end) = input.end {
+            slice.end = Some(end);
+        }
+        let end = slice.end.ok_or_else(|| "Cannot clear end on update; stop tracking first".to_string())?;
+        if end <= slice.start {
+            return Err("End must be after start".into());
+        }
+        self.ensure_no_overlap(Some(&slice.id), slice.start, end)?;
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE time_slices SET task_id=?2, start=?3, end=?4 WHERE id=?1",
+                params![
+                    slice.id,
+                    slice.task_id,
+                    slice.start.to_rfc3339(),
+                    end.to_rfc3339()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+        slice.end = Some(end);
+        Ok(slice)
+    }
+
+    pub fn split_slice(&self, input: SplitSliceInput) -> Result<(TimeSlice, TimeSlice), String> {
+        let slice = self
+            .get_slice(&input.id)?
+            .ok_or_else(|| "Slice not found".to_string())?;
+        let end = slice
+            .end
+            .ok_or_else(|| "Cannot split a running slice".to_string())?;
+        if input.at <= slice.start || input.at >= end {
+            return Err("Split point must be inside the slice".into());
+        }
+        // Second half must not collide with anything other than the slice being split.
+        self.ensure_no_overlap(Some(&slice.id), input.at, end)?;
+        let second_id = Uuid::new_v4().to_string();
+        self.with_conn(|conn| {
+            conn.execute_batch("BEGIN IMMEDIATE")
+                .map_err(|e| e.to_string())?;
+            let result = (|| {
+                conn.execute(
+                    "UPDATE time_slices SET end = ?2 WHERE id = ?1",
+                    params![slice.id, input.at.to_rfc3339()],
+                )
+                .map_err(|e| e.to_string())?;
+                conn.execute(
+                    "INSERT INTO time_slices (id, task_id, start, end) VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        second_id,
+                        slice.task_id,
+                        input.at.to_rfc3339(),
+                        end.to_rfc3339()
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    Err(e)
+                }
+            }
+        })?;
+        let first = self
+            .get_slice(&slice.id)?
+            .ok_or_else(|| "Slice missing after split".to_string())?;
+        let second = self
+            .get_slice(&second_id)?
+            .ok_or_else(|| "Second slice missing after split".to_string())?;
+        Ok((first, second))
+    }
+
+    fn ensure_no_overlap(
+        &self,
+        exclude_id: Option<&str>,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<(), String> {
+        self.with_conn(|conn| {
+            let sql = if exclude_id.is_some() {
+                "SELECT id FROM time_slices
+                 WHERE id != ?3
+                   AND start < ?2
+                   AND (end IS NULL OR end > ?1)
+                 LIMIT 1"
+            } else {
+                "SELECT id FROM time_slices
+                 WHERE start < ?2
+                   AND (end IS NULL OR end > ?1)
+                 LIMIT 1"
+            };
+            let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+            let found = if let Some(id) = exclude_id {
+                stmt.query_row(params![start.to_rfc3339(), end.to_rfc3339(), id], |r| {
+                    r.get::<_, String>(0)
+                })
+            } else {
+                stmt.query_row(params![start.to_rfc3339(), end.to_rfc3339()], |r| {
+                    r.get::<_, String>(0)
+                })
+            }
+            .optional()
+            .map_err(|e| e.to_string())?;
+            if found.is_some() {
+                return Err("Time range overlaps an existing entry".into());
+            }
+            Ok(())
+        })
+    }
+
+    pub fn insert_discard(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<DiscardLogEntry, String> {
+        let entry = DiscardLogEntry {
+            id: Uuid::new_v4().to_string(),
+            start,
+            end,
+            duration_ms: (end - start).num_milliseconds().max(0),
+            created_at: Utc::now(),
+        };
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO discard_log (id, start, end, duration_ms, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    entry.id,
+                    entry.start.to_rfc3339(),
+                    entry.end.to_rfc3339(),
+                    entry.duration_ms,
+                    entry.created_at.to_rfc3339(),
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+        Ok(entry)
+    }
+
+    pub fn get_settings(&self) -> Result<Settings, String> {
+        self.with_conn(|conn| {
+            let mut settings = Settings::default();
+            let mut stmt = conn
+                .prepare("SELECT key, value FROM settings")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            for (k, v) in rows {
+                match k.as_str() {
+                    "idle_threshold_mins" => {
+                        settings.idle_threshold_mins = v.parse().unwrap_or(10);
+                    }
+                    "daily_goal_mins" => {
+                        settings.daily_goal_mins = v.parse().unwrap_or(480);
+                    }
+                    "switch_shortcut" => settings.switch_shortcut = v,
+                    "autostart" => settings.autostart = v == "true" || v == "1",
+                    "theme" => {
+                        settings.theme = if v == "light" {
+                            "light".into()
+                        } else {
+                            "dark".into()
+                        };
+                    }
+                    _ => {}
+                }
+            }
+            Ok(settings)
+        })
+    }
+
+    pub fn update_settings(&self, settings: &Settings) -> Result<(), String> {
+        self.with_conn(|conn| {
+            let theme = if settings.theme == "light" {
+                "light"
+            } else {
+                "dark"
+            };
+            let pairs = [
+                (
+                    "idle_threshold_mins",
+                    settings.idle_threshold_mins.to_string(),
+                ),
+                ("daily_goal_mins", settings.daily_goal_mins.to_string()),
+                ("switch_shortcut", settings.switch_shortcut.clone()),
+                (
+                    "autostart",
+                    if settings.autostart {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    },
+                ),
+                ("theme", theme.into()),
+            ];
+            for (k, v) in pairs {
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![k, v],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn daily_total_ms(&self, now: DateTime<Utc>) -> Result<i64, String> {
+        let day = now.with_timezone(&chrono::Local).date_naive();
+        let (start, end) = local_day_bounds(day);
+        let slices = self.list_slices_between(start, end)?;
+        let mut total = 0i64;
+        for s in slices {
+            let s_end = s.end.unwrap_or(now);
+            total += overlap_ms(s.start, s_end, start, end);
+        }
+        Ok(total)
+    }
+}
+
+fn map_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
+    Ok(Task {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        color: row.get(2)?,
+        description: row.get(3)?,
+        notes: row.get(4)?,
+        archived: row.get::<_, i32>(5)? != 0,
+        created_at: parse_dt(&row.get::<_, String>(6)?)?,
+        updated_at: parse_dt(&row.get::<_, String>(7)?)?,
+    })
+}
+
+fn map_slice(row: &rusqlite::Row<'_>) -> rusqlite::Result<TimeSlice> {
+    let end: Option<String> = row.get(3)?;
+    Ok(TimeSlice {
+        id: row.get(0)?,
+        task_id: row.get(1)?,
+        start: parse_dt(&row.get::<_, String>(2)?)?,
+        end: end.map(|s| parse_dt(&s)).transpose()?,
+    })
+}
+
+fn parse_dt(s: &str) -> rusqlite::Result<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|d| d.with_timezone(&Utc))
+        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))
+}

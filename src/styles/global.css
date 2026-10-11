@@ -1,0 +1,131 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap");
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #12161a;
+  --bg-deep: #0c0f12;
+  --bg-elevated: #1a2128;
+  --ink: #e8eef2;
+  --muted: #8b9aab;
+  --panel: #1a2128;
+  --line: rgba(232, 238, 242, 0.1);
+  --accent: #3d9b8f;
+  --accent-soft: rgba(61, 155, 143, 0.18);
+  --danger: #e07a6a;
+  --goal-met: #d4a054;
+  --goal-under: #3d9b8f;
+  --gap-short: #3d9b8f;
+  --gap-medium: #d4a054;
+  --gap-long: #e07a6a;
+  --control-bg: #12161a;
+  --shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  --db-error-bg: rgba(224, 122, 106, 0.12);
+  --db-error-border: rgba(224, 122, 106, 0.35);
+  --kbd-bg: rgba(232, 238, 242, 0.08);
+  --confirm-bg: rgba(61, 155, 143, 0.15);
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --radius: 12px;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef1f4;
+  --bg-deep: #e2e7ec;
+  --bg-elevated: #f7f9fb;
+  --ink: #1a2128;
+  --muted: #5c6b7a;
+  --panel: #f7f9fb;
+  --line: rgba(26, 33, 40, 0.12);
+  --accent: #2f7d73;
+  --accent-soft: rgba(47, 125, 115, 0.14);
+  --danger: #c45c4e;
+  --goal-met: #b8862e;
+  --goal-under: #2f7d73;
+  --gap-short: #2f7d73;
+  --gap-medium: #b8862e;
+  --gap-long: #c45c4e;
+  --control-bg: #ffffff;
+  --shadow: 0 12px 28px rgba(26, 33, 40, 0.1);
+  --db-error-bg: #fef2f2;
+  --db-error-border: #fecaca;
+  --kbd-bg: rgba(26, 33, 40, 0.06);
+  --confirm-bg: rgba(47, 125, 115, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+body {
+  min-height: 100vh;
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse at 0% 0%, rgba(61, 155, 143, 0.1), transparent 42%),
+    radial-gradient(ellipse at 100% 0%, rgba(212, 160, 84, 0.06), transparent 38%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-deep) 100%);
+}
+
+[data-theme="light"] body {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse at 0% 0%, rgba(47, 125, 115, 0.08), transparent 42%),
+    radial-gradient(ellipse at 100% 0%, rgba(184, 134, 46, 0.06), transparent 38%),
+    linear-gradient(180deg, #f4f6f8 0%, var(--bg) 50%, var(--bg-deep) 100%);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.mono {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+.db-error {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--db-error-bg);
+  color: var(--danger);
+  border-bottom: 1px solid var(--db-error-border);
+  padding: var(--s3) var(--s4);
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s4);
+}
+
+.db-error button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-weight: 600;
+}

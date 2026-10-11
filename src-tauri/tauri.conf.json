@@ -1,0 +1,83 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Time Keeper",
+  "version": "0.1.0",
+  "identifier": "com.michaelbrowne.timekeeper",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Time Keeper",
+        "width": 1100,
+        "height": 740,
+        "visible": true,
+        "backgroundColor": [18, 22, 26, 255]
+      },
+      {
+        "label": "tracker",
+        "title": "Time Keeper Tracker",
+        "width": 280,
+        "height": 40,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "visible": true,
+        "transparent": true,
+        "shadow": false,
+        "backgroundColor": [0, 0, 0, 0]
+      },
+      {
+        "label": "switcher",
+        "title": "Switch Task",
+        "width": 420,
+        "height": 360,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "visible": false,
+        "center": true,
+        "transparent": true,
+        "shadow": false,
+        "backgroundColor": [0, 0, 0, 0]
+      },
+      {
+        "label": "gap",
+        "title": "Attribute Time",
+        "width": 420,
+        "height": 320,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "visible": false,
+        "center": true,
+        "transparent": true,
+        "shadow": false,
+        "backgroundColor": [0, 0, 0, 0]
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

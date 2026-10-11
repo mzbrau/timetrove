@@ -1,0 +1,81 @@
+html,
+body,
+#root {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+.switcher {
+  height: 100vh;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.switcher input {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  padding: var(--s4);
+  background: transparent;
+  outline: none;
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+
+.switcher ul {
+  list-style: none;
+  margin: 0;
+  padding: var(--s2);
+  overflow: auto;
+  flex: 1;
+}
+
+.switcher li button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  padding: var(--s2) var(--s3);
+  border-radius: 10px;
+}
+
+.switcher li button.active,
+.switcher li button:hover {
+  background: var(--accent-soft);
+}
+
+.switcher .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.confirm,
+.err,
+.empty {
+  padding: var(--s2) var(--s4);
+  font-size: 0.9rem;
+}
+
+.confirm {
+  background: var(--confirm-bg);
+  color: var(--accent);
+}
+
+.err {
+  background: var(--db-error-bg);
+  color: var(--danger);
+}
+
+.empty {
+  color: var(--muted);
+}
