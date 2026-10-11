@@ -17,6 +17,16 @@ export function formatHm(ms: number) {
   return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
 }
 
+/** Duration as `HH:MM:SS`, floored (hours may exceed 24). */
+export function formatHms(ms: number) {
+  if (!Number.isFinite(ms) || ms < 0) return "00:00:00";
+  const totalSecs = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSecs / 3600);
+  const mins = Math.floor((totalSecs % 3600) / 60);
+  const secs = totalSecs % 60;
+  return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
 /** Normalize to `#rrggbb` for color inputs / swatches; falls back if invalid. */
 export function normalizeHexColor(value: string, fallback = "#0f766e"): string {
   const v = value.trim();

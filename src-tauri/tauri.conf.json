@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Time Keeper",
+  "productName": "TimeTrove",
   "version": "0.1.0",
-  "identifier": "com.michaelbrowne.timekeeper",
+  "identifier": "com.mzbrau.timetrove",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Time Keeper",
+        "title": "TimeTrove",
         "width": 1100,
         "height": 740,
         "visible": true,
@@ -22,7 +22,7 @@
       },
       {
         "label": "tracker",
-        "title": "Time Keeper Tracker",
+        "title": "TimeTrove Tracker",
         "width": 280,
         "height": 40,
         "decorations": false,
@@ -71,13 +71,21 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["dmg", "nsis"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../shared/api";
 import { normalizeHexColor } from "../../shared/format";
-import type { Task, TrackerState } from "../../shared/types";
+import type { Task, TaskBookingSummary, TrackerState } from "../../shared/types";
 import { ConfirmBar } from "./ConfirmBar";
 
 type Draft = {
@@ -18,6 +18,18 @@ function draftFromTask(task: Task): Draft {
     description: task.description,
     notes: task.notes,
   };
+}
+
+function formatLastBooked(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 type Props = {
@@ -45,6 +57,7 @@ export function TasksPanel({
   });
   const [error, setError] = useState<string | null>(null);
   const [pendingSelectId, setPendingSelectId] = useState<string | null>(null);
+  const [booking, setBooking] = useState<TaskBookingSummary | null>(null);
 
   const load = async () => {
     const list = await api.listTasks(true);
@@ -69,6 +82,26 @@ export function TasksPanel({
       setDraft(draftFromTask(selected));
     }
   }, [selectedId, selected?.updatedAt]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setBooking(null);
+      return;
+    }
+    let cancelled = false;
+    setBooking(null);
+    api
+      .getTaskBookingSummary(selectedId)
+      .then((summary) => {
+        if (!cancelled) setBooking(summary);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
 
   const isDirty = useMemo(() => {
     if (!selected) return false;
@@ -114,6 +147,16 @@ export function TasksPanel({
       return;
     }
     setSelectedId(id);
+  };
+
+  const toggleStar = async (task: Task) => {
+    try {
+      setError(null);
+      await api.updateTask({ id: task.id, starred: !task.starred });
+      await load();
+    } catch (e) {
+      setError(String(e));
+    }
   };
 
   return (
@@ -227,7 +270,16 @@ export function TasksPanel({
         {!selected ? (
           <p className="muted">Select or create a task.</p>
         ) : (
-          <>
+          <div className="task-detail-body">
+            <button
+              type="button"
+              className={`task-detail-star${selected.starred ? " on" : ""}`}
+              aria-label={selected.starred ? "Unstar task" : "Star task"}
+              title={selected.starred ? "Unstar" : "Star"}
+              onClick={() => void toggleStar(selected)}
+            >
+              {selected.starred ? "★" : "☆"}
+            </button>
             <label>
               Name
               <input
@@ -282,6 +334,31 @@ export function TasksPanel({
                 onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
               />
             </label>
+            <div className="task-activity" aria-live="polite">
+              <div className="task-activity-title">Recent booking</div>
+              {booking ? (
+                booking.thisWeekMs === 0 && booking.lastWeekMs === 0 ? (
+                  <p className="muted task-activity-idle">
+                    {booking.lastBookedAt
+                      ? `Last booked ${formatLastBooked(booking.lastBookedAt)}`
+                      : "Never booked"}
+                  </p>
+                ) : (
+                  <dl className="task-activity-weeks">
+                    <div>
+                      <dt>This week</dt>
+                      <dd className="mono">{booking.thisWeekDisplay}</dd>
+                    </div>
+                    <div>
+                      <dt>Last week</dt>
+                      <dd className="mono">{booking.lastWeekDisplay}</dd>
+                    </div>
+                  </dl>
+                )
+              ) : (
+                <p className="muted">Loading…</p>
+              )}
+            </div>
             <div className="row-actions">
               <button
                 type="button"
@@ -321,7 +398,7 @@ export function TasksPanel({
                 {selected.archived ? "Unarchive" : "Archive"}
               </button>
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>
