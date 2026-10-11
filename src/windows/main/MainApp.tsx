@@ -12,13 +12,23 @@ type Tab = "tasks" | "timesheet" | "entries" | "settings";
 export function MainApp() {
   const { state, error, setError } = useTrackerState();
   const [tab, setTab] = useState<Tab>("tasks");
+  const [dismissedError, setDismissedError] = useState<string | null>(null);
+
+  const bannerError = error || state?.dbError || null;
+  const showBanner = Boolean(bannerError && bannerError !== dismissedError);
 
   return (
     <div className="main-app">
-      {(error || state?.dbError) && (
+      {showBanner && bannerError && (
         <div className="db-error">
-          <span>{error || state?.dbError}</span>
-          <button type="button" onClick={() => setError(null)}>
+          <span>{bannerError}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setDismissedError(bannerError);
+              setError(null);
+            }}
+          >
             Dismiss
           </button>
         </div>

@@ -1,7 +1,7 @@
 use crate::domain::*;
 use crate::engine::{hide_gap_window, hide_switcher, show_main, show_switcher, Engine};
-use chrono::{Duration, Utc};
-use std::path::PathBuf;
+use chrono::Duration;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
@@ -131,6 +131,12 @@ pub fn update_settings(
     app: AppHandle,
     settings: Settings,
 ) -> Result<Settings, String> {
+    if settings.idle_threshold_mins == 0 {
+        return Err("Idle threshold must be at least 1 minute".into());
+    }
+    if settings.daily_goal_mins == 0 {
+        return Err("Daily goal must be at least 1 minute".into());
+    }
     engine.db().update_settings(&settings)?;
     if settings.autostart {
         let _ = app.autolaunch().enable();
@@ -247,8 +253,7 @@ pub fn reveal_database(engine: State<'_, Arc<Engine>>, app: AppHandle) -> Result
 
 #[tauri::command]
 pub fn export_database(engine: State<'_, Arc<Engine>>, dest: String) -> Result<(), String> {
-    std::fs::copy(engine.db().path(), dest).map_err(|e| e.to_string())?;
-    Ok(())
+    engine.db().backup_to(Path::new(&dest))
 }
 
 #[tauri::command]
@@ -259,15 +264,10 @@ pub fn import_database(
 ) -> Result<(), String> {
     let dest = engine.db().path().clone();
     let backup = dest.with_extension("db.bak");
-    let _ = std::fs::copy(&dest, &backup);
+    engine.db().backup_to(&backup)?;
     std::fs::copy(&source, &dest).map_err(|e| e.to_string())?;
     engine.db().reopen()?;
-    // Reconcile engine against imported DB
-    if let Some(running) = engine.db().running_slice()? {
-        // Force stop imported running slices for safety — close at now
-        let _ = engine.db().close_slice(&running.id, Utc::now());
-    }
-    let _ = engine.stop();
+    engine.reset_after_import()?;
     engine.emit_state(&app);
     Ok(())
 }

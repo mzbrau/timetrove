@@ -137,10 +137,13 @@ impl Engine {
             return Err("Cannot track an archived task".into());
         }
         let now = Utc::now();
-        if let EnginePhase::Tracking { slice_id, .. } = self.phase.lock().clone() {
-            self.db.close_slice(&slice_id, now)?;
-        }
-        let slice = self.db.open_slice(task_id, now)?;
+        let old_id = match self.phase.lock().clone() {
+            EnginePhase::Tracking { slice_id, .. } => Some(slice_id),
+            _ => None,
+        };
+        let slice = self
+            .db
+            .replace_running_slice(old_id.as_deref(), task_id, now)?;
         *self.phase.lock() = EnginePhase::Tracking {
             task_id: task_id.to_string(),
             slice_id: slice.id,
@@ -148,6 +151,18 @@ impl Engine {
         *self.previous_task_id.lock() = Some(task_id.to_string());
         self.touch_activity();
         self.snapshot()
+    }
+
+    /// Force a stopped, consistent engine after replacing the on-disk database.
+    pub fn reset_after_import(&self) -> Result<(), String> {
+        self.clear_error();
+        if let Some(running) = self.db.running_slice()? {
+            let _ = self.db.close_slice(&running.id, Utc::now());
+        }
+        *self.phase.lock() = EnginePhase::Stopped;
+        *self.previous_task_id.lock() = None;
+        self.touch_activity();
+        Ok(())
     }
 
     pub fn stop(&self) -> Result<TrackerState, String> {
@@ -268,43 +283,48 @@ impl Engine {
     }
 
     pub fn resolve_gap_previous(&self) -> Result<TrackerState, String> {
-        let (gap_start, prev_id) = self.take_gap()?;
+        let (gap_start, prev_id) = self.peek_gap()?;
         let now = Utc::now();
         if now > gap_start {
             self.db.insert_closed_slice(&prev_id, gap_start, now)?;
         }
+        self.clear_gap_phase();
         self.start_task(&prev_id)
     }
 
     pub fn resolve_gap_other(&self, task_id: &str) -> Result<TrackerState, String> {
-        let (gap_start, _) = self.take_gap()?;
+        let (gap_start, _) = self.peek_gap()?;
         let now = Utc::now();
         if now > gap_start {
             self.db.insert_closed_slice(task_id, gap_start, now)?;
         }
+        self.clear_gap_phase();
         self.start_task(task_id)
     }
 
     pub fn resolve_gap_discard(&self) -> Result<TrackerState, String> {
-        let (gap_start, prev_id) = self.take_gap()?;
+        let (gap_start, prev_id) = self.peek_gap()?;
         let now = Utc::now();
         if now > gap_start {
             self.db.insert_discard(gap_start, now)?;
         }
+        self.clear_gap_phase();
         self.start_task(&prev_id)
     }
 
-    fn take_gap(&self) -> Result<(chrono::DateTime<Utc>, String), String> {
-        let phase = self.phase.lock().clone();
-        match phase {
+    fn peek_gap(&self) -> Result<(chrono::DateTime<Utc>, String), String> {
+        match self.phase.lock().clone() {
             EnginePhase::NeedsAttribution {
                 gap_start,
                 previous_task_id,
-            } => {
-                *self.phase.lock() = EnginePhase::Stopped;
-                Ok((gap_start, previous_task_id))
-            }
+            } => Ok((gap_start, previous_task_id)),
             _ => Err("No pending gap".into()),
+        }
+    }
+
+    fn clear_gap_phase(&self) {
+        if matches!(*self.phase.lock(), EnginePhase::NeedsAttribution { .. }) {
+            *self.phase.lock() = EnginePhase::Stopped;
         }
     }
 
@@ -322,9 +342,10 @@ impl Engine {
         if slice.start >= midnight {
             return Ok(());
         }
-        // Close at midnight, reopen
-        self.db.close_slice(&slice_id, midnight)?;
-        let new_slice = self.db.open_slice(&task_id, midnight)?;
+        // Close at midnight, reopen atomically
+        let new_slice = self
+            .db
+            .replace_running_slice(Some(&slice_id), &task_id, midnight)?;
         *self.phase.lock() = EnginePhase::Tracking {
             task_id,
             slice_id: new_slice.id,

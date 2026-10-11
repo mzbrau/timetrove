@@ -19,6 +19,9 @@ export function SettingsPanel() {
   }, []);
 
   if (!settings) {
+    if (error) {
+      return <p className="err">{error}</p>;
+    }
     return <p className="muted">Loading settings…</p>;
   }
 

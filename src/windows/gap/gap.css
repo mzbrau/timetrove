@@ -109,6 +109,11 @@ kbd {
   margin-bottom: var(--s1);
 }
 
+.search li button.selected {
+  background: var(--accent-soft);
+  border-color: rgba(61, 155, 143, 0.45);
+}
+
 .dot {
   width: 10px;
   height: 10px;

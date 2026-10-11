@@ -63,6 +63,17 @@ pub fn run() {
             });
         }
 
+        // Hide main instead of destroying it so tray / single-instance can reopen.
+        if let Some(main) = app.get_webview_window("main") {
+            let main_hide = main.clone();
+            main.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = main_hide.hide();
+                }
+            });
+        }
+
         setup_tray(app.handle(), engine.clone())?;
 
         // Register global shortcut from settings

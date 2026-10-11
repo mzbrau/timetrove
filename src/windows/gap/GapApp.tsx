@@ -18,40 +18,73 @@ export function GapApp() {
   const [mode, setMode] = useState<"choose" | "search">("choose");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [query, setQuery] = useState("");
+  const [selectedIndex, setSelectedIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api.listTasks(false).then(setTasks).catch(() => undefined);
   }, []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-      if (mode !== "choose") return;
-      if (e.key === "1") {
-        e.preventDefault();
-        void api.resolveGapPrevious().catch((err) => setError(String(err)));
-      } else if (e.key === "2") {
-        e.preventDefault();
-        setMode("search");
-      } else if (e.key === "3") {
-        e.preventDefault();
-        void api.resolveGapDiscard().catch((err) => setError(String(err)));
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [mode]);
-
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return tasks;
     return tasks.filter((t) => t.name.toLowerCase().includes(q));
   }, [tasks, query]);
+
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [query, filtered.length]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (mode === "choose") {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        if (e.key === "1") {
+          e.preventDefault();
+          void api.resolveGapPrevious().catch((err) => setError(String(err)));
+        } else if (e.key === "2") {
+          e.preventDefault();
+          setMode("search");
+        } else if (e.key === "3") {
+          e.preventDefault();
+          void api.resolveGapDiscard().catch((err) => setError(String(err)));
+        }
+        return;
+      }
+
+      // search mode
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setMode("choose");
+        setQuery("");
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedIndex((i) =>
+          filtered.length === 0 ? 0 : Math.min(i + 1, filtered.length - 1),
+        );
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIndex((i) => Math.max(i - 1, 0));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const task = filtered[selectedIndex];
+        if (task) {
+          void api
+            .resolveGapOther(task.id)
+            .catch((err) => setError(String(err)));
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [mode, filtered, selectedIndex]);
 
   useEffect(() => {
     if (state && state.gapDurationMs == null) {
@@ -104,9 +137,11 @@ export function GapApp() {
             onChange={(e) => setQuery(e.target.value)}
           />
           <ul>
-            {filtered.map((task) => (
+            {filtered.map((task, index) => (
               <li key={task.id}>
                 <button
+                  className={index === selectedIndex ? "selected" : undefined}
+                  onMouseEnter={() => setSelectedIndex(index)}
                   onClick={() =>
                     api
                       .resolveGapOther(task.id)

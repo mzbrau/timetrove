@@ -1,8 +1,8 @@
 use crate::domain::*;
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
-use rusqlite::{params, Connection, OptionalExtension};
-use std::path::PathBuf;
+use rusqlite::{params, Connection, DatabaseName, OptionalExtension};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -33,6 +33,20 @@ impl Db {
         let mut guard = self.conn.lock();
         *guard = new;
         Ok(())
+    }
+
+    /// Consistent online backup (includes committed WAL pages).
+    pub fn backup_to(&self, dest: &Path) -> Result<(), String> {
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        if dest.exists() {
+            std::fs::remove_file(dest).map_err(|e| e.to_string())?;
+        }
+        self.with_conn(|conn| {
+            conn.backup(DatabaseName::Main, dest, None)
+                .map_err(|e| e.to_string())
+        })
     }
 
     pub fn list_tasks(&self, include_archived: bool) -> Result<Vec<Task>, String> {
@@ -220,23 +234,63 @@ impl Db {
         })
     }
 
-    pub fn open_slice(&self, task_id: &str, start: DateTime<Utc>) -> Result<TimeSlice, String> {
-        if self.running_slice()?.is_some() {
-            return Err("A task is already being tracked".into());
-        }
+    /// Close an optional running slice and open a replacement in one transaction.
+    pub fn replace_running_slice(
+        &self,
+        old_id: Option<&str>,
+        task_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<TimeSlice, String> {
         let slice = TimeSlice {
             id: Uuid::new_v4().to_string(),
             task_id: task_id.to_string(),
-            start,
+            start: now,
             end: None,
         };
         self.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO time_slices (id, task_id, start, end) VALUES (?1, ?2, ?3, NULL)",
-                params![slice.id, slice.task_id, slice.start.to_rfc3339()],
-            )
-            .map_err(|e| e.to_string())?;
-            Ok(())
+            conn.execute_batch("BEGIN IMMEDIATE")
+                .map_err(|e| e.to_string())?;
+            let result = (|| {
+                if let Some(id) = old_id {
+                    let changed = conn
+                        .execute(
+                            "UPDATE time_slices SET end = ?2 WHERE id = ?1 AND end IS NULL",
+                            params![id, now.to_rfc3339()],
+                        )
+                        .map_err(|e| e.to_string())?;
+                    if changed == 0 {
+                        return Err("No running slice to close".into());
+                    }
+                } else {
+                    let existing: Option<String> = conn
+                        .query_row(
+                            "SELECT id FROM time_slices WHERE end IS NULL LIMIT 1",
+                            [],
+                            |r| r.get(0),
+                        )
+                        .optional()
+                        .map_err(|e| e.to_string())?;
+                    if existing.is_some() {
+                        return Err("A task is already being tracked".into());
+                    }
+                }
+                conn.execute(
+                    "INSERT INTO time_slices (id, task_id, start, end) VALUES (?1, ?2, ?3, NULL)",
+                    params![slice.id, slice.task_id, slice.start.to_rfc3339()],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    Err(e)
+                }
+            }
         })?;
         Ok(slice)
     }
@@ -360,18 +414,47 @@ impl Db {
         if input.at <= slice.start || input.at >= end {
             return Err("Split point must be inside the slice".into());
         }
+        // Second half must not collide with anything other than the slice being split.
+        self.ensure_no_overlap(Some(&slice.id), input.at, end)?;
+        let second_id = Uuid::new_v4().to_string();
         self.with_conn(|conn| {
-            conn.execute(
-                "UPDATE time_slices SET end = ?2 WHERE id = ?1",
-                params![slice.id, input.at.to_rfc3339()],
-            )
-            .map_err(|e| e.to_string())?;
-            Ok(())
+            conn.execute_batch("BEGIN IMMEDIATE")
+                .map_err(|e| e.to_string())?;
+            let result = (|| {
+                conn.execute(
+                    "UPDATE time_slices SET end = ?2 WHERE id = ?1",
+                    params![slice.id, input.at.to_rfc3339()],
+                )
+                .map_err(|e| e.to_string())?;
+                conn.execute(
+                    "INSERT INTO time_slices (id, task_id, start, end) VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        second_id,
+                        slice.task_id,
+                        input.at.to_rfc3339(),
+                        end.to_rfc3339()
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    Err(e)
+                }
+            }
         })?;
-        let second = self.insert_closed_slice(&slice.task_id, input.at, end)?;
         let first = self
             .get_slice(&slice.id)?
             .ok_or_else(|| "Slice missing after split".to_string())?;
+        let second = self
+            .get_slice(&second_id)?
+            .ok_or_else(|| "Second slice missing after split".to_string())?;
         Ok((first, second))
     }
 
