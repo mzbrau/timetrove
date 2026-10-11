@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { api } from "../../shared/api";
@@ -10,7 +11,7 @@ import { formatHm, normalizeHexColor } from "../../shared/format";
 import type { Task, TimeSlice } from "../../shared/types";
 import { TaskPicker } from "./TaskPicker";
 import {
-  DAY_MS,
+  dayDurationMs,
   dayMsToIso,
   formatDayClock,
   gapsFromRanges,
@@ -72,6 +73,7 @@ export function DayTimeline({
 }: Props) {
   const trackRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  const gapPointerRef = useRef(false);
   const rangesRef = useRef<
     { slice: TimeSlice; startMs: number; endMs: number }[]
   >([]);
@@ -86,6 +88,10 @@ export function DayTimeline({
   const [pointerPos, setPointerPos] = useState<{ x: number; y: number } | null>(
     null,
   );
+
+  const dayLength = dayDurationMs(day);
+  const dayLengthRef = useRef(dayLength);
+  dayLengthRef.current = dayLength;
 
   const activeTasks = useMemo(
     () => tasks.filter((t) => !t.archived),
@@ -103,11 +109,11 @@ export function DayTimeline({
         ? msInDay(day, slice.end)
         : Math.max(
             startMs,
-            Math.min(DAY_MS, nowMs - localDayStart(day).getTime()),
+            Math.min(dayLength, nowMs - localDayStart(day).getTime()),
           );
       return { slice, startMs, endMs };
     });
-  }, [slices, day, nowMs]);
+  }, [slices, day, nowMs, dayLength]);
   rangesRef.current = ranges;
 
   const clampResizePreview = (
@@ -159,8 +165,9 @@ export function DayTimeline({
     () =>
       gapsFromRanges(
         displayRanges.map((r) => ({ startMs: r.startMs, endMs: r.endMs })),
+        dayLength,
       ),
-    [displayRanges],
+    [displayRanges, dayLength],
   );
 
   const labels = hourLabels(zoom);
@@ -204,9 +211,10 @@ export function DayTimeline({
     const el = trackRef.current;
     if (!el) return 0;
     const rect = el.getBoundingClientRect();
+    const length = dayLengthRef.current;
     const ratio = (clientX - rect.left) / rect.width;
     return snapMs(
-      Math.max(0, Math.min(DAY_MS, ratio * DAY_MS)),
+      Math.max(0, Math.min(length, ratio * length)),
       stepMinsRef.current,
     );
   };
@@ -215,6 +223,14 @@ export function DayTimeline({
     dragRef.current = next;
     setDrag(next);
   };
+
+  useEffect(() => {
+    dragRef.current = null;
+    setDrag(null);
+    setPending(null);
+    setTooltip(null);
+    setPointerPos(null);
+  }, [day]);
 
   useEffect(() => {
     if (!drag) return;
@@ -346,6 +362,7 @@ export function DayTimeline({
       sliceId,
       startMs,
       endMs,
+      dayLengthRef.current,
     );
     updateDrag({
       kind: "resize",
@@ -371,6 +388,84 @@ export function DayTimeline({
       currentMs: clamped,
       moved: false,
     });
+  };
+
+  const openGapPending = (gapStart: number, gapEnd: number) => {
+    if (pending || drag) return;
+    setPending({
+      startMs: gapStart,
+      endMs: gapEnd,
+      taskId: activeTasks[0]?.id ?? "",
+    });
+  };
+
+  const nudgeEdge = async (
+    sliceId: string,
+    edge: "start" | "end",
+    startMs: number,
+    endMs: number,
+    direction: -1 | 1,
+  ) => {
+    const step = stepMinsRef.current * 60_000;
+    const { minBound, maxBound } = resizeNeighborBounds(
+      rangesRef.current.map((r) => ({
+        id: r.slice.id,
+        startMs: r.startMs,
+        endMs: r.endMs,
+      })),
+      sliceId,
+      startMs,
+      endMs,
+      dayLengthRef.current,
+    );
+    let nextStart = startMs;
+    let nextEnd = endMs;
+    if (edge === "start") {
+      nextStart = clampResizePreview(
+        "start",
+        startMs + direction * step,
+        endMs,
+        minBound,
+        maxBound,
+      );
+    } else {
+      nextEnd = clampResizePreview(
+        "end",
+        endMs + direction * step,
+        startMs,
+        minBound,
+        maxBound,
+      );
+    }
+    if (nextStart === startMs && nextEnd === endMs) return;
+    try {
+      await api.updateSlice({
+        id: sliceId,
+        start: dayMsToIso(day, nextStart),
+        end: dayMsToIso(day, nextEnd),
+      });
+      await onChanged();
+    } catch (err) {
+      onError(String(err));
+    }
+  };
+
+  const onHandleKeyDown = (
+    e: ReactKeyboardEvent,
+    sliceId: string,
+    edge: "start" | "end",
+    startMs: number,
+    endMs: number,
+  ) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    void nudgeEdge(
+      sliceId,
+      edge,
+      startMs,
+      endMs,
+      e.key === "ArrowLeft" ? -1 : 1,
+    );
   };
 
   const zoomIn = () => {
@@ -430,11 +525,22 @@ export function DayTimeline({
                 type="button"
                 className="day-timeline-gap"
                 style={{
-                  left: `${(gap.startMs / DAY_MS) * 100}%`,
-                  width: `${((gap.endMs - gap.startMs) / DAY_MS) * 100}%`,
+                  left: `${(gap.startMs / dayLength) * 100}%`,
+                  width: `${((gap.endMs - gap.startMs) / dayLength) * 100}%`,
                 }}
                 aria-label="Empty time"
-                onPointerDown={(e) => beginGap(e, gap.startMs, gap.endMs)}
+                onPointerDown={(e) => {
+                  gapPointerRef.current = true;
+                  beginGap(e, gap.startMs, gap.endMs);
+                }}
+                onClick={() => {
+                  // Pointer path already handled via drag finish; click is for keyboard.
+                  if (gapPointerRef.current) {
+                    gapPointerRef.current = false;
+                    return;
+                  }
+                  openGapPending(gap.startMs, gap.endMs);
+                }}
               />
             ))}
 
@@ -448,8 +554,8 @@ export function DayTimeline({
                   key={slice.id}
                   className="day-timeline-seg"
                   style={{
-                    left: `${(startMs / DAY_MS) * 100}%`,
-                    width: `${(Math.max(dur, 60_000) / DAY_MS) * 100}%`,
+                    left: `${(startMs / dayLength) * 100}%`,
+                    width: `${(Math.max(dur, 60_000) / dayLength) * 100}%`,
                     backgroundColor: color,
                   }}
                   onMouseEnter={(e) =>
@@ -468,19 +574,31 @@ export function DayTimeline({
                   }
                   onMouseLeave={() => setTooltip(null)}
                 >
-                  <span
-                    className="day-timeline-handle start"
-                    onPointerDown={(e) =>
-                      beginResize(e, slice.id, "start", startMs, endMs)
-                    }
-                  />
                   {!running && (
-                    <span
-                      className="day-timeline-handle end"
-                      onPointerDown={(e) =>
-                        beginResize(e, slice.id, "end", startMs, endMs)
-                      }
-                    />
+                    <>
+                      <button
+                        type="button"
+                        className="day-timeline-handle start"
+                        aria-label="Resize start"
+                        onPointerDown={(e) =>
+                          beginResize(e, slice.id, "start", startMs, endMs)
+                        }
+                        onKeyDown={(e) =>
+                          onHandleKeyDown(e, slice.id, "start", startMs, endMs)
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="day-timeline-handle end"
+                        aria-label="Resize end"
+                        onPointerDown={(e) =>
+                          beginResize(e, slice.id, "end", startMs, endMs)
+                        }
+                        onKeyDown={(e) =>
+                          onHandleKeyDown(e, slice.id, "end", startMs, endMs)
+                        }
+                      />
+                    </>
                   )}
                 </div>
               );
@@ -490,10 +608,10 @@ export function DayTimeline({
               <div
                 className="day-timeline-draft"
                 style={{
-                  left: `${(draftGap.startMs / DAY_MS) * 100}%`,
+                  left: `${(draftGap.startMs / dayLength) * 100}%`,
                   width: `${(
                     (draftGap.endMs - draftGap.startMs) /
-                    DAY_MS
+                    dayLength
                   ) * 100}%`,
                 }}
               />

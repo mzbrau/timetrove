@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   DAY_MS,
+  dayDurationMs,
   dayMsToIso,
   formatDayClock,
   gapsFromRanges,
   hourLabels,
+  localDayEnd,
+  localDayStart,
   msInDay,
   resizeNeighborBounds,
   snapMs,
@@ -19,7 +22,17 @@ describe("timelineMath", () => {
     expect(dayMsToIso(day, 0)).toBe(
       new Date(2026, 9, 12, 0, 0, 0, 0).toISOString(),
     );
-    expect(msInDay(day, dayMsToIso(day, DAY_MS))).toBe(DAY_MS);
+    const duration = dayDurationMs(day);
+    expect(msInDay(day, dayMsToIso(day, duration))).toBe(duration);
+  });
+
+  it("derives day end from the next local midnight", () => {
+    const day = "2026-10-12";
+    const start = localDayStart(day);
+    const end = localDayEnd(day);
+    expect(end.getTime() - start.getTime()).toBe(dayDurationMs(day));
+    expect(end.getDate()).toBe(start.getDate() + 1);
+    expect(end.getHours()).toBe(0);
   });
 
   it("snaps and chooses step from zoom", () => {
@@ -41,6 +54,19 @@ describe("timelineMath", () => {
       { startMs: 0, endMs: 2 * 60 * 60_000 },
       { startMs: 4 * 60 * 60_000, endMs: 6 * 60 * 60_000 },
       { startMs: 7 * 60 * 60_000, endMs: DAY_MS },
+    ]);
+  });
+
+  it("builds gaps using a custom day length", () => {
+    const shortDay = 23 * 60 * 60_000;
+    expect(
+      gapsFromRanges(
+        [{ startMs: 2 * 60 * 60_000, endMs: 4 * 60 * 60_000 }],
+        shortDay,
+      ),
+    ).toEqual([
+      { startMs: 0, endMs: 2 * 60 * 60_000 },
+      { startMs: 4 * 60 * 60_000, endMs: shortDay },
     ]);
   });
 

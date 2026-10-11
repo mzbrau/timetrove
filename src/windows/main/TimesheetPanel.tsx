@@ -43,6 +43,11 @@ export function TimesheetPanel() {
     }
     setError(null);
     const monday = mondayOfIsoWeek(week, year);
+    const parts = isoWeekParts(monday);
+    if (parts.week !== week || parts.year !== year) {
+      setError("That ISO week does not exist for the chosen year");
+      return;
+    }
     await load(monday);
   };
 

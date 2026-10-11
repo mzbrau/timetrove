@@ -16,7 +16,14 @@ import { TaskPicker } from "./TaskPicker";
 type RowMode =
   | { kind: "idle" }
   | { kind: "move"; taskId: string }
+  | { kind: "split"; at: string }
   | { kind: "delete" };
+
+function midpointLocal(startIso: string, endIso: string) {
+  const mid =
+    (new Date(startIso).getTime() + new Date(endIso).getTime()) / 2;
+  return toLocalInput(new Date(mid).toISOString());
+}
 
 function defaultRangeForDay(day: string) {
   return {
@@ -311,17 +318,30 @@ export function EntriesPanel({ state }: Props) {
                     {mode.kind === "idle" && (
                       <div className="row-actions">
                         {slice.end && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setMode(slice.id, {
-                                kind: "move",
-                                taskId: slice.taskId,
-                              })
-                            }
-                          >
-                            Move
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setMode(slice.id, {
+                                  kind: "move",
+                                  taskId: slice.taskId,
+                                })
+                              }
+                            >
+                              Move
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setMode(slice.id, {
+                                  kind: "split",
+                                  at: midpointLocal(slice.start, slice.end!),
+                                })
+                              }
+                            >
+                              Split
+                            </button>
+                          </>
                         )}
                         <button
                           type="button"
@@ -331,6 +351,50 @@ export function EntriesPanel({ state }: Props) {
                         >
                           Delete
                         </button>
+                      </div>
+                    )}
+                    {mode.kind === "split" && (
+                      <div className="inline-action">
+                        <label className="field">
+                          Split at
+                          <input
+                            type="datetime-local"
+                            value={mode.at}
+                            onChange={(e) =>
+                              setMode(slice.id, {
+                                kind: "split",
+                                at: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <div className="row-actions">
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={async () => {
+                              try {
+                                setError(null);
+                                await api.splitSlice({
+                                  id: slice.id,
+                                  at: fromLocalInput(mode.at),
+                                });
+                                clearMode(slice.id);
+                                await load();
+                              } catch (e) {
+                                setError(String(e));
+                              }
+                            }}
+                          >
+                            Split
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => clearMode(slice.id)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
                       </div>
                     )}
                     {mode.kind === "move" && (

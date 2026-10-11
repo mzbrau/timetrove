@@ -1,3 +1,4 @@
+/** Nominal 24h in ms (wall-clock label scale); actual days use `dayDurationMs`. */
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function localDayStart(day: string): Date {
@@ -5,18 +6,27 @@ export function localDayStart(day: string): Date {
   return new Date(y, m - 1, d, 0, 0, 0, 0);
 }
 
+/** Next local calendar midnight after `day` (handles 23h/25h DST days). */
 export function localDayEnd(day: string): Date {
-  return new Date(localDayStart(day).getTime() + DAY_MS);
+  const start = localDayStart(day);
+  return new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1, 0, 0, 0, 0);
 }
 
-/** Offset of an ISO instant within the local day, clamped to [0, DAY_MS]. */
+/** Elapsed ms from local midnight to the next local midnight. */
+export function dayDurationMs(day: string): number {
+  return localDayEnd(day).getTime() - localDayStart(day).getTime();
+}
+
+/** Offset of an ISO instant within the local day, clamped to [0, dayDuration]. */
 export function msInDay(day: string, iso: string): number {
+  const duration = dayDurationMs(day);
   const offset = new Date(iso).getTime() - localDayStart(day).getTime();
-  return Math.max(0, Math.min(DAY_MS, offset));
+  return Math.max(0, Math.min(duration, offset));
 }
 
 export function dayMsToIso(day: string, ms: number): string {
-  const clamped = Math.max(0, Math.min(DAY_MS, ms));
+  const duration = dayDurationMs(day);
+  const clamped = Math.max(0, Math.min(duration, ms));
   return new Date(localDayStart(day).getTime() + clamped).toISOString();
 }
 
@@ -45,9 +55,10 @@ export function resizeNeighborBounds(
   sliceId: string,
   startMs: number,
   endMs: number,
+  dayLengthMs: number = DAY_MS,
 ): { minBound: number; maxBound: number } {
   let minBound = 0;
-  let maxBound = DAY_MS;
+  let maxBound = dayLengthMs;
   for (const r of ranges) {
     if (r.id === sliceId) continue;
     if (r.endMs <= startMs) minBound = Math.max(minBound, r.endMs);
@@ -58,14 +69,20 @@ export function resizeNeighborBounds(
 
 /** `HH:MM` local clock for an offset within `day`. */
 export function formatDayClock(day: string, ms: number): string {
-  const d = new Date(localDayStart(day).getTime() + Math.max(0, Math.min(DAY_MS, ms)));
+  const duration = dayDurationMs(day);
+  const d = new Date(
+    localDayStart(day).getTime() + Math.max(0, Math.min(duration, ms)),
+  );
   const h = String(d.getHours()).padStart(2, "0");
   const m = String(d.getMinutes()).padStart(2, "0");
   return `${h}:${m}`;
 }
 
-/** Build gaps in [0, DAY_MS] given sorted occupied ranges (startMs, endMs). */
-export function gapsFromRanges(ranges: { startMs: number; endMs: number }[]): Gap[] {
+/** Build gaps in [0, dayLengthMs] given occupied ranges (startMs, endMs). */
+export function gapsFromRanges(
+  ranges: { startMs: number; endMs: number }[],
+  dayLengthMs: number = DAY_MS,
+): Gap[] {
   const sorted = [...ranges]
     .filter((r) => r.endMs > r.startMs)
     .sort((a, b) => a.startMs - b.startMs);
@@ -73,10 +90,10 @@ export function gapsFromRanges(ranges: { startMs: number; endMs: number }[]): Ga
   let cursor = 0;
   for (const r of sorted) {
     const start = Math.max(cursor, 0);
-    const end = Math.min(r.startMs, DAY_MS);
+    const end = Math.min(r.startMs, dayLengthMs);
     if (end > start) gaps.push({ startMs: start, endMs: end });
     cursor = Math.max(cursor, r.endMs);
   }
-  if (cursor < DAY_MS) gaps.push({ startMs: cursor, endMs: DAY_MS });
+  if (cursor < dayLengthMs) gaps.push({ startMs: cursor, endMs: dayLengthMs });
   return gaps;
 }

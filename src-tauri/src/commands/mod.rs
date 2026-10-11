@@ -163,7 +163,6 @@ pub fn list_slices_for_day(
 ) -> Result<Vec<TimeSlice>, String> {
     let d = parse_day(&day)?;
     let (start, end) = local_day_bounds(d);
-    engine.db().coalesce_near_adjacent()?;
     engine.db().list_slices_for_day_display(start, end)
 }
 

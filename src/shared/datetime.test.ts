@@ -52,4 +52,11 @@ describe("datetime helpers", () => {
     expect(mondayOfIsoWeek(1, 2020)).toBe("2019-12-30");
     expect(isoWeekParts("2019-12-30")).toEqual({ week: 1, year: 2020 });
   });
+
+  it("rejects invalid week 53 via round-trip", () => {
+    // 2022 has 52 ISO weeks; week 53 maps into 2023-W01
+    const monday = mondayOfIsoWeek(53, 2022);
+    const parts = isoWeekParts(monday);
+    expect(parts).not.toEqual({ week: 53, year: 2022 });
+  });
 });

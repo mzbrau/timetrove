@@ -30,8 +30,11 @@ impl Db {
 
     pub fn reopen(&self) -> Result<(), String> {
         let new = super::open_db(&self.path)?;
-        let mut guard = self.conn.lock();
-        *guard = new;
+        {
+            let mut guard = self.conn.lock();
+            *guard = new;
+        }
+        self.coalesce_near_adjacent()?;
         Ok(())
     }
 
@@ -221,6 +224,7 @@ impl Db {
 
     pub fn close_slice(&self, id: &str, end: DateTime<Utc>) -> Result<(), String> {
         self.with_conn(|conn| {
+            let end = Self::clamp_close_end(conn, id, end)?;
             let changed = conn
                 .execute(
                     "UPDATE time_slices SET end = ?2 WHERE id = ?1 AND end IS NULL",
@@ -232,6 +236,57 @@ impl Db {
             }
             Ok(())
         })
+    }
+
+    /// Clamp a running slice's close time so it cannot overrun a later slice that
+    /// was inserted while tracking (allowed by COALESCE(end, now) overlap checks).
+    fn clamp_close_end(
+        conn: &Connection,
+        id: &str,
+        requested_end: DateTime<Utc>,
+    ) -> Result<DateTime<Utc>, String> {
+        let start_s: Option<String> = conn
+            .query_row(
+                "SELECT start FROM time_slices WHERE id = ?1 AND end IS NULL",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let Some(start_s) = start_s else {
+            return Err("No running slice to close".into());
+        };
+        let start = DateTime::parse_from_rfc3339(&start_s)
+            .map_err(|e| e.to_string())?
+            .with_timezone(&Utc);
+
+        let bound_s: Option<String> = conn
+            .query_row(
+                "SELECT start FROM time_slices
+                 WHERE id != ?1
+                   AND start > ?2
+                   AND start < ?3
+                 ORDER BY start ASC
+                 LIMIT 1",
+                params![id, start.to_rfc3339(), requested_end.to_rfc3339()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+
+        let end = if let Some(bound_s) = bound_s {
+            let bound = DateTime::parse_from_rfc3339(&bound_s)
+                .map_err(|e| e.to_string())?
+                .with_timezone(&Utc);
+            requested_end.min(bound)
+        } else {
+            requested_end
+        };
+
+        if end <= start {
+            return Err("Cannot close: end would not be after start".into());
+        }
+        Ok(end)
     }
 
     /// Close an optional running slice and open a replacement in one transaction.
@@ -252,10 +307,11 @@ impl Db {
                 .map_err(|e| e.to_string())?;
             let result = (|| {
                 if let Some(id) = old_id {
+                    let end = Self::clamp_close_end(conn, id, now)?;
                     let changed = conn
                         .execute(
                             "UPDATE time_slices SET end = ?2 WHERE id = ?1 AND end IS NULL",
-                            params![id, now.to_rfc3339()],
+                            params![id, end.to_rfc3339()],
                         )
                         .map_err(|e| e.to_string())?;
                     if changed == 0 {
@@ -1044,7 +1100,7 @@ mod tests {
         let t = sample_task(&db, "Run");
         let now = Utc::now();
         let run_start = now - Duration::minutes(10);
-        db.replace_running_slice(None, &t.id, run_start).unwrap();
+        let running = db.replace_running_slice(None, &t.id, run_start).unwrap();
 
         let future_start = now + Duration::minutes(5);
         let future_end = future_start + Duration::minutes(30);
@@ -1059,6 +1115,12 @@ mod tests {
             .insert_closed_slice(&t.id, overlap_start, overlap_end)
             .unwrap_err();
         assert!(err.contains("overlaps"));
+
+        // Closing past the future slice must clamp so the non-overlap invariant holds.
+        db.close_slice(&running.id, future_end + Duration::minutes(10))
+            .unwrap();
+        let closed = db.get_slice(&running.id).unwrap().unwrap();
+        assert_eq!(closed.end, Some(future_start));
     }
 
     #[test]

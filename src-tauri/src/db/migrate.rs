@@ -96,5 +96,12 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
 
+    // v3: marker that near-adjacent coalesce runs once from Db open/reopen hooks
+    // (create/update/move keep coalescing; list_slices_for_day stays read-only).
+    if version < 3 {
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (3)", [])
+            .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }
