@@ -559,3 +559,272 @@ pub fn position_tracker(window: &WebviewWindow) {
         let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::test_support::test_db;
+    use chrono::{Duration, Local};
+
+    fn make_task(db: &Db, name: &str) -> Task {
+        db.create_task(CreateTaskInput {
+            name: name.into(),
+            color: Some("#17BEBB".into()),
+            description: None,
+            notes: None,
+        })
+        .unwrap()
+    }
+
+    fn engine_empty() -> (tempfile::TempDir, Arc<Engine>) {
+        let (dir, db) = test_db();
+        (dir, Engine::new(db))
+    }
+
+    #[test]
+    fn start_stop_resume() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "Focus");
+        let state = eng.start_task(&task.id).unwrap();
+        assert!(state.tracking);
+        assert!(matches!(state.phase, EnginePhase::Tracking { .. }));
+
+        let stopped = eng.stop().unwrap();
+        assert!(!stopped.tracking);
+        assert_eq!(stopped.previous_task.as_ref().unwrap().id, task.id);
+
+        let resumed = eng.start_task(&task.id).unwrap();
+        assert!(resumed.tracking);
+    }
+
+    #[test]
+    fn switch_tasks_closes_previous() {
+        let (_dir, eng) = engine_empty();
+        let a = make_task(eng.db(), "A");
+        let b = make_task(eng.db(), "B");
+        eng.start_task(&a.id).unwrap();
+        let first_id = match eng.phase.lock().clone() {
+            EnginePhase::Tracking { slice_id, .. } => slice_id,
+            _ => panic!("expected tracking"),
+        };
+        eng.switch_task(&b.id).unwrap();
+        let first = eng.db().get_slice(&first_id).unwrap().unwrap();
+        assert!(first.end.is_some());
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::Tracking { task_id, .. } if task_id == b.id
+        ));
+    }
+
+    #[test]
+    fn gap_resolve_previous() {
+        let (_dir, eng) = engine_empty();
+        let prev = make_task(eng.db(), "Prev");
+        eng.start_task(&prev.id).unwrap();
+        let gap_start = Utc::now() - Duration::minutes(30);
+        eng.begin_gap(gap_start).unwrap();
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::NeedsAttribution { .. }
+        ));
+        eng.resolve_gap_previous().unwrap();
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::Tracking { task_id, .. } if task_id == prev.id
+        ));
+    }
+
+    #[test]
+    fn gap_resolve_other() {
+        let (_dir, eng) = engine_empty();
+        let prev = make_task(eng.db(), "Prev");
+        let other = make_task(eng.db(), "Other");
+        eng.start_task(&prev.id).unwrap();
+        eng.begin_gap(Utc::now() - Duration::minutes(15)).unwrap();
+        eng.resolve_gap_other(&other.id).unwrap();
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::Tracking { task_id, .. } if task_id == other.id
+        ));
+    }
+
+    #[test]
+    fn gap_resolve_discard() {
+        let (_dir, eng) = engine_empty();
+        let prev = make_task(eng.db(), "Prev");
+        eng.start_task(&prev.id).unwrap();
+        eng.begin_gap(Utc::now() - Duration::minutes(10)).unwrap();
+        eng.resolve_gap_discard().unwrap();
+        let discards: i64 = eng
+            .db()
+            .with_conn(|conn| {
+                conn.query_row("SELECT COUNT(*) FROM discard_log", [], |r| r.get(0))
+                    .map_err(|e| e.to_string())
+            })
+            .unwrap();
+        assert_eq!(discards, 1);
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::Tracking { task_id, .. } if task_id == prev.id
+        ));
+    }
+
+    #[test]
+    fn start_stop_blocked_during_gap() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "Blocked");
+        eng.start_task(&task.id).unwrap();
+        eng.begin_gap(Utc::now() - Duration::minutes(20)).unwrap();
+        assert!(eng.start_task(&task.id).unwrap_err().contains("gap"));
+        assert!(eng.stop().unwrap_err().contains("gap"));
+    }
+
+    #[test]
+    fn failed_gap_attribution_keeps_pending() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "Overlap");
+        eng.start_task(&task.id).unwrap();
+        let gap_start = Utc::now() - Duration::minutes(40);
+        eng.begin_gap(gap_start).unwrap();
+
+        // Plant an overlapping closed slice so attribution insert fails.
+        let mid = gap_start + Duration::minutes(5);
+        eng.db()
+            .insert_closed_slice(&task.id, mid, mid + Duration::minutes(10))
+            .unwrap();
+
+        let err = eng.resolve_gap_previous().unwrap_err();
+        assert!(err.contains("overlaps") || err.contains("overlap"));
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::NeedsAttribution { .. }
+        ));
+    }
+
+    #[test]
+    fn startup_reconcile_stale_and_fresh() {
+        // Stale running slice → NeedsAttribution
+        {
+            let (_dir, db) = test_db();
+            let task = make_task(&db, "Stale");
+            let start = Utc::now() - Duration::hours(2);
+            db.replace_running_slice(None, &task.id, start).unwrap();
+            let eng = Engine::new(db);
+            assert!(matches!(
+                eng.phase.lock().clone(),
+                EnginePhase::NeedsAttribution { .. }
+            ));
+        }
+        // Fresh running slice → Tracking
+        {
+            let (_dir, db) = test_db();
+            let task = make_task(&db, "Fresh");
+            let start = Utc::now() - Duration::minutes(1);
+            db.replace_running_slice(None, &task.id, start).unwrap();
+            let eng = Engine::new(db);
+            assert!(matches!(
+                eng.phase.lock().clone(),
+                EnginePhase::Tracking { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn midnight_split_closes_and_reopens() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "Midnight");
+        let today = Local::now().date_naive();
+        let midnight = local_midnight_on(today);
+        let before = midnight - Duration::hours(2);
+        let slice = eng
+            .db()
+            .replace_running_slice(None, &task.id, before)
+            .unwrap();
+        *eng.phase.lock() = EnginePhase::Tracking {
+            task_id: task.id.clone(),
+            slice_id: slice.id.clone(),
+        };
+        eng.midnight_split().unwrap();
+        let old = eng.db().get_slice(&slice.id).unwrap().unwrap();
+        assert_eq!(old.end, Some(midnight));
+        let phase = eng.phase.lock().clone();
+        match phase {
+            EnginePhase::Tracking { slice_id, .. } => {
+                assert_ne!(slice_id, slice.id);
+                let neu = eng.db().get_slice(&slice_id).unwrap().unwrap();
+                assert_eq!(neu.start, midnight);
+                assert!(neu.end.is_none());
+            }
+            other => panic!("unexpected phase {other:?}"),
+        }
+    }
+
+    #[test]
+    fn timesheet_totals_and_csv_escape() {
+        let (_dir, eng) = engine_empty();
+        let task = eng
+            .db()
+            .create_task(CreateTaskInput {
+                name: r#"Say "hi""#.into(),
+                color: Some("#E4572E".into()),
+                description: None,
+                notes: None,
+            })
+            .unwrap();
+        let monday = week_start_monday(Local::now().date_naive());
+        let (d0, _) = local_day_bounds(monday);
+        eng.db()
+            .insert_closed_slice(&task.id, d0 + Duration::hours(9), d0 + Duration::hours(11))
+            .unwrap();
+        let sheet = eng.timesheet(&format_day(monday)).unwrap();
+        assert_eq!(sheet.week_start, format_day(monday));
+        assert_eq!(sheet.rows.len(), 1);
+        assert_eq!(sheet.rows[0].total_ms, 2 * 3_600_000);
+        assert!(sheet.csv.contains("Say \"\"hi\"\""));
+        assert_eq!(sheet.grand_total_ms, 2 * 3_600_000);
+    }
+
+    #[test]
+    fn reset_after_import_stops() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "Import");
+        eng.start_task(&task.id).unwrap();
+        eng.reset_after_import().unwrap();
+        assert!(matches!(eng.phase.lock().clone(), EnginePhase::Stopped));
+        assert!(eng.db().running_slice().unwrap().is_none());
+    }
+
+    #[test]
+    fn archived_and_missing_task_errors() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "ArchiveMe");
+        eng.db()
+            .update_task(UpdateTaskInput {
+                id: task.id.clone(),
+                name: None,
+                color: None,
+                description: None,
+                notes: None,
+                archived: Some(true),
+            })
+            .unwrap();
+        assert!(eng.start_task(&task.id).unwrap_err().contains("archived"));
+        assert!(eng.start_task("missing-id").unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn refresh_after_edit_stops_when_slice_gone() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "Edit");
+        eng.start_task(&task.id).unwrap();
+        let slice_id = match eng.phase.lock().clone() {
+            EnginePhase::Tracking { slice_id, .. } => slice_id,
+            _ => panic!("tracking"),
+        };
+        eng.db().delete_slice(&slice_id).unwrap();
+        let state = eng.refresh_after_edit().unwrap();
+        assert!(!state.tracking);
+        assert!(matches!(state.phase, EnginePhase::Stopped));
+    }
+}

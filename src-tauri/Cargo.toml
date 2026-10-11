@@ -29,6 +29,9 @@ parking_lot = "0.12"
 user-idle = "0.6"
 dirs = "6"
 
+[dev-dependencies]
+tempfile = "3"
+
 [profile.release]
 codegen-units = 1
 lto = true

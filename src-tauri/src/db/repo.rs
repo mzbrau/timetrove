@@ -638,3 +638,223 @@ fn parse_dt(s: &str) -> rusqlite::Result<DateTime<Utc>> {
         .map(|d| d.with_timezone(&Utc))
         .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::test_db;
+    use chrono::{Duration, TimeZone};
+
+    fn sample_task(db: &Db, name: &str) -> Task {
+        db.create_task(CreateTaskInput {
+            name: name.into(),
+            color: Some("#E4572E".into()),
+            description: None,
+            notes: None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn migrate_defaults() {
+        let (_dir, db) = test_db();
+        let s = db.get_settings().unwrap();
+        assert_eq!(s.idle_threshold_mins, 10);
+        assert_eq!(s.daily_goal_mins, 480);
+        assert_eq!(s.theme, "dark");
+    }
+
+    #[test]
+    fn task_crud_and_unique_name() {
+        let (_dir, db) = test_db();
+        let t = sample_task(&db, "Alpha");
+        assert_eq!(db.get_task(&t.id).unwrap().unwrap().name, "Alpha");
+        assert_eq!(db.list_tasks(false).unwrap().len(), 1);
+
+        let err = db
+            .create_task(CreateTaskInput {
+                name: "alpha".into(),
+                color: None,
+                description: None,
+                notes: None,
+            })
+            .unwrap_err();
+        assert!(err.contains("already exists"));
+
+        let updated = db
+            .update_task(UpdateTaskInput {
+                id: t.id.clone(),
+                name: Some("Beta".into()),
+                color: None,
+                description: Some("desc".into()),
+                notes: None,
+                archived: Some(true),
+            })
+            .unwrap();
+        assert_eq!(updated.name, "Beta");
+        assert!(updated.archived);
+        assert_eq!(db.list_tasks(false).unwrap().len(), 0);
+        assert_eq!(db.list_tasks(true).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn replace_running_slice_single_open() {
+        let (_dir, db) = test_db();
+        let a = sample_task(&db, "A");
+        let b = sample_task(&db, "B");
+        let now = Utc::now();
+        let s1 = db.replace_running_slice(None, &a.id, now).unwrap();
+        assert!(db.running_slice().unwrap().is_some());
+
+        let s2 = db
+            .replace_running_slice(Some(&s1.id), &b.id, now + Duration::minutes(5))
+            .unwrap();
+        let running = db.running_slice().unwrap().unwrap();
+        assert_eq!(running.id, s2.id);
+        assert_eq!(running.task_id, b.id);
+
+        let closed = db.get_slice(&s1.id).unwrap().unwrap();
+        assert!(closed.end.is_some());
+
+        let err = db
+            .replace_running_slice(None, &a.id, now + Duration::minutes(10))
+            .unwrap_err();
+        assert!(err.contains("already being tracked"));
+    }
+
+    #[test]
+    fn insert_closed_rejects_overlap() {
+        let (_dir, db) = test_db();
+        let t = sample_task(&db, "Work");
+        let start = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        db.insert_closed_slice(&t.id, start, end).unwrap();
+
+        let err = db
+            .insert_closed_slice(
+                &t.id,
+                Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2026, 1, 1, 13, 0, 0).unwrap(),
+            )
+            .unwrap_err();
+        assert!(err.contains("overlaps"));
+    }
+
+    #[test]
+    fn split_slice_atomic_contiguous() {
+        let (_dir, db) = test_db();
+        let t = sample_task(&db, "Split");
+        let start = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let at = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
+        let slice = db.insert_closed_slice(&t.id, start, end).unwrap();
+
+        let (first, second) = db
+            .split_slice(SplitSliceInput {
+                id: slice.id.clone(),
+                at,
+            })
+            .unwrap();
+        assert_eq!(first.end, Some(at));
+        assert_eq!(second.start, at);
+        assert_eq!(second.end, Some(end));
+
+        let err = db
+            .split_slice(SplitSliceInput {
+                id: first.id,
+                at: start,
+            })
+            .unwrap_err();
+        assert!(err.contains("inside"));
+    }
+
+    #[test]
+    fn update_delete_and_daily_total() {
+        let (_dir, db) = test_db();
+        let t = sample_task(&db, "Day");
+        let now = Utc::now();
+        let (day_start, _) = local_day_bounds(now.with_timezone(&chrono::Local).date_naive());
+        let closed_start = day_start + Duration::hours(1);
+        let closed_end = closed_start + Duration::hours(2);
+        let slice = db
+            .insert_closed_slice(&t.id, closed_start, closed_end)
+            .unwrap();
+
+        let running = db
+            .replace_running_slice(None, &t.id, day_start + Duration::hours(4))
+            .unwrap();
+        let total = db.daily_total_ms(day_start + Duration::hours(5)).unwrap();
+        assert_eq!(total, 2 * 3_600_000 + 3_600_000);
+
+        db.close_slice(&running.id, day_start + Duration::hours(5))
+            .unwrap();
+        db.delete_slice(&slice.id).unwrap();
+        assert!(db.get_slice(&slice.id).unwrap().is_none());
+
+        let moved_start = day_start + Duration::hours(6);
+        let moved_end = moved_start + Duration::hours(1);
+        let other = db
+            .insert_closed_slice(&t.id, moved_start, moved_end)
+            .unwrap();
+        let updated = db
+            .update_slice(UpdateSliceInput {
+                id: other.id,
+                task_id: None,
+                start: Some(moved_start + Duration::minutes(15)),
+                end: Some(moved_end),
+            })
+            .unwrap();
+        assert_eq!(updated.start, moved_start + Duration::minutes(15));
+    }
+
+    #[test]
+    fn settings_round_trip() {
+        let (_dir, db) = test_db();
+        let mut s = db.get_settings().unwrap();
+        s.idle_threshold_mins = 15;
+        s.daily_goal_mins = 300;
+        s.theme = "light".into();
+        s.autostart = false;
+        db.update_settings(&s).unwrap();
+        let loaded = db.get_settings().unwrap();
+        assert_eq!(loaded.idle_threshold_mins, 15);
+        assert_eq!(loaded.daily_goal_mins, 300);
+        assert_eq!(loaded.theme, "light");
+        assert!(!loaded.autostart);
+    }
+
+    #[test]
+    fn backup_to_and_reopen() {
+        let (dir, db) = test_db();
+        let t = sample_task(&db, "BackupMe");
+        let bak = dir.path().join("export.db");
+        db.backup_to(&bak).unwrap();
+
+        let restored = crate::db::open_db(&bak).unwrap();
+        let restored_db = Db::new(restored, bak);
+        assert_eq!(
+            restored_db.get_task(&t.id).unwrap().unwrap().name,
+            "BackupMe"
+        );
+
+        db.reopen().unwrap();
+        assert_eq!(db.get_task(&t.id).unwrap().unwrap().name, "BackupMe");
+    }
+
+    #[test]
+    fn insert_discard_persists_duration() {
+        let (_dir, db) = test_db();
+        let start = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 1, 1, 10, 30, 0).unwrap();
+        let entry = db.insert_discard(start, end).unwrap();
+        assert_eq!(entry.duration_ms, 30 * 60_000);
+
+        let count: i64 = db
+            .with_conn(|conn| {
+                conn.query_row("SELECT COUNT(*) FROM discard_log", [], |r| r.get(0))
+                    .map_err(|e| e.to_string())
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+}
