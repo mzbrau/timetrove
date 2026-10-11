@@ -81,7 +81,9 @@ export function TasksPanel({
     if (selected) {
       setDraft(draftFromTask(selected));
     }
-  }, [selectedId, selected?.updatedAt]);
+    // Only reset on selection change. Updates like starring bump updatedAt and
+    // must not wipe an in-progress dirty draft.
+  }, [selectedId]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -89,7 +91,6 @@ export function TasksPanel({
       return;
     }
     let cancelled = false;
-    setBooking(null);
     api
       .getTaskBookingSummary(selectedId)
       .then((summary) => {
@@ -101,7 +102,12 @@ export function TasksPanel({
     return () => {
       cancelled = true;
     };
-  }, [selectedId]);
+  }, [
+    selectedId,
+    state?.tracking,
+    state?.currentTask?.id,
+    state?.dailyTotalMs,
+  ]);
 
   const isDirty = useMemo(() => {
     if (!selected) return false;

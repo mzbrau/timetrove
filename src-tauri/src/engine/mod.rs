@@ -257,23 +257,28 @@ impl Engine {
         let now = Utc::now();
         let last_good = self.db.get_last_good_at()?;
 
-        // Wall-clock jump / sleep: gap from last checkpoint (live idle may also fire).
+        // Live idle path owns the gap once past threshold.
+        if idle_secs >= threshold_secs {
+            return Ok(());
+        }
+
+        // Sleep / wall-clock jump: require more than one checkpoint period of slack
+        // beyond the idle threshold so an active 1-minute setting cannot false-trigger
+        // between heartbeats (checkpoint every 60s, poll ~5s).
+        const CHECKPOINT_SECS: i64 = 60;
+        const POLL_SLACK_SECS: i64 = 15;
+        let sleep_cutoff = threshold + Duration::seconds(CHECKPOINT_SECS + POLL_SLACK_SECS);
         if let Some(lg) = last_good {
-            if now - lg >= threshold {
+            if now - lg >= sleep_cutoff {
                 *self.last_activity.lock() = lg;
                 self.begin_gap(lg)?;
                 return Ok(());
             }
         }
 
-        // Live idle path owns the gap once past threshold.
-        if idle_secs >= threshold_secs {
-            return Ok(());
-        }
-
         let due = match last_good {
             None => true,
-            Some(lg) => now - lg >= Duration::seconds(60),
+            Some(lg) => now - lg >= Duration::seconds(CHECKPOINT_SECS),
         };
         if due {
             self.db.set_last_good_at(Some(now))?;
@@ -810,6 +815,49 @@ mod tests {
         let next = eng.db().get_last_good_at().unwrap().unwrap();
         assert!(next > older);
         assert!(next >= first);
+    }
+
+    #[test]
+    fn checkpoint_one_minute_threshold_does_not_false_gap() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "OneMin");
+        eng.start_task(&task.id).unwrap();
+        let mut settings = eng.db().get_settings().unwrap();
+        settings.idle_threshold_mins = 1;
+        eng.db().update_settings(&settings).unwrap();
+
+        let first = eng.db().get_last_good_at().unwrap().unwrap();
+        let older = first - Duration::seconds(61);
+        eng.db().set_last_good_at(Some(older)).unwrap();
+        eng.checkpoint_with_idle(0).unwrap();
+
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::Tracking { .. }
+        ));
+        let next = eng.db().get_last_good_at().unwrap().unwrap();
+        assert!(next > older);
+    }
+
+    #[test]
+    fn checkpoint_sleep_cutoff_still_opens_gap() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "Slept");
+        eng.start_task(&task.id).unwrap();
+        let mut settings = eng.db().get_settings().unwrap();
+        settings.idle_threshold_mins = 1;
+        eng.db().update_settings(&settings).unwrap();
+
+        let first = eng.db().get_last_good_at().unwrap().unwrap();
+        // threshold (60s) + checkpoint (60s) + slack (15s) = 135s
+        let older = first - Duration::seconds(140);
+        eng.db().set_last_good_at(Some(older)).unwrap();
+        eng.checkpoint_with_idle(0).unwrap();
+
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::NeedsAttribution { .. }
+        ));
     }
 
     #[test]
