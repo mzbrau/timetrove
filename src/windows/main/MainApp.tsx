@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useTrackerState } from "../../shared/useTrackerState";
 import { TasksPanel } from "./TasksPanel";
 import { TimesheetPanel } from "./TimesheetPanel";
 import { EntriesPanel } from "./EntriesPanel";
 import { SettingsPanel } from "./SettingsPanel";
+import { ConfirmBar } from "./ConfirmBar";
 import { api } from "../../shared/api";
 import "./main.css";
 
@@ -13,9 +14,25 @@ export function MainApp() {
   const { state, error, setError } = useTrackerState();
   const [tab, setTab] = useState<Tab>("tasks");
   const [dismissedError, setDismissedError] = useState<string | null>(null);
+  const [tasksDirty, setTasksDirty] = useState(false);
+  const [pendingTab, setPendingTab] = useState<Tab | null>(null);
+  const [saveRequestId, setSaveRequestId] = useState(0);
 
   const bannerError = error || state?.dbError || null;
   const showBanner = Boolean(bannerError && bannerError !== dismissedError);
+
+  const onDirtyChange = useCallback((dirty: boolean) => {
+    setTasksDirty(dirty);
+  }, []);
+
+  const requestTab = (next: Tab) => {
+    if (next === tab) return;
+    if (tab === "tasks" && tasksDirty) {
+      setPendingTab(next);
+      return;
+    }
+    setTab(next);
+  };
 
   return (
     <div className="main-app">
@@ -93,17 +110,49 @@ export function MainApp() {
             key={id}
             type="button"
             className={tab === id ? "active" : ""}
-            onClick={() => setTab(id)}
+            onClick={() => requestTab(id)}
           >
             {label}
           </button>
         ))}
       </nav>
 
+      {pendingTab && (
+        <ConfirmBar
+          message="You have unsaved task changes."
+          confirmLabel="Save"
+          secondaryLabel="Discard"
+          cancelLabel="Cancel"
+          onConfirm={() => {
+            setSaveRequestId((n) => n + 1);
+          }}
+          onSecondary={() => {
+            const next = pendingTab;
+            setPendingTab(null);
+            setTasksDirty(false);
+            setTab(next);
+          }}
+          onCancel={() => setPendingTab(null)}
+        />
+      )}
+
       <main className="panel">
-        {tab === "tasks" && <TasksPanel state={state} />}
+        {tab === "tasks" && (
+          <TasksPanel
+            state={state}
+            onDirtyChange={onDirtyChange}
+            saveRequestId={saveRequestId}
+            onSaved={() => {
+              if (pendingTab) {
+                const next = pendingTab;
+                setPendingTab(null);
+                setTab(next);
+              }
+            }}
+          />
+        )}
         {tab === "timesheet" && <TimesheetPanel />}
-        {tab === "entries" && <EntriesPanel />}
+        {tab === "entries" && <EntriesPanel state={state} />}
         {tab === "settings" && <SettingsPanel />}
       </main>
     </div>

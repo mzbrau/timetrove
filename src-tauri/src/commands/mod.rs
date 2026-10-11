@@ -163,6 +163,7 @@ pub fn list_slices_for_day(
 ) -> Result<Vec<TimeSlice>, String> {
     let d = parse_day(&day)?;
     let (start, end) = local_day_bounds(d);
+    engine.db().coalesce_near_adjacent()?;
     engine.db().list_slices_for_day_display(start, end)
 }
 
@@ -175,9 +176,15 @@ pub fn create_slice(
     let slice = engine
         .db()
         .insert_closed_slice(&input.task_id, input.start, input.end)?;
+    let merged = engine.db().merge_adjacent_same_task(&slice.id)?;
+    engine.db().coalesce_near_adjacent()?;
+    let out = engine
+        .db()
+        .get_slice(&merged.id)?
+        .unwrap_or(merged);
     let _ = engine.refresh_after_edit()?;
     engine.emit_state(&app);
-    Ok(slice)
+    Ok(out)
 }
 
 #[tauri::command]
@@ -187,9 +194,15 @@ pub fn update_slice(
     input: UpdateSliceInput,
 ) -> Result<TimeSlice, String> {
     let slice = engine.db().update_slice(input)?;
+    let merged = engine.db().merge_adjacent_same_task(&slice.id)?;
+    engine.db().coalesce_near_adjacent()?;
+    let out = engine
+        .db()
+        .get_slice(&merged.id)?
+        .unwrap_or(merged);
     let _ = engine.refresh_after_edit()?;
     engine.emit_state(&app);
-    Ok(slice)
+    Ok(out)
 }
 
 #[tauri::command]
@@ -229,9 +242,15 @@ pub fn move_slice(
         start: None,
         end: None,
     })?;
+    let merged = engine.db().merge_adjacent_same_task(&slice.id)?;
+    engine.db().coalesce_near_adjacent()?;
+    let out = engine
+        .db()
+        .get_slice(&merged.id)?
+        .unwrap_or(merged);
     let _ = engine.refresh_after_edit()?;
     engine.emit_state(&app);
-    Ok(slice)
+    Ok(out)
 }
 
 #[tauri::command]
