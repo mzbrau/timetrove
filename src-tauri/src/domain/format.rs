@@ -27,12 +27,18 @@ mod tests {
         assert_eq!(format_hhmm(0), "00:00");
         assert_eq!(format_hhmm(5 * 60_000 + 23_000), "00:05");
         assert_eq!(format_hhmm(5 * 3_600_000 + 23 * 60_000), "05:23");
+        assert_eq!(format_hhmm(-1), "00:00");
+        assert_eq!(format_hhmm(25 * 3_600_000), "25:00");
     }
 
     #[test]
     fn bands_gap_duration() {
         assert_eq!(gap_band(10 * 60_000), "short");
+        assert_eq!(gap_band(20 * 60_000 - 1), "short");
+        assert_eq!(gap_band(20 * 60_000), "medium");
         assert_eq!(gap_band(30 * 60_000), "medium");
+        assert_eq!(gap_band(2 * 60 * 60_000 - 1), "medium");
+        assert_eq!(gap_band(2 * 60 * 60_000), "long");
         assert_eq!(gap_band(3 * 3_600_000), "long");
     }
 }

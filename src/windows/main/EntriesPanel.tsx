@@ -1,22 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../shared/api";
+import { fromLocalInput, toLocalInput, todayStr } from "../../shared/datetime";
 import type { Task, TimeSlice } from "../../shared/types";
-
-function toLocalInput(iso: string) {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function fromLocalInput(value: string) {
-  return new Date(value).toISOString();
-}
-
-function todayStr() {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
 
 export function EntriesPanel() {
   const [day, setDay] = useState(todayStr());

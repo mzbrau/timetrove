@@ -26,4 +26,22 @@ mod tests {
         let existing = vec![PALETTE[0].to_string()];
         assert_eq!(next_color(&existing), PALETTE[1]);
     }
+
+    #[test]
+    fn empty_list_picks_first_palette_color() {
+        assert_eq!(next_color(&[]), PALETTE[0]);
+    }
+
+    #[test]
+    fn case_insensitive_match() {
+        let existing = vec![PALETTE[0].to_ascii_lowercase()];
+        assert_eq!(next_color(&existing), PALETTE[1]);
+    }
+
+    #[test]
+    fn wraps_when_all_used_once() {
+        let existing: Vec<String> = PALETTE.iter().map(|c| (*c).to_string()).collect();
+        // All counts == 1 → first min index is 0
+        assert_eq!(next_color(&existing), PALETTE[0]);
+    }
 }

@@ -1,17 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { api } from "../../shared/api";
+import { formatGap } from "../../shared/format";
 import { useTrackerState } from "../../shared/useTrackerState";
 import type { Task } from "../../shared/types";
 import "./gap.css";
-
-function formatGap(ms: number) {
-  const totalMins = Math.floor(ms / 60000);
-  const hours = Math.floor(totalMins / 60);
-  const mins = totalMins % 60;
-  if (hours > 0) return `${hours}h ${mins}m`;
-  return `${mins}m`;
-}
 
 export function GapApp() {
   const { state } = useTrackerState();

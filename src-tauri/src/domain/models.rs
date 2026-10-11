@@ -164,3 +164,43 @@ pub struct SplitSliceInput {
     pub id: String,
     pub at: DateTime<Utc>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn settings_defaults() {
+        let s = Settings::default();
+        assert_eq!(s.idle_threshold_mins, 10);
+        assert_eq!(s.daily_goal_mins, 480);
+        assert_eq!(s.theme, "dark");
+        assert!(s.autostart);
+    }
+
+    #[test]
+    fn engine_phase_serde_tags() {
+        let stopped = serde_json::to_value(EnginePhase::Stopped).unwrap();
+        assert_eq!(stopped["kind"], "stopped");
+
+        let tracking = serde_json::to_value(EnginePhase::Tracking {
+            task_id: "t1".into(),
+            slice_id: "s1".into(),
+        })
+        .unwrap();
+        assert_eq!(tracking["kind"], "tracking");
+        assert_eq!(tracking["taskId"], "t1");
+        assert_eq!(tracking["sliceId"], "s1");
+
+        let gap_start = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let needs = serde_json::to_value(EnginePhase::NeedsAttribution {
+            gap_start,
+            previous_task_id: "t2".into(),
+        })
+        .unwrap();
+        assert_eq!(needs["kind"], "needsAttribution");
+        assert_eq!(needs["previousTaskId"], "t2");
+        assert!(needs["gapStart"].as_str().unwrap().contains("2026-01-01"));
+    }
+}

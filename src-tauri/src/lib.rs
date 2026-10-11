@@ -4,6 +4,9 @@ mod db;
 mod domain;
 mod engine;
 
+#[cfg(test)]
+mod test_support;
+
 use chrome::{refresh_tray_tooltip, setup_tray};
 use db::open_db;
 use engine::{hide_gap_window, hide_switcher, position_tracker, show_switcher, Engine};
