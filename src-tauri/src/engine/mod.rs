@@ -782,7 +782,7 @@ mod tests {
         assert_eq!(sheet.rows.len(), 1);
         assert_eq!(sheet.rows[0].total_ms, 2 * 3_600_000);
         assert!(sheet.csv.contains("Say \"\"hi\"\""));
-        assert!(sheet.grand_total_ms >= 2 * 3_600_000);
+        assert_eq!(sheet.grand_total_ms, 2 * 3_600_000);
     }
 
     #[test]
