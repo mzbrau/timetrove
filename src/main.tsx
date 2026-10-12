@@ -5,6 +5,7 @@ import { MainApp } from "./windows/main/MainApp";
 import { TrackerApp } from "./windows/tracker/TrackerApp";
 import { SwitcherApp } from "./windows/switcher/SwitcherApp";
 import { GapApp } from "./windows/gap/GapApp";
+import { SnoozeApp } from "./windows/snooze/SnoozeApp";
 import { applyTheme, loadAndApplyTheme } from "./shared/theme";
 import "./styles/global.css";
 
@@ -21,6 +22,8 @@ function Root() {
       return <SwitcherApp />;
     case "gap":
       return <GapApp />;
+    case "snooze":
+      return <SnoozeApp />;
     default:
       return <MainApp />;
   }

@@ -70,8 +70,21 @@ impl Engine {
                 cutoff = now;
             }
             if now - cutoff >= idle_threshold {
-                *self.last_activity.lock() = cutoff;
-                self.begin_gap(cutoff)?;
+                match self.db.get_snooze_until()? {
+                    // Still snoozing — keep tracking and refresh the checkpoint.
+                    Some(until) if until > now => {
+                        self.touch_activity();
+                        self.db.set_last_good_at(Some(now))?;
+                    }
+                    // Snooze expired during downtime — that period was already attributed.
+                    Some(_) => {
+                        self.finish_snooze()?;
+                    }
+                    None => {
+                        *self.last_activity.lock() = cutoff;
+                        self.begin_gap(cutoff)?;
+                    }
+                }
             } else {
                 self.touch_activity();
                 self.db.set_last_good_at(Some(now))?;
@@ -80,12 +93,59 @@ impl Engine {
         Ok(())
     }
 
+    /// Active snooze deadline, clearing the persisted value if it has expired.
+    fn active_snooze_until(&self) -> Result<Option<chrono::DateTime<Utc>>, String> {
+        match self.db.get_snooze_until()? {
+            Some(until) if until > Utc::now() => Ok(Some(until)),
+            Some(_) => {
+                self.finish_snooze()?;
+                Ok(None)
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn is_snoozed(&self) -> bool {
+        matches!(self.active_snooze_until(), Ok(Some(_)))
+    }
+
+    /// Clear snooze and reset activity/checkpoint so normal idle detection resumes from now.
+    fn finish_snooze(&self) -> Result<(), String> {
+        self.db.set_snooze_until(None)?;
+        let now = Utc::now();
+        self.touch_activity();
+        self.db.set_last_good_at(Some(now))?;
+        Ok(())
+    }
+
+    pub fn start_snooze(&self, until: chrono::DateTime<Utc>) -> Result<TrackerState, String> {
+        self.clear_error();
+        if matches!(*self.phase.lock(), EnginePhase::NeedsAttribution { .. }) {
+            return Err("Resolve the pending time gap first".into());
+        }
+        if !matches!(*self.phase.lock(), EnginePhase::Tracking { .. }) {
+            return Err("Start tracking before snoozing".into());
+        }
+        if until <= Utc::now() {
+            return Err("Snooze end must be in the future".into());
+        }
+        self.db.set_snooze_until(Some(until))?;
+        self.snapshot()
+    }
+
+    pub fn clear_snooze(&self) -> Result<TrackerState, String> {
+        self.clear_error();
+        self.finish_snooze()?;
+        self.snapshot()
+    }
+
     pub fn snapshot(&self) -> Result<TrackerState, String> {
         let phase = self.phase.lock().clone();
         let settings = self.db.get_settings()?;
         let now = Utc::now();
         let daily_total_ms = self.db.daily_total_ms(now)?;
         let goal_ms = settings.daily_goal_mins as i64 * 60_000;
+        let snooze_until = self.active_snooze_until()?;
         let (current_task, previous_task, gap_duration_ms, gap_band_s, tracking) = match &phase {
             EnginePhase::Stopped => {
                 let prev = self
@@ -120,6 +180,7 @@ impl Engine {
             gap_band: gap_band_s,
             db_error: self.db_error.lock().clone(),
             tracking,
+            snooze_until,
         })
     }
 
@@ -174,6 +235,7 @@ impl Engine {
         *self.phase.lock() = EnginePhase::Stopped;
         *self.previous_task_id.lock() = None;
         let _ = self.db.set_last_good_at(None);
+        let _ = self.db.set_snooze_until(None);
         self.touch_activity();
         Ok(())
     }
@@ -190,6 +252,7 @@ impl Engine {
         }
         *self.phase.lock() = EnginePhase::Stopped;
         self.db.set_last_good_at(None)?;
+        self.db.set_snooze_until(None)?;
         self.touch_activity();
         self.snapshot()
     }
@@ -209,6 +272,9 @@ impl Engine {
     }
 
     pub fn begin_gap(&self, gap_start: chrono::DateTime<Utc>) -> Result<(), String> {
+        if self.is_snoozed() {
+            return Ok(());
+        }
         let phase = self.phase.lock().clone();
         let (task_id, slice_id) = match phase {
             EnginePhase::Tracking { task_id, slice_id } => (task_id, slice_id),
@@ -251,14 +317,15 @@ impl Engine {
         if !matches!(*self.phase.lock(), EnginePhase::Tracking { .. }) {
             return Ok(());
         }
+        let snoozed = self.is_snoozed();
         let settings = self.db.get_settings()?;
         let threshold_secs = settings.idle_threshold_mins as u64 * 60;
         let threshold = Duration::minutes(settings.idle_threshold_mins as i64);
         let now = Utc::now();
         let last_good = self.db.get_last_good_at()?;
 
-        // Live idle path owns the gap once past threshold.
-        if idle_secs >= threshold_secs {
+        // Live idle path owns the gap once past threshold (unless snoozed).
+        if !snoozed && idle_secs >= threshold_secs {
             return Ok(());
         }
 
@@ -268,11 +335,13 @@ impl Engine {
         const CHECKPOINT_SECS: i64 = 60;
         const POLL_SLACK_SECS: i64 = 15;
         let sleep_cutoff = threshold + Duration::seconds(CHECKPOINT_SECS + POLL_SLACK_SECS);
-        if let Some(lg) = last_good {
-            if now - lg >= sleep_cutoff {
-                *self.last_activity.lock() = lg;
-                self.begin_gap(lg)?;
-                return Ok(());
+        if !snoozed {
+            if let Some(lg) = last_good {
+                if now - lg >= sleep_cutoff {
+                    *self.last_activity.lock() = lg;
+                    self.begin_gap(lg)?;
+                    return Ok(());
+                }
             }
         }
 
@@ -283,7 +352,7 @@ impl Engine {
         if due {
             self.db.set_last_good_at(Some(now))?;
         }
-        if idle_secs < 5 {
+        if snoozed || idle_secs < 5 {
             self.touch_activity();
         }
         Ok(())
@@ -297,6 +366,10 @@ impl Engine {
             return;
         }
         if !matches!(*self.phase.lock(), EnginePhase::Tracking { .. }) {
+            return;
+        }
+        if self.is_snoozed() {
+            self.emit_state(app);
             return;
         }
         let settings = match self.db.get_settings() {
@@ -334,6 +407,9 @@ impl Engine {
             return;
         }
         if !matches!(*self.phase.lock(), EnginePhase::Tracking { .. }) {
+            return;
+        }
+        if self.is_snoozed() {
             return;
         }
         let settings = match self.db.get_settings() {
@@ -593,6 +669,20 @@ pub fn show_switcher(app: &AppHandle) {
 
 pub fn hide_switcher(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("switcher") {
+        let _ = w.hide();
+    }
+}
+
+pub fn show_snooze_picker(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("snooze") {
+        let _ = w.center();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+pub fn hide_snooze_picker(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("snooze") {
         let _ = w.hide();
     }
 }
@@ -1102,5 +1192,119 @@ mod tests {
         let state = eng.refresh_after_edit().unwrap();
         assert!(!state.tracking);
         assert!(matches!(state.phase, EnginePhase::Stopped));
+    }
+
+    #[test]
+    fn snooze_rejects_when_stopped() {
+        let (_dir, eng) = engine_empty();
+        let until = Utc::now() + Duration::hours(1);
+        assert!(eng.start_snooze(until).unwrap_err().contains("tracking"));
+    }
+
+    #[test]
+    fn snooze_rejects_during_gap() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "GapSnooze");
+        eng.start_task(&task.id).unwrap();
+        eng.begin_gap(Utc::now() - Duration::minutes(10)).unwrap();
+        let until = Utc::now() + Duration::hours(1);
+        assert!(eng.start_snooze(until).unwrap_err().contains("gap"));
+    }
+
+    #[test]
+    fn snooze_suppresses_begin_gap_and_sleep_checkpoint() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "SnoozeKeep");
+        eng.start_task(&task.id).unwrap();
+        let until = Utc::now() + Duration::hours(2);
+        eng.start_snooze(until).unwrap();
+        assert!(eng.is_snoozed());
+
+        eng.begin_gap(Utc::now() - Duration::minutes(30)).unwrap();
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::Tracking { .. }
+        ));
+
+        let first = eng.db().get_last_good_at().unwrap().unwrap();
+        let older = first - Duration::minutes(20);
+        eng.db().set_last_good_at(Some(older)).unwrap();
+        eng.checkpoint_with_idle(0).unwrap();
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::Tracking { .. }
+        ));
+        let next = eng.db().get_last_good_at().unwrap().unwrap();
+        assert!(next > older);
+
+        // High idle still checkpoints while snoozed.
+        eng.db().set_last_good_at(Some(Utc::now() - Duration::seconds(61))).unwrap();
+        eng.checkpoint_with_idle(600).unwrap();
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::Tracking { .. }
+        ));
+        assert!(eng.db().get_last_good_at().unwrap().is_some());
+    }
+
+    #[test]
+    fn clear_snooze_allows_gaps_again() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "ExitSnooze");
+        eng.start_task(&task.id).unwrap();
+        eng.start_snooze(Utc::now() + Duration::hours(1)).unwrap();
+        eng.clear_snooze().unwrap();
+        assert!(!eng.is_snoozed());
+        eng.begin_gap(Utc::now() - Duration::minutes(15)).unwrap();
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::NeedsAttribution { .. }
+        ));
+    }
+
+    #[test]
+    fn stop_clears_snooze() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "StopSnooze");
+        eng.start_task(&task.id).unwrap();
+        eng.start_snooze(Utc::now() + Duration::hours(1)).unwrap();
+        eng.stop().unwrap();
+        assert!(eng.db().get_snooze_until().unwrap().is_none());
+        assert!(eng.snapshot().unwrap().snooze_until.is_none());
+    }
+
+    #[test]
+    fn expired_snooze_clears_on_snapshot() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "Expire");
+        eng.start_task(&task.id).unwrap();
+        eng.db()
+            .set_snooze_until(Some(Utc::now() - Duration::minutes(1)))
+            .unwrap();
+        let state = eng.snapshot().unwrap();
+        assert!(state.snooze_until.is_none());
+        assert!(eng.db().get_snooze_until().unwrap().is_none());
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::Tracking { .. }
+        ));
+    }
+
+    #[test]
+    fn startup_reconcile_skips_gap_while_snoozed() {
+        let (_dir, db) = test_db();
+        let task = make_task(&db, "SnoozeStartup");
+        let start = Utc::now() - Duration::hours(2);
+        db.replace_running_slice(None, &task.id, start).unwrap();
+        db.set_last_good_at(Some(Utc::now() - Duration::hours(1)))
+            .unwrap();
+        db.set_snooze_until(Some(Utc::now() + Duration::hours(1)))
+            .unwrap();
+        let eng = Engine::new(db);
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::Tracking { .. }
+        ));
+        assert!(eng.is_snoozed());
     }
 }

@@ -37,6 +37,8 @@ export interface TrackerState {
   gapBand: string | null;
   dbError: string | null;
   tracking: boolean;
+  /** ISO datetime when set and in the future; gap prompts suppressed until then. */
+  snoozeUntil: string | null;
 }
 
 export interface Settings {
