@@ -110,7 +110,7 @@ export function MainApp() {
               <strong className="muted">Not tracking</strong>
             )}
             <span
-              className={`mono day-total ${state?.goalMet ? "met" : "under"}`}
+              className={`mono time day-total ${state?.goalMet ? "met" : "under"}`}
             >
               {dailyTotalLabel}
             </span>
