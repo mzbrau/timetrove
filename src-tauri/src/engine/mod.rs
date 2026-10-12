@@ -11,6 +11,8 @@ pub struct Engine {
     last_activity: Mutex<chrono::DateTime<Utc>>,
     db_error: Mutex<Option<String>>,
     previous_task_id: Mutex<Option<String>>,
+    /// Floor for the next gap start after auto-expiring snooze (not used on explicit exit).
+    gap_start_floor: Mutex<Option<chrono::DateTime<Utc>>>,
 }
 
 impl Engine {
@@ -21,6 +23,7 @@ impl Engine {
             last_activity: Mutex::new(Utc::now()),
             db_error: Mutex::new(None),
             previous_task_id: Mutex::new(None),
+            gap_start_floor: Mutex::new(None),
         });
         if let Err(e) = engine.reconcile_on_startup() {
             *engine.db_error.lock() = Some(e);
@@ -76,9 +79,18 @@ impl Engine {
                         self.touch_activity();
                         self.db.set_last_good_at(Some(now))?;
                     }
-                    // Snooze expired during downtime — that period was already attributed.
-                    Some(_) => {
-                        self.finish_snooze()?;
+                    // Snooze expired during downtime — keep snoozed interval attributed,
+                    // open a gap from the deadline (or later checkpoint) if still idle.
+                    Some(until) => {
+                        let expired = self.clear_expired_snooze()?.unwrap_or(until);
+                        let gap_start = cutoff.max(expired);
+                        if now - gap_start >= idle_threshold {
+                            *self.last_activity.lock() = gap_start;
+                            self.begin_gap(gap_start)?;
+                        } else {
+                            self.touch_activity();
+                            self.db.set_last_good_at(Some(now))?;
+                        }
                     }
                     None => {
                         *self.last_activity.lock() = cutoff;
@@ -93,12 +105,13 @@ impl Engine {
         Ok(())
     }
 
-    /// Active snooze deadline, clearing the persisted value if it has expired.
+    /// Active snooze deadline, clearing the persisted value if it has expired
+    /// without resetting activity/`last_good_at` (see [`Self::finish_snooze`] for explicit exit).
     fn active_snooze_until(&self) -> Result<Option<chrono::DateTime<Utc>>, String> {
         match self.db.get_snooze_until()? {
             Some(until) if until > Utc::now() => Ok(Some(until)),
             Some(_) => {
-                self.finish_snooze()?;
+                self.clear_expired_snooze()?;
                 Ok(None)
             }
             None => Ok(None),
@@ -109,9 +122,22 @@ impl Engine {
         matches!(self.active_snooze_until(), Ok(Some(_)))
     }
 
-    /// Clear snooze and reset activity/checkpoint so normal idle detection resumes from now.
+    /// Clear an expired snooze without resetting checkpoints; stash deadline as gap-start floor.
+    fn clear_expired_snooze(&self) -> Result<Option<chrono::DateTime<Utc>>, String> {
+        match self.db.get_snooze_until()? {
+            Some(until) if until <= Utc::now() => {
+                self.db.set_snooze_until(None)?;
+                *self.gap_start_floor.lock() = Some(until);
+                Ok(Some(until))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Explicit "Exit snooze": clear snooze and reset activity/checkpoint to now.
     fn finish_snooze(&self) -> Result<(), String> {
         self.db.set_snooze_until(None)?;
+        *self.gap_start_floor.lock() = None;
         let now = Utc::now();
         self.touch_activity();
         self.db.set_last_good_at(Some(now))?;
@@ -292,6 +318,12 @@ impl Engine {
             EnginePhase::NeedsAttribution { .. } => return Ok(()),
             EnginePhase::Stopped => return Ok(()),
         };
+        // After auto-expiry, do not open a gap into the snoozed interval.
+        let gap_start = match *self.gap_start_floor.lock() {
+            Some(floor) => gap_start.max(floor),
+            None => gap_start,
+        };
+        *self.gap_start_floor.lock() = None;
         // Close active work at gap_start (time before idle stays on task)
         let slice = self
             .db
@@ -1432,13 +1464,49 @@ mod tests {
         eng.db()
             .set_snooze_until(Some(Utc::now() - Duration::minutes(1)))
             .unwrap();
+        let before_good = eng.db().get_last_good_at().unwrap();
         let state = eng.snapshot().unwrap();
         assert!(state.snooze_until.is_none());
         assert!(eng.db().get_snooze_until().unwrap().is_none());
+        // Auto-expiry must not reset the tracking checkpoint to now.
+        assert_eq!(eng.db().get_last_good_at().unwrap(), before_good);
         assert!(matches!(
             eng.phase.lock().clone(),
             EnginePhase::Tracking { .. }
         ));
+    }
+
+    #[test]
+    fn expired_snooze_clamps_gap_start_to_deadline() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "Clamp");
+        eng.start_task(&task.id).unwrap();
+        let deadline = Utc::now() - Duration::minutes(20);
+        eng.db().set_snooze_until(Some(deadline)).unwrap();
+        // Live idle would report a gap starting well before the snooze ended.
+        let early = deadline - Duration::minutes(40);
+        eng.begin_gap(early).unwrap();
+        let phase = eng.phase.lock().clone();
+        match phase {
+            EnginePhase::NeedsAttribution { gap_start, .. } => {
+                assert_eq!(gap_start, deadline);
+            }
+            other => panic!("expected gap, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clear_snooze_resets_checkpoint_to_now() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "ExitReset");
+        eng.start_task(&task.id).unwrap();
+        eng.start_snooze(Utc::now() + Duration::hours(1)).unwrap();
+        let old = Utc::now() - Duration::minutes(30);
+        eng.db().set_last_good_at(Some(old)).unwrap();
+        eng.clear_snooze().unwrap();
+        let good = eng.db().get_last_good_at().unwrap().unwrap();
+        assert!(good > old + Duration::minutes(25));
+        assert!(eng.gap_start_floor.lock().is_none());
     }
 
     #[test]
@@ -1457,5 +1525,27 @@ mod tests {
             EnginePhase::Tracking { .. }
         ));
         assert!(eng.is_snoozed());
+    }
+
+    #[test]
+    fn startup_reconcile_gaps_from_expired_snooze_deadline() {
+        let (_dir, db) = test_db();
+        let task = make_task(&db, "ExpireStartup");
+        let start = Utc::now() - Duration::hours(3);
+        db.replace_running_slice(None, &task.id, start, "").unwrap();
+        let deadline = Utc::now() - Duration::hours(1);
+        // Checkpoint from before the snooze ended.
+        db.set_last_good_at(Some(deadline - Duration::hours(1)))
+            .unwrap();
+        db.set_snooze_until(Some(deadline)).unwrap();
+        let eng = Engine::new(db);
+        let phase = eng.phase.lock().clone();
+        match phase {
+            EnginePhase::NeedsAttribution { gap_start, .. } => {
+                assert_eq!(gap_start, deadline);
+            }
+            other => panic!("expected gap from expired snooze, got {other:?}"),
+        }
+        assert!(eng.db().get_snooze_until().unwrap().is_none());
     }
 }

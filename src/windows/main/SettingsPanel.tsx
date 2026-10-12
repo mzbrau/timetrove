@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { api } from "../../shared/api";
 import { applyTheme } from "../../shared/theme";
@@ -16,6 +17,24 @@ export function SettingsPanel() {
         setDbPath(path);
       })
       .catch((e) => setError(String(e)));
+  }, []);
+
+  // Tracker context menu can toggle always-on-top independently; keep checkbox in sync
+  // without clobbering unsaved edits to other fields.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<Settings>("settings-changed", (e) => {
+      setSettings((prev) =>
+        prev
+          ? { ...prev, trackerAlwaysOnTop: e.payload.trackerAlwaysOnTop }
+          : prev,
+      );
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
   }, []);
 
   if (!settings) {

@@ -12,6 +12,23 @@ pub fn open_db(path: &Path) -> Result<Connection, String> {
     Ok(conn)
 }
 
+/// Run schema changes and the version marker in one transaction so a crash
+/// between them cannot leave the DB half-migrated.
+fn migrate_tx(conn: &Connection, body: impl FnOnce(&Connection) -> Result<(), String>) -> Result<(), String> {
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| e.to_string())?;
+    match body(conn) {
+        Ok(()) => {
+            conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
+}
+
 fn migrate(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"
@@ -68,32 +85,38 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         .unwrap_or(0);
 
     if version < 1 {
-        let defaults = [
-            ("idle_threshold_mins", "10"),
-            ("daily_goal_mins", "480"),
-            ("switch_shortcut", "CommandOrControl+Shift+T"),
-            ("autostart", "true"),
-            ("theme", "dark"),
-        ];
-        for (k, v) in defaults {
-            conn.execute(
-                "INSERT OR IGNORE INTO settings (key, value) VALUES (?1, ?2)",
-                (k, v),
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        conn.execute("INSERT INTO schema_migrations (version) VALUES (1)", [])
-            .map_err(|e| e.to_string())?;
+        migrate_tx(conn, |conn| {
+            let defaults = [
+                ("idle_threshold_mins", "10"),
+                ("daily_goal_mins", "480"),
+                ("switch_shortcut", "CommandOrControl+Shift+T"),
+                ("autostart", "true"),
+                ("theme", "dark"),
+            ];
+            for (k, v) in defaults {
+                conn.execute(
+                    "INSERT OR IGNORE INTO settings (key, value) VALUES (?1, ?2)",
+                    (k, v),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (1)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
     }
 
     if version < 2 {
-        conn.execute(
-            "INSERT OR IGNORE INTO settings (key, value) VALUES ('theme', 'dark')",
-            [],
-        )
-        .map_err(|e| e.to_string())?;
-        conn.execute("INSERT INTO schema_migrations (version) VALUES (2)", [])
+        migrate_tx(conn, |conn| {
+            conn.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES ('theme', 'dark')",
+                [],
+            )
             .map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (2)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
     }
 
     // v3: marker that near-adjacent coalesce runs once from Db open/reopen hooks
@@ -104,29 +127,35 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     }
 
     if version < 4 {
-        conn.execute(
-            "ALTER TABLE tasks ADD COLUMN starred INTEGER NOT NULL DEFAULT 0",
-            [],
-        )
-        .map_err(|e| e.to_string())?;
-        conn.execute("INSERT INTO schema_migrations (version) VALUES (4)", [])
+        migrate_tx(conn, |conn| {
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN starred INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
             .map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (4)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
     }
 
     if version < 5 {
-        let defaults = [
-            ("tracker_always_on_top", "true"),
-            ("tracker_visible", "true"),
-        ];
-        for (k, v) in defaults {
-            conn.execute(
-                "INSERT OR IGNORE INTO settings (key, value) VALUES (?1, ?2)",
-                (k, v),
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        conn.execute("INSERT INTO schema_migrations (version) VALUES (5)", [])
-            .map_err(|e| e.to_string())?;
+        migrate_tx(conn, |conn| {
+            let defaults = [
+                ("tracker_always_on_top", "true"),
+                ("tracker_visible", "true"),
+            ];
+            for (k, v) in defaults {
+                conn.execute(
+                    "INSERT OR IGNORE INTO settings (key, value) VALUES (?1, ?2)",
+                    (k, v),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (5)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
     }
 
     // v6: snooze_until is an optional settings key (absent = not snoozing),
@@ -137,13 +166,16 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     }
 
     if version < 7 {
-        conn.execute(
-            "ALTER TABLE time_slices ADD COLUMN note TEXT NOT NULL DEFAULT ''",
-            [],
-        )
-        .map_err(|e| e.to_string())?;
-        conn.execute("INSERT INTO schema_migrations (version) VALUES (7)", [])
+        migrate_tx(conn, |conn| {
+            conn.execute(
+                "ALTER TABLE time_slices ADD COLUMN note TEXT NOT NULL DEFAULT ''",
+                [],
+            )
             .map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (7)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
     }
 
     Ok(())

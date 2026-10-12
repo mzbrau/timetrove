@@ -550,31 +550,66 @@ impl Db {
         a.with_timezone(&Local).date_naive() == b.with_timezone(&Local).date_naive()
     }
 
-    fn find_near_prev(
+    /// Immediate previous closed slice in global start order (any task).
+    fn immediate_prev_closed(
         &self,
-        task_id: &str,
         start: DateTime<Utc>,
     ) -> Result<Option<TimeSlice>, String> {
         self.with_conn(|conn| {
             let mut stmt = conn
                 .prepare(
                     "SELECT id, task_id, start, end, note FROM time_slices
-                     WHERE task_id = ?1 AND end IS NOT NULL",
+                     WHERE end IS NOT NULL AND start < ?1
+                     ORDER BY start DESC
+                     LIMIT 1",
                 )
                 .map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map(params![task_id], map_slice)
-                .map_err(|e| e.to_string())?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?;
-            Ok(rows
-                .into_iter()
-                .filter(|s| {
-                    Self::same_local_day(s.start, start)
-                        && s.end.is_some_and(|e| Self::near_gap(e, start))
-                })
-                .max_by_key(|s| s.end))
+            stmt.query_row(params![start.to_rfc3339()], map_slice)
+                .optional()
+                .map_err(|e| e.to_string())
         })
+    }
+
+    /// Immediate next closed slice in global start order (any task).
+    fn immediate_next_closed(
+        &self,
+        after_start: DateTime<Utc>,
+    ) -> Result<Option<TimeSlice>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, task_id, start, end, note FROM time_slices
+                     WHERE end IS NOT NULL AND start > ?1
+                     ORDER BY start ASC
+                     LIMIT 1",
+                )
+                .map_err(|e| e.to_string())?;
+            stmt.query_row(params![after_start.to_rfc3339()], map_slice)
+                .optional()
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    fn find_near_prev(
+        &self,
+        task_id: &str,
+        start: DateTime<Utc>,
+    ) -> Result<Option<TimeSlice>, String> {
+        let Some(prev) = self.immediate_prev_closed(start)? else {
+            return Ok(None);
+        };
+        if prev.task_id != task_id {
+            return Ok(None);
+        }
+        if !Self::same_local_day(prev.start, start) {
+            return Ok(None);
+        }
+        let prev_end = prev.end.expect("closed");
+        if Self::near_gap(prev_end, start) {
+            Ok(Some(prev))
+        } else {
+            Ok(None)
+        }
     }
 
     fn find_near_next(
@@ -583,25 +618,20 @@ impl Db {
         current_start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Option<TimeSlice>, String> {
-        self.with_conn(|conn| {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT id, task_id, start, end, note FROM time_slices
-                     WHERE task_id = ?1 AND end IS NOT NULL",
-                )
-                .map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map(params![task_id], map_slice)
-                .map_err(|e| e.to_string())?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?;
-            Ok(rows
-                .into_iter()
-                .filter(|s| {
-                    Self::same_local_day(current_start, s.start) && Self::near_gap(end, s.start)
-                })
-                .min_by_key(|s| s.start))
-        })
+        let Some(next) = self.immediate_next_closed(current_start)? else {
+            return Ok(None);
+        };
+        if next.task_id != task_id {
+            return Ok(None);
+        }
+        if !Self::same_local_day(current_start, next.start) {
+            return Ok(None);
+        }
+        if Self::near_gap(end, next.start) {
+            Ok(Some(next))
+        } else {
+            Ok(None)
+        }
     }
 
     fn find_any_near_pair(&self) -> Result<Option<(TimeSlice, TimeSlice)>, String> {
@@ -618,18 +648,19 @@ impl Db {
                 .map_err(|e| e.to_string())?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| e.to_string())?;
-            for i in 0..rows.len() {
-                for j in (i + 1)..rows.len() {
-                    if rows[i].task_id != rows[j].task_id {
-                        continue;
-                    }
-                    if !Self::same_local_day(rows[i].start, rows[j].start) {
-                        continue;
-                    }
-                    let earlier_end = rows[i].end.expect("closed");
-                    if Self::near_gap(earlier_end, rows[j].start) {
-                        return Ok(Some((rows[i].clone(), rows[j].clone())));
-                    }
+            // Only globally consecutive pairs — never merge across an intervening task.
+            for i in 0..rows.len().saturating_sub(1) {
+                let earlier = &rows[i];
+                let later = &rows[i + 1];
+                if earlier.task_id != later.task_id {
+                    continue;
+                }
+                if !Self::same_local_day(earlier.start, later.start) {
+                    continue;
+                }
+                let earlier_end = earlier.end.expect("closed");
+                if Self::near_gap(earlier_end, later.start) {
+                    return Ok(Some((earlier.clone(), later.clone())));
                 }
             }
             Ok(None)
@@ -1583,6 +1614,33 @@ mod tests {
         assert_eq!(updated.note, "live");
         assert!(updated.end.is_none());
         assert_eq!(db.running_slice().unwrap().unwrap().note, "live");
+    }
+
+    #[test]
+    fn coalesce_skips_pair_with_intervening_task() {
+        let (_dir, db) = test_db();
+        let a = sample_task(&db, "A");
+        let b = sample_task(&db, "B");
+        // A 10:00–11:00, B 11:00:10–11:00:20, A 11:00:30–12:00 — must not merge A's.
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 10).unwrap();
+        let t3 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 20).unwrap();
+        let t4 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 30).unwrap();
+        let t5 = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        db.insert_closed_slice(&a.id, t0, t1, "").unwrap();
+        db.insert_closed_slice(&b.id, t2, t3, "").unwrap();
+        db.insert_closed_slice(&a.id, t4, t5, "").unwrap();
+        db.coalesce_near_adjacent().unwrap();
+        let slices = db
+            .list_slices_between(t0, t5 + Duration::seconds(1))
+            .unwrap();
+        assert_eq!(slices.len(), 3);
+        assert_eq!(slices[0].task_id, a.id);
+        assert_eq!(slices[1].task_id, b.id);
+        assert_eq!(slices[2].task_id, a.id);
+        assert_eq!(slices[0].end, Some(t1));
+        assert_eq!(slices[2].start, t4);
     }
 
     #[test]
