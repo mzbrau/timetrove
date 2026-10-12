@@ -17,7 +17,7 @@
         "title": "TimeTrove",
         "width": 1100,
         "height": 740,
-        "visible": true,
+        "visible": false,
         "backgroundColor": [18, 22, 26, 255]
       },
       {
@@ -29,7 +29,7 @@
         "alwaysOnTop": true,
         "resizable": false,
         "skipTaskbar": true,
-        "visible": true,
+        "visible": false,
         "transparent": true,
         "shadow": false,
         "backgroundColor": [0, 0, 0, 0]

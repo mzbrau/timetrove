@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../shared/api";
+import { withStartupRetry } from "../../shared/startupRetry";
 import type { Task } from "../../shared/types";
 import "./switcher.css";
 
@@ -11,7 +12,12 @@ export function SwitcherApp() {
   const [selected, setSelected] = useState(0);
 
   const load = () => {
-    api.listTasks(false).then(setTasks).catch((e) => setError(String(e)));
+    withStartupRetry(() => api.listTasks(false))
+      .then((list) => {
+        setTasks(list);
+        setError(null);
+      })
+      .catch((e) => setError(String(e)));
   };
 
   useEffect(() => {
