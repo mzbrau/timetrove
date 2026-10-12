@@ -42,8 +42,69 @@ export function zoomSnapMins(zoom: number): number {
 export const ZOOM_LEVELS = [1, 2, 4, 8] as const;
 export type ZoomLevel = (typeof ZOOM_LEVELS)[number];
 
-export function hourLabels(zoom: ZoomLevel): number[] {
-  if (zoom === 1) return [0, 6, 12, 18, 24];
+/** Cap continuous fit zoom so a tiny slice does not explode the track. */
+export const MAX_FIT_ZOOM = 8;
+
+export type BookedExtent = { startMs: number; endMs: number };
+
+/** Min start / max end of occupied ranges; null if none. */
+export function bookedExtent(
+  ranges: { startMs: number; endMs: number }[],
+): BookedExtent | null {
+  let startMs = Infinity;
+  let endMs = -Infinity;
+  for (const r of ranges) {
+    if (r.endMs <= r.startMs) continue;
+    startMs = Math.min(startMs, r.startMs);
+    endMs = Math.max(endMs, r.endMs);
+  }
+  if (!Number.isFinite(startMs) || endMs <= startMs) return null;
+  return { startMs, endMs };
+}
+
+/**
+ * Zoom factor so `extent` fills the viewport on a full-day track of `dayLengthMs`.
+ * Clamped to [1, MAX_FIT_ZOOM].
+ */
+export function fitZoom(
+  dayLengthMs: number,
+  extent: BookedExtent,
+  maxZoom: number = MAX_FIT_ZOOM,
+): number {
+  const span = extent.endMs - extent.startMs;
+  if (span <= 0 || dayLengthMs <= 0) return 1;
+  return Math.max(1, Math.min(maxZoom, dayLengthMs / span));
+}
+
+/** Fraction of track width to scroll so `extent.startMs` sits at the left edge. */
+export function fitScrollRatio(
+  extent: BookedExtent,
+  dayLengthMs: number,
+): number {
+  if (dayLengthMs <= 0) return 0;
+  return Math.max(0, Math.min(1, extent.startMs / dayLengthMs));
+}
+
+/** Next discrete zoom level strictly above `zoom`, or null if already at max. */
+export function nextZoomLevel(zoom: number): ZoomLevel | null {
+  for (const level of ZOOM_LEVELS) {
+    if (level > zoom) return level;
+  }
+  return null;
+}
+
+/** Next discrete zoom level strictly below `zoom`, or null if already at min. */
+export function prevZoomLevel(zoom: number): ZoomLevel | null {
+  for (let i = ZOOM_LEVELS.length - 1; i >= 0; i--) {
+    const level = ZOOM_LEVELS[i];
+    if (level < zoom) return level;
+  }
+  return null;
+}
+
+/** Label density for continuous or discrete zoom. */
+export function hourLabels(zoom: number): number[] {
+  if (zoom < 2) return [0, 6, 12, 18, 24];
   return Array.from({ length: 25 }, (_, i) => i);
 }
 

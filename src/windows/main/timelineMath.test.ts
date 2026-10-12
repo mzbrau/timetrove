@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  bookedExtent,
   DAY_MS,
   dayDurationMs,
   dayMsToIso,
+  fitScrollRatio,
+  fitZoom,
   formatDayClock,
   gapsFromRanges,
   hourLabels,
   localDayEnd,
   localDayStart,
+  MAX_FIT_ZOOM,
   msInDay,
+  nextZoomLevel,
+  prevZoomLevel,
   resizeNeighborBounds,
   snapMs,
   zoomSnapMins,
@@ -72,7 +78,51 @@ describe("timelineMath", () => {
 
   it("returns sparse labels at 1x and hourly when zoomed", () => {
     expect(hourLabels(1)).toEqual([0, 6, 12, 18, 24]);
+    expect(hourLabels(1.5)).toEqual([0, 6, 12, 18, 24]);
     expect(hourLabels(2)).toHaveLength(25);
+    expect(hourLabels(3)).toHaveLength(25);
+  });
+
+  it("derives booked extent from occupied ranges", () => {
+    expect(bookedExtent([])).toBeNull();
+    expect(
+      bookedExtent([{ startMs: 3 * 60_000, endMs: 3 * 60_000 }]),
+    ).toBeNull();
+    expect(
+      bookedExtent([
+        { startMs: 6 * 60 * 60_000, endMs: 8 * 60 * 60_000 },
+        { startMs: 9 * 60 * 60_000, endMs: 17 * 60 * 60_000 },
+        { startMs: 2 * 60 * 60_000, endMs: 3 * 60 * 60_000 },
+      ]),
+    ).toEqual({
+      startMs: 2 * 60 * 60_000,
+      endMs: 17 * 60 * 60_000,
+    });
+  });
+
+  it("computes fit zoom and scroll ratio for booked extent", () => {
+    const eightHours = {
+      startMs: 9 * 60 * 60_000,
+      endMs: 17 * 60 * 60_000,
+    };
+    expect(fitZoom(DAY_MS, eightHours)).toBe(3);
+    expect(fitScrollRatio(eightHours, DAY_MS)).toBe(9 / 24);
+
+    const fullDay = { startMs: 0, endMs: DAY_MS };
+    expect(fitZoom(DAY_MS, fullDay)).toBe(1);
+    expect(fitScrollRatio(fullDay, DAY_MS)).toBe(0);
+
+    const tiny = { startMs: 12 * 60 * 60_000, endMs: 12 * 60 * 60_000 + 60_000 };
+    expect(fitZoom(DAY_MS, tiny)).toBe(MAX_FIT_ZOOM);
+  });
+
+  it("walks discrete zoom levels around continuous values", () => {
+    expect(nextZoomLevel(1)).toBe(2);
+    expect(nextZoomLevel(3)).toBe(4);
+    expect(nextZoomLevel(8)).toBeNull();
+    expect(prevZoomLevel(1)).toBeNull();
+    expect(prevZoomLevel(3)).toBe(2);
+    expect(prevZoomLevel(8)).toBe(4);
   });
 
   it("clamps resize to neighboring occupied ranges", () => {

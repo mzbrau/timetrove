@@ -11,17 +11,20 @@ import { formatHm, normalizeHexColor } from "../../shared/format";
 import type { Task, TimeSlice } from "../../shared/types";
 import { TaskPicker } from "./TaskPicker";
 import {
+  bookedExtent,
   dayDurationMs,
   dayMsToIso,
+  fitScrollRatio,
+  fitZoom,
   formatDayClock,
   gapsFromRanges,
   hourLabels,
   localDayStart,
   msInDay,
+  nextZoomLevel,
+  prevZoomLevel,
   resizeNeighborBounds,
   snapMs,
-  ZOOM_LEVELS,
-  type ZoomLevel,
   zoomSnapMins,
 } from "./timelineMath";
 
@@ -72,12 +75,14 @@ export function DayTimeline({
   onError,
 }: Props) {
   const trackRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const gapPointerRef = useRef(false);
   const rangesRef = useRef<
     { slice: TimeSlice; startMs: number; endMs: number }[]
   >([]);
-  const [zoom, setZoom] = useState<ZoomLevel>(1);
+  const pendingScrollRatioRef = useRef<number | null>(null);
+  const [zoom, setZoom] = useState(1);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [pending, setPending] = useState<PendingCreate | null>(null);
   const [tooltip, setTooltip] = useState<{
@@ -230,7 +235,23 @@ export function DayTimeline({
     setPending(null);
     setTooltip(null);
     setPointerPos(null);
+    setZoom(1);
+    pendingScrollRatioRef.current = null;
+    if (scrollRef.current) scrollRef.current.scrollLeft = 0;
   }, [day]);
+
+  useEffect(() => {
+    const ratio = pendingScrollRatioRef.current;
+    if (ratio == null) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const apply = () => {
+      pendingScrollRatioRef.current = null;
+      el.scrollLeft = ratio * el.scrollWidth;
+    };
+    const id = requestAnimationFrame(apply);
+    return () => cancelAnimationFrame(id);
+  }, [zoom]);
 
   useEffect(() => {
     if (!drag) return;
@@ -468,14 +489,43 @@ export function DayTimeline({
     );
   };
 
+  const extent = useMemo(
+    () =>
+      bookedExtent(
+        displayRanges.map((r) => ({ startMs: r.startMs, endMs: r.endMs })),
+      ),
+    [displayRanges],
+  );
+
   const zoomIn = () => {
-    const idx = ZOOM_LEVELS.indexOf(zoom);
-    if (idx < ZOOM_LEVELS.length - 1) setZoom(ZOOM_LEVELS[idx + 1]);
+    const next = nextZoomLevel(zoom);
+    if (next != null) setZoom(next);
   };
   const zoomOut = () => {
-    const idx = ZOOM_LEVELS.indexOf(zoom);
-    if (idx > 0) setZoom(ZOOM_LEVELS[idx - 1]);
+    const prev = prevZoomLevel(zoom);
+    if (prev != null) setZoom(prev);
   };
+  const fitToBooked = () => {
+    if (!extent) return;
+    const nextZoom = fitZoom(dayLength, extent);
+    const ratio = fitScrollRatio(extent, dayLength);
+    pendingScrollRatioRef.current = ratio;
+    if (nextZoom === zoom) {
+      requestAnimationFrame(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        pendingScrollRatioRef.current = null;
+        el.scrollLeft = ratio * el.scrollWidth;
+      });
+      return;
+    }
+    setZoom(nextZoom);
+  };
+
+  const zoomLabel =
+    Number.isInteger(zoom) || Math.abs(zoom - Math.round(zoom)) < 0.05
+      ? String(Math.round(zoom))
+      : zoom.toFixed(1);
 
   const draftGap =
     drag?.kind === "gap" && drag.moved
@@ -492,17 +542,33 @@ export function DayTimeline({
       <div className="day-timeline-toolbar">
         <span className="muted">Day timeline</span>
         <div className="row-actions">
-          <button type="button" onClick={zoomOut} disabled={zoom === 1}>
+          <button
+            type="button"
+            onClick={zoomOut}
+            disabled={prevZoomLevel(zoom) == null}
+          >
             −
           </button>
-          <span className="mono">{zoom}×</span>
-          <button type="button" onClick={zoomIn} disabled={zoom === 8}>
+          <span className="mono">{zoomLabel}×</span>
+          <button
+            type="button"
+            onClick={zoomIn}
+            disabled={nextZoomLevel(zoom) == null}
+          >
             +
+          </button>
+          <button
+            type="button"
+            onClick={fitToBooked}
+            disabled={!extent}
+            title="Zoom to booked time"
+          >
+            Fit
           </button>
         </div>
       </div>
 
-      <div className="day-timeline-scroll">
+      <div ref={scrollRef} className="day-timeline-scroll">
         <div
           className="day-timeline-inner"
           style={{ width: `${zoom * 100}%` }}
