@@ -56,12 +56,14 @@ impl Db {
         self.with_conn(|conn| {
             let mut stmt = if include_archived {
                 conn.prepare(
-                    "SELECT id, name, color, description, notes, archived, starred, created_at, updated_at
+                    "SELECT id, name, color, description, notes, archived, starred,
+                            jira_issue_key, jira_reported_ms, created_at, updated_at
                      FROM tasks ORDER BY starred DESC, name COLLATE NOCASE",
                 )
             } else {
                 conn.prepare(
-                    "SELECT id, name, color, description, notes, archived, starred, created_at, updated_at
+                    "SELECT id, name, color, description, notes, archived, starred,
+                            jira_issue_key, jira_reported_ms, created_at, updated_at
                      FROM tasks WHERE archived = 0 ORDER BY starred DESC, name COLLATE NOCASE",
                 )
             }
@@ -78,7 +80,8 @@ impl Db {
     pub fn get_task(&self, id: &str) -> Result<Option<Task>, String> {
         self.with_conn(|conn| {
             conn.query_row(
-                "SELECT id, name, color, description, notes, archived, starred, created_at, updated_at
+                "SELECT id, name, color, description, notes, archived, starred,
+                        jira_issue_key, jira_reported_ms, created_at, updated_at
                  FROM tasks WHERE id = ?1",
                 [id],
                 map_task,
@@ -111,6 +114,7 @@ impl Db {
             Some(c) if !c.trim().is_empty() => c,
             _ => next_color(&self.existing_colors()?),
         };
+        let jira_issue_key = normalize_jira_issue_key_input(input.jira_issue_key.as_deref())?;
         let now = Utc::now();
         let task = Task {
             id: Uuid::new_v4().to_string(),
@@ -120,19 +124,23 @@ impl Db {
             notes: input.notes.unwrap_or_default(),
             archived: false,
             starred: false,
+            jira_issue_key,
+            jira_reported_ms: 0,
             created_at: now,
             updated_at: now,
         };
         self.with_conn(|conn| {
             conn.execute(
-                "INSERT INTO tasks (id, name, color, description, notes, archived, starred, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, ?6, ?7)",
+                "INSERT INTO tasks (id, name, color, description, notes, archived, starred,
+                                   jira_issue_key, jira_reported_ms, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, ?6, 0, ?7, ?8)",
                 params![
                     task.id,
                     task.name,
                     task.color,
                     task.description,
                     task.notes,
+                    task.jira_issue_key,
                     task.created_at.to_rfc3339(),
                     task.updated_at.to_rfc3339(),
                 ],
@@ -175,10 +183,18 @@ impl Db {
         if let Some(starred) = input.starred {
             task.starred = starred;
         }
+        if let Some(raw_key) = input.jira_issue_key {
+            let key = normalize_jira_issue_key_input(Some(&raw_key))?;
+            if key != task.jira_issue_key {
+                task.jira_issue_key = key;
+                task.jira_reported_ms = 0;
+            }
+        }
         task.updated_at = Utc::now();
         self.with_conn(|conn| {
             conn.execute(
-                "UPDATE tasks SET name=?2, color=?3, description=?4, notes=?5, archived=?6, starred=?7, updated_at=?8
+                "UPDATE tasks SET name=?2, color=?3, description=?4, notes=?5, archived=?6, starred=?7,
+                        jira_issue_key=?8, jira_reported_ms=?9, updated_at=?10
                  WHERE id=?1",
                 params![
                     task.id,
@@ -188,6 +204,8 @@ impl Db {
                     task.notes,
                     task.archived as i32,
                     task.starred as i32,
+                    task.jira_issue_key,
+                    task.jira_reported_ms,
                     task.updated_at.to_rfc3339(),
                 ],
             )
@@ -201,6 +219,67 @@ impl Db {
             Ok(())
         })?;
         Ok(task)
+    }
+
+    /// Total tracked ms for a task across all slices (running slice ends at `now`).
+    pub fn task_total_ms(&self, task_id: &str, now: DateTime<Utc>) -> Result<i64, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT start, end FROM time_slices WHERE task_id = ?1")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([task_id], |r| {
+                    let start = parse_dt(&r.get::<_, String>(0)?)?;
+                    let end: Option<String> = r.get(1)?;
+                    let end = match end {
+                        Some(s) => parse_dt(&s)?,
+                        None => now,
+                    };
+                    Ok((end - start).num_milliseconds().max(0))
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows.into_iter().sum())
+        })
+    }
+
+    pub fn bump_jira_reported_ms(&self, task_id: &str, delta_ms: i64) -> Result<(), String> {
+        if delta_ms <= 0 {
+            return Ok(());
+        }
+        self.with_conn(|conn| {
+            let changed = conn
+                .execute(
+                    "UPDATE tasks SET jira_reported_ms = jira_reported_ms + ?2, updated_at = ?3
+                     WHERE id = ?1",
+                    params![task_id, delta_ms, Utc::now().to_rfc3339()],
+                )
+                .map_err(|e| e.to_string())?;
+            if changed == 0 {
+                return Err("Task not found".into());
+            }
+            Ok(())
+        })
+    }
+
+    /// Tasks with a non-empty Jira issue key (for periodic sync).
+    pub fn list_tasks_with_jira_key(&self) -> Result<Vec<Task>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, name, color, description, notes, archived, starred,
+                            jira_issue_key, jira_reported_ms, created_at, updated_at
+                     FROM tasks WHERE jira_issue_key != '' ORDER BY name COLLATE NOCASE",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], map_task)
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })
     }
 
     pub fn running_slice(&self) -> Result<Option<TimeSlice>, String> {
@@ -879,6 +958,21 @@ impl Db {
                     "tracker_visible" => {
                         settings.tracker_visible = v == "true" || v == "1";
                     }
+                    "tracker_show_seconds" => {
+                        settings.tracker_show_seconds = v == "true" || v == "1";
+                    }
+                    "jira_enabled" => {
+                        settings.jira_enabled = v == "true" || v == "1";
+                    }
+                    "jira_site_url" => settings.jira_site_url = v,
+                    "jira_email" => settings.jira_email = v,
+                    "jira_api_token" => settings.jira_api_token = v,
+                    "jira_last_error" => {
+                        settings.jira_last_error = if v.is_empty() { None } else { Some(v) };
+                    }
+                    "jira_last_synced_at" => {
+                        settings.jira_last_synced_at = if v.is_empty() { None } else { Some(v) };
+                    }
                     _ => {}
                 }
             }
@@ -925,6 +1019,25 @@ impl Db {
                         "false".into()
                     },
                 ),
+                (
+                    "tracker_show_seconds",
+                    if settings.tracker_show_seconds {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    },
+                ),
+                (
+                    "jira_enabled",
+                    if settings.jira_enabled {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    },
+                ),
+                ("jira_site_url", settings.jira_site_url.clone()),
+                ("jira_email", settings.jira_email.clone()),
+                ("jira_api_token", settings.jira_api_token.clone()),
             ];
             for (k, v) in pairs {
                 conn.execute(
@@ -969,6 +1082,44 @@ impl Db {
                 .map_err(|e| e.to_string())?;
             }
             Ok(())
+        })
+    }
+
+    pub fn set_jira_last_error(&self, error: Option<&str>) -> Result<(), String> {
+        self.with_conn(|conn| match error {
+            Some(msg) if !msg.is_empty() => {
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('jira_last_error', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![msg],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+            _ => {
+                conn.execute("DELETE FROM settings WHERE key = 'jira_last_error'", [])
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        })
+    }
+
+    pub fn set_jira_last_synced_at(&self, at: Option<DateTime<Utc>>) -> Result<(), String> {
+        self.with_conn(|conn| match at {
+            Some(dt) => {
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('jira_last_synced_at', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![dt.to_rfc3339()],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+            None => {
+                conn.execute("DELETE FROM settings WHERE key = 'jira_last_synced_at'", [])
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
         })
     }
 
@@ -1136,9 +1287,51 @@ fn map_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         notes: row.get(4)?,
         archived: row.get::<_, i32>(5)? != 0,
         starred: row.get::<_, i32>(6)? != 0,
-        created_at: parse_dt(&row.get::<_, String>(7)?)?,
-        updated_at: parse_dt(&row.get::<_, String>(8)?)?,
+        jira_issue_key: row.get(7)?,
+        jira_reported_ms: row.get(8)?,
+        created_at: parse_dt(&row.get::<_, String>(9)?)?,
+        updated_at: parse_dt(&row.get::<_, String>(10)?)?,
     })
+}
+
+/// Empty clears the link. Non-empty must look like `PROJ-123`.
+fn normalize_jira_issue_key_input(raw: Option<&str>) -> Result<String, String> {
+    let Some(raw) = raw else {
+        return Ok(String::new());
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    let key = trimmed.to_uppercase();
+    if !is_valid_jira_issue_key(&key) {
+        return Err("Jira issue key must look like PROJECT-123".into());
+    }
+    Ok(key)
+}
+
+fn is_valid_jira_issue_key(key: &str) -> bool {
+    let mut parts = key.splitn(2, '-');
+    let Some(project) = parts.next() else {
+        return false;
+    };
+    let Some(num) = parts.next() else {
+        return false;
+    };
+    if project.is_empty() || num.is_empty() {
+        return false;
+    }
+    let mut chars = project.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_uppercase() {
+        return false;
+    }
+    if !chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+        return false;
+    }
+    num.chars().all(|c| c.is_ascii_digit())
 }
 
 fn map_slice(row: &rusqlite::Row<'_>) -> rusqlite::Result<TimeSlice> {
@@ -1170,6 +1363,7 @@ mod tests {
             color: Some("#E4572E".into()),
             description: None,
             notes: None,
+            jira_issue_key: None,
         })
         .unwrap()
     }
@@ -1183,6 +1377,9 @@ mod tests {
         assert_eq!(s.theme, "dark");
         assert!(s.tracker_always_on_top);
         assert!(s.tracker_visible);
+        assert!(!s.tracker_show_seconds);
+        assert!(!s.jira_enabled);
+        assert!(s.jira_site_url.is_empty());
     }
 
     #[test]
@@ -1198,6 +1395,7 @@ mod tests {
                 color: None,
                 description: None,
                 notes: None,
+                jira_issue_key: None,
             })
             .unwrap_err();
         assert!(err.contains("already exists"));
@@ -1211,6 +1409,7 @@ mod tests {
                 notes: None,
                 archived: Some(true),
                 starred: None,
+                jira_issue_key: None,
             })
             .unwrap();
         assert_eq!(updated.name, "Beta");
@@ -1218,6 +1417,76 @@ mod tests {
         assert!(!updated.starred);
         assert_eq!(db.list_tasks(false).unwrap().len(), 0);
         assert_eq!(db.list_tasks(true).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn jira_issue_key_normalizes_and_resets_reported() {
+        let (_dir, db) = test_db();
+        let t = sample_task(&db, "JiraLinked");
+        assert_eq!(t.jira_issue_key, "");
+        assert_eq!(t.jira_reported_ms, 0);
+
+        let linked = db
+            .update_task(UpdateTaskInput {
+                id: t.id.clone(),
+                name: None,
+                color: None,
+                description: None,
+                notes: None,
+                archived: None,
+                starred: None,
+                jira_issue_key: Some("thing-123".into()),
+            })
+            .unwrap();
+        assert_eq!(linked.jira_issue_key, "THING-123");
+
+        db.bump_jira_reported_ms(&t.id, 120_000).unwrap();
+        assert_eq!(
+            db.get_task(&t.id).unwrap().unwrap().jira_reported_ms,
+            120_000
+        );
+
+        let relinked = db
+            .update_task(UpdateTaskInput {
+                id: t.id.clone(),
+                name: None,
+                color: None,
+                description: None,
+                notes: None,
+                archived: None,
+                starred: None,
+                jira_issue_key: Some("OTHER-9".into()),
+            })
+            .unwrap();
+        assert_eq!(relinked.jira_issue_key, "OTHER-9");
+        assert_eq!(relinked.jira_reported_ms, 0);
+
+        let err = db
+            .update_task(UpdateTaskInput {
+                id: t.id.clone(),
+                name: None,
+                color: None,
+                description: None,
+                notes: None,
+                archived: None,
+                starred: None,
+                jira_issue_key: Some("not a key".into()),
+            })
+            .unwrap_err();
+        assert!(err.contains("PROJECT-123"));
+    }
+
+    #[test]
+    fn task_total_ms_sums_closed_and_running() {
+        let (_dir, db) = test_db();
+        let t = sample_task(&db, "Total");
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        db.insert_closed_slice(&t.id, t0, t1, "").unwrap();
+        db.replace_running_slice(None, &t.id, t1, "").unwrap();
+        let total = db.task_total_ms(&t.id, t2).unwrap();
+        assert_eq!(total, 2 * 3_600_000);
     }
 
     #[test]
@@ -1234,6 +1503,7 @@ mod tests {
             notes: None,
             archived: None,
             starred: Some(true),
+            jira_issue_key: None,
         })
         .unwrap();
 
@@ -1709,6 +1979,11 @@ mod tests {
         s.autostart = false;
         s.tracker_always_on_top = false;
         s.tracker_visible = false;
+        s.tracker_show_seconds = true;
+        s.jira_enabled = true;
+        s.jira_site_url = "https://example.atlassian.net".into();
+        s.jira_email = "dev@example.com".into();
+        s.jira_api_token = "secret-token".into();
         db.update_settings(&s).unwrap();
         let loaded = db.get_settings().unwrap();
         assert_eq!(loaded.idle_threshold_mins, 15);
@@ -1717,6 +1992,11 @@ mod tests {
         assert!(!loaded.autostart);
         assert!(!loaded.tracker_always_on_top);
         assert!(!loaded.tracker_visible);
+        assert!(loaded.tracker_show_seconds);
+        assert!(loaded.jira_enabled);
+        assert_eq!(loaded.jira_site_url, "https://example.atlassian.net");
+        assert_eq!(loaded.jira_email, "dev@example.com");
+        assert_eq!(loaded.jira_api_token, "secret-token");
     }
 
     #[test]

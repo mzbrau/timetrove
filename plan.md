@@ -16,12 +16,12 @@ Inspired by [Grindstone](https://www.epiforge.com/grindstone/) (work items + tim
 
 ### Non-goals (v1)
 
-- Jira or other issue-tracker sync
 - Charts / insights beyond the timesheet grid
-- External timesheet / ERP submission
+- External timesheet / ERP submission (beyond optional Jira Cloud worklogs)
 - Multi-user, sync, or multiple machines
 - In-app custom property engine (add fields in code later if needed)
 - Decimal-hour CSV / reporting formats
+- Jira Server/DC, OAuth, multi-issue-per-task, or inbound Jira → TimeTrove sync
 
 ---
 
@@ -60,6 +60,8 @@ Flat list (no projects).
 | description | Static “what is this task” |
 | notes | Ongoing scratchpad while working |
 | archived | Soft-hide from timing switcher; **unarchive** supported |
+| jira_issue_key | Optional Jira Cloud issue key (e.g. `THING-123`) when worklog sync is enabled |
+| jira_reported_ms | Watermark of ms successfully posted to that issue as worklogs |
 
 Archived tasks:
 
@@ -85,9 +87,9 @@ When the user discards a gap:
 - Append to an aggregate discard log (duration + timestamp range) for audit only
 - Excluded from daily totals and timesheets
 
-### No Jira fields in v1
+### Optional Jira Cloud worklog sync
 
-Add link tables/columns when Jira is specified (post-v1).
+Disabled by default. Settings: site URL, email, API token. When enabled, tasks may link one issue key; TimeTrove posts unreported time as Jira worklogs hourly and on stop/switch. Does not delete/edit remote worklogs if local history is shortened.
 
 ---
 
@@ -201,7 +203,6 @@ Grindstone already covers most of the core. Gaps that justify a custom tool:
 - Too many clicks for common actions (including timesheet-style views)
 - Idle/away dialog too wordy to parse quickly
 - No global keyboard task switch
-- No Jira (planned post-v1 here)
 - No clear daily goal / hours-today signal in the always-visible chrome
 - Poor behavior when the DB connection fails (error popup spam) — TimeTrove should surface **one** clear error/recovery path
 - Cannot iterate on annoyances or add features freely
@@ -211,7 +212,7 @@ Grindstone already covers most of the core. Gaps that justify a custom tool:
 ## Post-v1 (ordered roughly)
 
 1. **Charts / insights** — e.g. per-task bar chart for the week
-2. **Jira** — link one or more issues to a task; sync worklog to a designated “main” issue
+2. **Richer Jira** — multi-issue links, issue picker, Server/DC
 3. Richer export / external timesheet systems
 4. Optional custom path for the DB (Dropbox/iCloud-friendly)
 5. Hard-coded extra task fields if a real need appears (still not a user-facing property builder)

@@ -3,6 +3,7 @@ mod commands;
 mod db;
 mod domain;
 mod engine;
+mod jira;
 
 #[cfg(test)]
 mod test_support;
@@ -130,11 +131,12 @@ pub fn run() {
             let _ = app.autolaunch().enable();
         }
 
-        // Idle + midnight poller
+        // Idle + midnight + Jira poller
         let handle = app.handle().clone();
         let eng = engine.clone();
         std::thread::spawn(move || {
             let mut last_midnight_check = chrono::Local::now().date_naive();
+            let mut last_jira_sync = std::time::Instant::now();
             // Startup gap check shortly after launch
             std::thread::sleep(Duration::from_secs(1));
             eng.on_resume_or_startup_gap(&handle);
@@ -156,6 +158,11 @@ pub fn run() {
                 // Also split when we cross midnight while same day marker already updated
                 // midnight_split is idempotent if slice already after midnight
                 let _ = eng.midnight_split();
+
+                if last_jira_sync.elapsed() >= Duration::from_secs(jira::SYNC_INTERVAL_SECS) {
+                    last_jira_sync = std::time::Instant::now();
+                    jira::spawn_flush_all(eng.db().clone());
+                }
             }
         });
 
@@ -196,6 +203,7 @@ pub fn run() {
             commands::resolve_gap_discard,
             commands::get_settings,
             commands::update_settings,
+            commands::test_jira_connection,
             commands::get_timesheet,
             commands::list_slices_for_day,
             commands::create_slice,

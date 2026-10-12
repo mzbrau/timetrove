@@ -178,5 +178,49 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         })?;
     }
 
+    if version < 8 {
+        migrate_tx(conn, |conn| {
+            conn.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES ('tracker_show_seconds', 'false')",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (8)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+    }
+
+    if version < 9 {
+        migrate_tx(conn, |conn| {
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN jira_issue_key TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN jira_reported_ms INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            let defaults = [
+                ("jira_enabled", "false"),
+                ("jira_site_url", ""),
+                ("jira_email", ""),
+                ("jira_api_token", ""),
+            ];
+            for (k, v) in defaults {
+                conn.execute(
+                    "INSERT OR IGNORE INTO settings (key, value) VALUES (?1, ?2)",
+                    (k, v),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (9)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+    }
+
     Ok(())
 }

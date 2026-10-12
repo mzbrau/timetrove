@@ -1,8 +1,11 @@
 import { LogicalPosition } from "@tauri-apps/api/dpi";
+import { listen } from "@tauri-apps/api/event";
 import { CheckMenuItem, Menu, MenuItem, Submenu } from "@tauri-apps/api/menu";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../shared/api";
+import { formatHms } from "../../shared/format";
+import type { Settings } from "../../shared/types";
 import { useTrackerState } from "../../shared/useTrackerState";
 import "./tracker.css";
 
@@ -35,15 +38,55 @@ function hoursFromNow(hours: number): string {
 export function TrackerApp() {
   const { state } = useTrackerState();
   const alwaysOnTopRef = useRef(true);
+  const [showSeconds, setShowSeconds] = useState(false);
+  const [tick, setTick] = useState(0);
+  const receivedAtRef = useRef(Date.now());
+  const prevStateRef = useRef(state);
 
   useEffect(() => {
     api
       .getSettings()
       .then((s) => {
         alwaysOnTopRef.current = s.trackerAlwaysOnTop;
+        setShowSeconds(s.trackerShowSeconds);
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<Settings>("settings-changed", (e) => {
+      alwaysOnTopRef.current = e.payload.trackerAlwaysOnTop;
+      setShowSeconds(e.payload.trackerShowSeconds);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  if (state !== prevStateRef.current) {
+    prevStateRef.current = state;
+    receivedAtRef.current = Date.now();
+  }
+
+  useEffect(() => {
+    if (!showSeconds || !state?.tracking) return;
+    const id = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [showSeconds, state?.tracking]);
+
+  const dailyTotalLabel = (() => {
+    if (!state) return "00:00";
+    if (!showSeconds) return state.dailyTotalDisplay;
+    let ms = state.dailyTotalMs;
+    if (state.tracking) {
+      void tick;
+      ms += Math.max(0, Date.now() - receivedAtRef.current);
+    }
+    return formatHms(ms);
+  })();
 
   const onMouseDown = async (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -209,13 +252,27 @@ export function TrackerApp() {
           <span className="name muted">Not tracking</span>
         )}
       </div>
-      <button
-        className={`total mono time ${state.goalMet ? "met" : "under"}`}
-        onClick={() => api.openSwitcher()}
-        title="Switch task"
-      >
-        {state.dailyTotalDisplay}
-      </button>
+      <div className="tracker-actions">
+        {state.tracking && (
+          <button
+            type="button"
+            className="tracker-stop"
+            title="Stop tracking"
+            onClick={() => {
+              void api.stopTracking();
+            }}
+          >
+            <span className="tracker-stop-icon" aria-hidden />
+          </button>
+        )}
+        <button
+          className={`total mono time ${state.goalMet ? "met" : "under"}`}
+          onClick={() => api.openSwitcher()}
+          title="Switch task"
+        >
+          {dailyTotalLabel}
+        </button>
+      </div>
     </div>
   );
 }

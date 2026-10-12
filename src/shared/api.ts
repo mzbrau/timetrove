@@ -17,6 +17,7 @@ export const api = {
     color?: string;
     description?: string;
     notes?: string;
+    jiraIssueKey?: string;
   }) => invoke<Task>("create_task", { input }),
   updateTask: (input: {
     id: string;
@@ -26,7 +27,9 @@ export const api = {
     notes?: string;
     archived?: boolean;
     starred?: boolean;
+    jiraIssueKey?: string;
   }) => invoke<Task>("update_task", { input }),
+  testJiraConnection: () => invoke<string>("test_jira_connection"),
   getTaskBookingSummary: (taskId: string) =>
     invoke<TaskBookingSummary>("get_task_booking_summary", { taskId }),
   startTask: (taskId: string) => invoke<TrackerState>("start_task", { taskId }),
