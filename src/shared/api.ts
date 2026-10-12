@@ -37,6 +37,8 @@ export const api = {
   resolveGapPrevious: () => invoke<TrackerState>("resolve_gap_previous"),
   resolveGapOther: (taskId: string) =>
     invoke<TrackerState>("resolve_gap_other", { taskId }),
+  createAndResolveGapOther: (name: string) =>
+    invoke<TrackerState>("create_and_resolve_gap_other", { name }),
   resolveGapDiscard: () => invoke<TrackerState>("resolve_gap_discard"),
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (settings: Settings) =>

@@ -452,6 +452,16 @@ impl Engine {
         self.start_task(task_id)
     }
 
+    pub fn create_and_resolve_gap_other(&self, name: String) -> Result<TrackerState, String> {
+        let task = self.db.create_task(CreateTaskInput {
+            name,
+            color: None,
+            description: None,
+            notes: None,
+        })?;
+        self.resolve_gap_other(&task.id)
+    }
+
     pub fn resolve_gap_discard(&self) -> Result<TrackerState, String> {
         let (gap_start, prev_id) = self.peek_gap()?;
         let now = Utc::now();
@@ -947,6 +957,40 @@ mod tests {
             eng.phase.lock().clone(),
             EnginePhase::Tracking { task_id, .. } if task_id == other.id
         ));
+    }
+
+    #[test]
+    fn gap_create_and_resolve_other() {
+        let (_dir, eng) = engine_empty();
+        let prev = make_task(eng.db(), "Prev");
+        eng.start_task(&prev.id).unwrap();
+        let gap_start = Utc::now() - Duration::minutes(12);
+        eng.begin_gap(gap_start).unwrap();
+        eng.create_and_resolve_gap_other("Brand New".into())
+            .unwrap();
+
+        let created = eng
+            .db()
+            .list_tasks(false)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.name == "Brand New")
+            .expect("new task created");
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::Tracking { task_id, .. } if task_id == created.id
+        ));
+        let attributed: Vec<_> = eng
+            .db()
+            .list_slices_between(gap_start - Duration::seconds(1), Utc::now() + Duration::seconds(1))
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.task_id == created.id && s.end.is_some())
+            .collect();
+        assert!(
+            !attributed.is_empty(),
+            "gap time should be attributed to the new task"
+        );
     }
 
     #[test]

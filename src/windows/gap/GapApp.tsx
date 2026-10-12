@@ -12,6 +12,7 @@ export function GapApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [confirmCreate, setConfirmCreate] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -24,9 +25,54 @@ export function GapApp() {
     return tasks.filter((t) => t.name.toLowerCase().includes(q));
   }, [tasks, query]);
 
+  const exact = filtered.find(
+    (t) => t.name.toLowerCase() === query.trim().toLowerCase(),
+  );
+
   useEffect(() => {
     setSelectedIndex(0);
+    setConfirmCreate(false);
   }, [query, filtered.length]);
+
+  const leaveSearch = () => {
+    setMode("choose");
+    setQuery("");
+    setConfirmCreate(false);
+    setSelectedIndex(0);
+  };
+
+  const enterSearch = () => {
+    setMode("search");
+    setQuery("");
+    setConfirmCreate(false);
+    setSelectedIndex(0);
+    setError(null);
+  };
+
+  const submitSearch = async () => {
+    setError(null);
+    const q = query.trim();
+    if (!q) return;
+    try {
+      if (exact) {
+        await api.resolveGapOther(exact.id);
+        return;
+      }
+      if (filtered.length > 0 && !confirmCreate) {
+        await api.resolveGapOther(
+          filtered[Math.min(selectedIndex, filtered.length - 1)].id,
+        );
+        return;
+      }
+      if (!confirmCreate) {
+        setConfirmCreate(true);
+        return;
+      }
+      await api.createAndResolveGapOther(q);
+    } catch (err) {
+      setError(String(err));
+    }
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -41,7 +87,7 @@ export function GapApp() {
           void api.resolveGapPrevious().catch((err) => setError(String(err)));
         } else if (e.key === "2") {
           e.preventDefault();
-          setMode("search");
+          enterSearch();
         } else if (e.key === "3") {
           e.preventDefault();
           void api.resolveGapDiscard().catch((err) => setError(String(err)));
@@ -49,15 +95,12 @@ export function GapApp() {
         return;
       }
 
-      // search mode
+      // search mode — Enter handled by form submit
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        setMode("choose");
-        setQuery("");
-        return;
-      }
-      if (e.key === "ArrowDown") {
+        leaveSearch();
+      } else if (e.key === "ArrowDown") {
         e.preventDefault();
         setSelectedIndex((i) =>
           filtered.length === 0 ? 0 : Math.min(i + 1, filtered.length - 1),
@@ -65,19 +108,11 @@ export function GapApp() {
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setSelectedIndex((i) => Math.max(i - 1, 0));
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        const task = filtered[selectedIndex];
-        if (task) {
-          void api
-            .resolveGapOther(task.id)
-            .catch((err) => setError(String(err)));
-        }
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [mode, filtered, selectedIndex]);
+  }, [mode, filtered.length]);
 
   useEffect(() => {
     if (state && state.gapDurationMs == null) {
@@ -109,7 +144,7 @@ export function GapApp() {
           >
             <kbd>1</kbd> Assign to {prev}
           </button>
-          <button onClick={() => setMode("search")}>
+          <button onClick={enterSearch}>
             <kbd>2</kbd> Assign to another task
           </button>
           <button
@@ -123,16 +158,29 @@ export function GapApp() {
         </div>
       ) : (
         <div className="search">
-          <input
-            autoFocus
-            placeholder="Find task…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitSearch();
+            }}
+          >
+            <input
+              autoFocus
+              placeholder="Search or create a task…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </form>
+          {confirmCreate && !exact && (
+            <div className="confirm">
+              Create task “{query.trim()}”? Press Enter to confirm.
+            </div>
+          )}
           <ul>
             {filtered.map((task, index) => (
               <li key={task.id}>
                 <button
+                  type="button"
                   className={index === selectedIndex ? "selected" : undefined}
                   onMouseEnter={() => setSelectedIndex(index)}
                   onClick={() =>
@@ -146,8 +194,11 @@ export function GapApp() {
                 </button>
               </li>
             ))}
+            {filtered.length === 0 && query.trim() && (
+              <li className="empty">No matches — Enter to create</li>
+            )}
           </ul>
-          <button className="back" onClick={() => setMode("choose")}>
+          <button type="button" className="back" onClick={leaveSearch}>
             Back
           </button>
         </div>

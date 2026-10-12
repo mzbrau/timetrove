@@ -122,6 +122,18 @@ pub fn resolve_gap_other(
 }
 
 #[tauri::command]
+pub fn create_and_resolve_gap_other(
+    engine: State<'_, Arc<Engine>>,
+    app: AppHandle,
+    name: String,
+) -> Result<TrackerState, String> {
+    let state = engine.create_and_resolve_gap_other(name)?;
+    hide_gap_window(&app);
+    engine.emit_state(&app);
+    Ok(state)
+}
+
+#[tauri::command]
 pub fn resolve_gap_discard(
     engine: State<'_, Arc<Engine>>,
     app: AppHandle,

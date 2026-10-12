@@ -120,6 +120,23 @@ kbd {
   border-radius: 50%;
 }
 
+.confirm,
+.empty {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.confirm {
+  padding: var(--s2) var(--s3);
+  border-radius: 10px;
+  background: var(--confirm-bg, rgba(61, 155, 143, 0.12));
+  color: var(--ink);
+}
+
+.empty {
+  padding: var(--s2) var(--s3);
+}
+
 .err {
   color: var(--danger);
   font-size: 0.9rem;

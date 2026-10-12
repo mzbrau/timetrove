@@ -192,6 +192,7 @@ pub fn run() {
             commands::create_and_start,
             commands::resolve_gap_previous,
             commands::resolve_gap_other,
+            commands::create_and_resolve_gap_other,
             commands::resolve_gap_discard,
             commands::get_settings,
             commands::update_settings,
