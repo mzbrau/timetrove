@@ -43,6 +43,10 @@ pub struct Settings {
     pub autostart: bool,
     /// "dark" (default) or "light"
     pub theme: String,
+    /// Keep the tracker window above other windows (default on for taskbar dock).
+    pub tracker_always_on_top: bool,
+    /// Whether the tracker bar is shown (persists hide/close across restarts).
+    pub tracker_visible: bool,
 }
 
 impl Default for Settings {
@@ -53,6 +57,8 @@ impl Default for Settings {
             switch_shortcut: "CommandOrControl+Shift+T".to_string(),
             autostart: true,
             theme: "dark".to_string(),
+            tracker_always_on_top: true,
+            tracker_visible: true,
         }
     }
 }
@@ -191,6 +197,8 @@ mod tests {
         assert_eq!(s.daily_goal_mins, 480);
         assert_eq!(s.theme, "dark");
         assert!(s.autostart);
+        assert!(s.tracker_always_on_top);
+        assert!(s.tracker_visible);
     }
 
     #[test]

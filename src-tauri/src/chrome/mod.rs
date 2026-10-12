@@ -1,9 +1,11 @@
-use crate::engine::{position_tracker, set_tracker_visible, show_main, Engine};
+use crate::engine::{
+    set_tracker_visible_persisted, show_main, Engine,
+};
 use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager,
+    AppHandle,
 };
 
 pub fn setup_tray(app: &AppHandle, engine: Arc<Engine>) -> Result<(), String> {
@@ -37,12 +39,10 @@ pub fn setup_tray(app: &AppHandle, engine: Arc<Engine>) -> Result<(), String> {
         .on_menu_event(move |app, event| {
             match event.id.as_ref() {
                 "show_bar" => {
-                    set_tracker_visible(app, true);
-                    if let Some(w) = app.get_webview_window("tracker") {
-                        position_tracker(&w);
-                    }
+                    // Show without repositioning — preserve user drag.
+                    set_tracker_visible_persisted(app, &engine_menu, true);
                 }
-                "hide_bar" => set_tracker_visible(app, false),
+                "hide_bar" => set_tracker_visible_persisted(app, &engine_menu, false),
                 "open_main" => show_main(app),
                 "start_stop" => {
                     if let Ok(s) = engine_menu.snapshot() {

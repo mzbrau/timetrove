@@ -1,5 +1,8 @@
 use crate::domain::*;
-use crate::engine::{hide_gap_window, hide_switcher, show_main, show_switcher, Engine};
+use crate::engine::{
+    apply_tracker_always_on_top, ensure_tracker_default_position, hide_gap_window, hide_switcher,
+    set_tracker_visible_persisted, show_main, show_switcher, Engine,
+};
 use chrono::Duration;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -145,12 +148,18 @@ pub fn update_settings(
     if settings.daily_goal_mins == 0 {
         return Err("Daily goal must be at least 1 minute".into());
     }
+    // Visibility is controlled by tray / tracker Close — don't clobber from Settings UI.
+    let mut settings = settings;
+    if let Ok(current) = engine.db().get_settings() {
+        settings.tracker_visible = current.tracker_visible;
+    }
     engine.db().update_settings(&settings)?;
     if settings.autostart {
         let _ = app.autolaunch().enable();
     } else {
         let _ = app.autolaunch().disable();
     }
+    apply_tracker_always_on_top(&app, settings.tracker_always_on_top);
     engine.emit_state(&app);
     let _ = app.emit("settings-changed", &settings);
     Ok(settings)
@@ -314,8 +323,31 @@ pub fn open_main_window(app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn set_tracker_visible(app: AppHandle, visible: bool) {
-    crate::engine::set_tracker_visible(&app, visible);
+pub fn set_tracker_visible(
+    app: AppHandle,
+    engine: State<'_, Arc<Engine>>,
+    visible: bool,
+) {
+    set_tracker_visible_persisted(&app, &engine, visible);
+}
+
+#[tauri::command]
+pub fn reset_tracker_position(app: AppHandle, engine: State<'_, Arc<Engine>>) {
+    ensure_tracker_default_position(&app, &engine, true);
+}
+
+#[tauri::command]
+pub fn set_tracker_always_on_top(
+    app: AppHandle,
+    engine: State<'_, Arc<Engine>>,
+    always_on_top: bool,
+) -> Result<Settings, String> {
+    let mut settings = engine.db().get_settings()?;
+    settings.tracker_always_on_top = always_on_top;
+    engine.db().update_settings(&settings)?;
+    apply_tracker_always_on_top(&app, always_on_top);
+    let _ = app.emit("settings-changed", &settings);
+    Ok(settings)
 }
 
 #[tauri::command]
