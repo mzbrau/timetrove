@@ -69,6 +69,13 @@ export function TasksPanel({
     load().catch((e) => setError(String(e)));
   }, []);
 
+  // Refresh when switcher/create/start/stop changes tracker phase.
+  useEffect(() => {
+    if (state) {
+      load().catch((e) => setError(String(e)));
+    }
+  }, [state?.phase, state?.tracking]);
+
   const filter = filterQuery.trim().toLowerCase();
   const visible = tasks.filter(
     (t) =>

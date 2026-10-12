@@ -64,6 +64,10 @@ body,
   color: #fff;
 }
 
+.total.time {
+  font-weight: 500;
+}
+
 .total.under {
   background: rgba(61, 155, 143, 0.92);
 }

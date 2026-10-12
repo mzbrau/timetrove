@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@500;600&display=swap");
 
 :root,
 [data-theme="dark"] {
@@ -31,6 +31,7 @@
   --s5: 24px;
   --s6: 32px;
   --radius: 12px;
+  --font-mono-time: "JetBrains Mono", ui-monospace, monospace;
   font-family: "IBM Plex Sans", system-ui, sans-serif;
   color: var(--ink);
   background: var(--bg);
@@ -108,6 +109,11 @@ button {
 
 .mono {
   font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+.time {
+  font-family: var(--font-mono-time);
+  font-variant-numeric: tabular-nums;
 }
 
 .db-error {

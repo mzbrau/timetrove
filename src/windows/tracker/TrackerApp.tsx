@@ -34,7 +34,7 @@ export function TrackerApp() {
         )}
       </div>
       <button
-        className={`total mono ${state.goalMet ? "met" : "under"}`}
+        className={`total mono time ${state.goalMet ? "met" : "under"}`}
         onClick={() => api.openSwitcher()}
         title="Switch task"
       >
