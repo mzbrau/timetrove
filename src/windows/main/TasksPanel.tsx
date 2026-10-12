@@ -69,12 +69,17 @@ export function TasksPanel({
     load().catch((e) => setError(String(e)));
   }, []);
 
-  // Refresh when switcher/create/start/stop changes tracker phase.
+  const phaseKind = state?.phase.kind;
+  const trackingTaskId =
+    state?.phase.kind === "tracking" ? state.phase.taskId : null;
+
+  // Refresh when switcher/create/start/stop changes tracker phase (not every idle poll).
   useEffect(() => {
     if (state) {
       load().catch((e) => setError(String(e)));
     }
-  }, [state?.phase, state?.tracking]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scalars only; avoid phase object identity
+  }, [phaseKind, trackingTaskId, state?.tracking]);
 
   const filter = filterQuery.trim().toLowerCase();
   const visible = tasks.filter(

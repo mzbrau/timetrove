@@ -20,6 +20,8 @@ export function SwitcherApp() {
 
   const tracking = Boolean(state?.tracking);
   const noteModeAvailable = tracking;
+  const trackingSliceId =
+    state?.phase.kind === "tracking" ? state.phase.sliceId : null;
 
   const load = () => {
     withStartupRetry(() => api.listTasks(false))
@@ -60,7 +62,9 @@ export function SwitcherApp() {
     if (mode === "note" && noteModeAvailable) {
       setNoteDraft(state?.currentSliceNote ?? "");
     }
-  }, [mode, noteModeAvailable, state?.currentSliceNote, state?.phase]);
+    // Depend on slice identity, not phase object / note string — polls must not wipe typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only re-prefill on mode/slice
+  }, [mode, noteModeAvailable, trackingSliceId]);
 
   useEffect(() => {
     inputRef.current?.focus();

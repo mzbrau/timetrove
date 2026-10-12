@@ -46,6 +46,7 @@ export function TrackerApp() {
   }, []);
 
   const onMouseDown = async (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("button")) return;
     await getCurrentWebviewWindow().startDragging();
   };

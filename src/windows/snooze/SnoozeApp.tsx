@@ -39,6 +39,10 @@ export function SnoozeApp() {
       }
       return new Date(Date.now() + totalMins * 60_000).toISOString();
     }
+    if (!endLocal.trim()) {
+      setError("End time must be in the future");
+      return null;
+    }
     const iso = fromLocalInput(endLocal);
     if (Number.isNaN(Date.parse(iso)) || Date.parse(iso) <= Date.now()) {
       setError("End time must be in the future");
