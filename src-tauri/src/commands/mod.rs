@@ -150,6 +150,31 @@ pub fn get_settings(engine: State<'_, Arc<Engine>>) -> Result<Settings, String> 
 }
 
 #[tauri::command]
+pub fn test_jira_connection(
+    engine: State<'_, Arc<Engine>>,
+) -> Result<String, String> {
+    let settings = engine.db().get_settings()?;
+    if !settings.jira_enabled {
+        return Err("Enable Jira sync first".into());
+    }
+    let creds = crate::jira::JiraCredentials {
+        site_url: settings.jira_site_url,
+        email: settings.jira_email,
+        api_token: settings.jira_api_token,
+    };
+    match crate::jira::test_connection(&creds) {
+        Ok(name) => {
+            let _ = engine.db().set_jira_last_error(None);
+            Ok(format!("Connected as {name}"))
+        }
+        Err(e) => {
+            let _ = engine.db().set_jira_last_error(Some(&e));
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
 pub fn update_settings(
     engine: State<'_, Arc<Engine>>,
     app: AppHandle,

@@ -26,7 +26,11 @@ export function SettingsPanel() {
     listen<Settings>("settings-changed", (e) => {
       setSettings((prev) =>
         prev
-          ? { ...prev, trackerAlwaysOnTop: e.payload.trackerAlwaysOnTop }
+          ? {
+              ...prev,
+              trackerAlwaysOnTop: e.payload.trackerAlwaysOnTop,
+              trackerShowSeconds: e.payload.trackerShowSeconds,
+            }
           : prev,
       );
     }).then((fn) => {
@@ -142,6 +146,26 @@ export function SettingsPanel() {
         </span>
       </label>
 
+      <label style={{ gridTemplateColumns: "auto 1fr", alignItems: "center" }}>
+        <input
+          type="checkbox"
+          checked={settings.trackerShowSeconds}
+          onChange={(e) =>
+            setSettings({
+              ...settings,
+              trackerShowSeconds: e.target.checked,
+            })
+          }
+        />
+        <span>
+          Show seconds on tracker
+          <span className="hint">
+            {" "}
+            When off, the tracker shows HH:MM (default). When on, live HH:MM:SS.
+          </span>
+        </span>
+      </label>
+
       <div className="row-actions">
         <button
           type="button"
@@ -158,6 +182,102 @@ export function SettingsPanel() {
         >
           Save settings
         </button>
+      </div>
+
+      <hr
+        style={{ border: 0, borderTop: "1px solid var(--line)", width: "100%" }}
+      />
+
+      <div>
+        <strong>Jira Cloud</strong>
+        <p className="hint">
+          Optionally log tracked time to Jira worklogs (hourly and on stop/switch).
+        </p>
+        <label style={{ gridTemplateColumns: "auto 1fr", alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={settings.jiraEnabled}
+            onChange={(e) =>
+              setSettings({ ...settings, jiraEnabled: e.target.checked })
+            }
+          />
+          Enable Jira worklog sync
+        </label>
+        {settings.jiraEnabled && (
+          <>
+            <label>
+              Site URL
+              <input
+                value={settings.jiraSiteUrl}
+                placeholder="https://your-org.atlassian.net"
+                onChange={(e) =>
+                  setSettings({ ...settings, jiraSiteUrl: e.target.value })
+                }
+              />
+            </label>
+            <label>
+              Email
+              <input
+                type="email"
+                autoComplete="username"
+                value={settings.jiraEmail}
+                onChange={(e) =>
+                  setSettings({ ...settings, jiraEmail: e.target.value })
+                }
+              />
+            </label>
+            <label>
+              API token
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={settings.jiraApiToken}
+                onChange={(e) =>
+                  setSettings({ ...settings, jiraApiToken: e.target.value })
+                }
+              />
+              <span className="hint">
+                Create a token at id.atlassian.com — stored only in your local
+                database.
+              </span>
+            </label>
+            <div className="row-actions">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setError(null);
+                    const saved = await api.updateSettings(settings);
+                    setSettings(saved);
+                    const result = await api.testJiraConnection();
+                    const refreshed = await api.getSettings();
+                    setSettings(refreshed);
+                    setMessage(result);
+                  } catch (e) {
+                    const refreshed = await api.getSettings().catch(() => null);
+                    if (refreshed) setSettings(refreshed);
+                    setError(String(e));
+                  }
+                }}
+              >
+                Test connection
+              </button>
+            </div>
+            {(settings.jiraLastError || settings.jiraLastSyncedAt) && (
+              <p className="hint">
+                {settings.jiraLastError
+                  ? `Last error: ${settings.jiraLastError}`
+                  : null}
+                {settings.jiraLastError && settings.jiraLastSyncedAt
+                  ? " · "
+                  : null}
+                {settings.jiraLastSyncedAt
+                  ? `Last synced: ${new Date(settings.jiraLastSyncedAt).toLocaleString()}`
+                  : null}
+              </p>
+            )}
+          </>
+        )}
       </div>
 
       <hr

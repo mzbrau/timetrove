@@ -6,6 +6,12 @@ export interface Task {
   notes: string;
   archived: boolean;
   starred: boolean;
+  /** Jira Cloud issue key (e.g. THING-123); empty when unlinked. */
+  jiraIssueKey: string;
+  /** Milliseconds successfully posted to Jira for this task's current issue key. */
+  jiraReportedMs: number;
+  /** In-flight worklog ms (internal); not shown in UI. */
+  jiraPendingMs: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -51,6 +57,13 @@ export interface Settings {
   theme: "dark" | "light";
   trackerAlwaysOnTop: boolean;
   trackerVisible: boolean;
+  trackerShowSeconds: boolean;
+  jiraEnabled: boolean;
+  jiraSiteUrl: string;
+  jiraEmail: string;
+  jiraApiToken: string;
+  jiraLastError: string | null;
+  jiraLastSyncedAt: string | null;
 }
 
 export interface TimeSlice {

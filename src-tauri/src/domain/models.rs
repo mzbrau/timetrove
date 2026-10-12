@@ -11,6 +11,13 @@ pub struct Task {
     pub notes: String,
     pub archived: bool,
     pub starred: bool,
+    /// Jira Cloud issue key (e.g. THING-123); empty when unlinked.
+    pub jira_issue_key: String,
+    /// Milliseconds successfully posted to Jira for this task's current issue key.
+    pub jira_reported_ms: i64,
+    /// In-flight worklog amount (ms) written before POST; reconciled on next sync.
+    #[serde(default)]
+    pub jira_pending_ms: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -48,6 +55,19 @@ pub struct Settings {
     pub tracker_always_on_top: bool,
     /// Whether the tracker bar is shown (persists hide/close across restarts).
     pub tracker_visible: bool,
+    /// Show live HH:MM:SS on the tracker bar (default HH:MM).
+    pub tracker_show_seconds: bool,
+    /// Optional Jira Cloud worklog sync (off by default).
+    pub jira_enabled: bool,
+    pub jira_site_url: String,
+    pub jira_email: String,
+    pub jira_api_token: String,
+    /// Last sync/connection error (read-only for Settings UI; not cleared by save).
+    #[serde(default)]
+    pub jira_last_error: Option<String>,
+    /// ISO timestamp of last successful worklog post.
+    #[serde(default)]
+    pub jira_last_synced_at: Option<String>,
 }
 
 impl Default for Settings {
@@ -60,6 +80,13 @@ impl Default for Settings {
             theme: "dark".to_string(),
             tracker_always_on_top: true,
             tracker_visible: true,
+            tracker_show_seconds: false,
+            jira_enabled: false,
+            jira_site_url: String::new(),
+            jira_email: String::new(),
+            jira_api_token: String::new(),
+            jira_last_error: None,
+            jira_last_synced_at: None,
         }
     }
 }
@@ -109,6 +136,8 @@ pub struct CreateTaskInput {
     pub color: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,
+    #[serde(default)]
+    pub jira_issue_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,6 +150,8 @@ pub struct UpdateTaskInput {
     pub notes: Option<String>,
     pub archived: Option<bool>,
     pub starred: Option<bool>,
+    #[serde(default)]
+    pub jira_issue_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,6 +241,13 @@ mod tests {
         assert!(s.autostart);
         assert!(s.tracker_always_on_top);
         assert!(s.tracker_visible);
+        assert!(!s.tracker_show_seconds);
+        assert!(!s.jira_enabled);
+        assert!(s.jira_site_url.is_empty());
+        assert!(s.jira_email.is_empty());
+        assert!(s.jira_api_token.is_empty());
+        assert!(s.jira_last_error.is_none());
+        assert!(s.jira_last_synced_at.is_none());
     }
 
     #[test]

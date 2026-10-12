@@ -244,13 +244,17 @@ impl Engine {
             return Err("Cannot track an archived task".into());
         }
         let now = Utc::now();
-        let old_id = match self.phase.lock().clone() {
-            EnginePhase::Tracking { slice_id, .. } => Some(slice_id),
+        let prev = match self.phase.lock().clone() {
+            EnginePhase::Tracking {
+                slice_id,
+                task_id: prev_task_id,
+            } => Some((slice_id, prev_task_id)),
             _ => None,
         };
+        let old_slice_id = prev.as_ref().map(|(id, _)| id.as_str());
         let slice = self
             .db
-            .replace_running_slice(old_id.as_deref(), task_id, now, "")?;
+            .replace_running_slice(old_slice_id, task_id, now, "")?;
         self.db.coalesce_near_adjacent()?;
         *self.phase.lock() = EnginePhase::Tracking {
             task_id: task_id.to_string(),
@@ -259,6 +263,11 @@ impl Engine {
         *self.previous_task_id.lock() = Some(task_id.to_string());
         self.touch_activity();
         self.db.set_last_good_at(Some(now))?;
+        if let Some((_, prev_task_id)) = prev {
+            if prev_task_id != task_id {
+                crate::jira::spawn_flush_task(self.db.clone(), prev_task_id);
+            }
+        }
         self.snapshot()
     }
 
@@ -282,15 +291,20 @@ impl Engine {
             return Err("Resolve the pending time gap first".into());
         }
         let now = Utc::now();
+        let mut flush_task_id = None;
         if let EnginePhase::Tracking { slice_id, task_id } = self.phase.lock().clone() {
             self.db.close_slice(&slice_id, now)?;
-            *self.previous_task_id.lock() = Some(task_id);
+            *self.previous_task_id.lock() = Some(task_id.clone());
+            flush_task_id = Some(task_id);
         }
         *self.phase.lock() = EnginePhase::Stopped;
         self.db.coalesce_near_adjacent()?;
         self.db.set_last_good_at(None)?;
         self.db.set_snooze_until(None)?;
         self.touch_activity();
+        if let Some(task_id) = flush_task_id {
+            crate::jira::spawn_flush_task(self.db.clone(), task_id);
+        }
         self.snapshot()
     }
 
@@ -304,6 +318,7 @@ impl Engine {
             color: None,
             description: None,
             notes: None,
+            jira_issue_key: None,
         })?;
         self.start_task(&task.id)
     }
@@ -500,6 +515,7 @@ impl Engine {
             color: None,
             description: None,
             notes: None,
+            jira_issue_key: None,
         })?;
         self.resolve_gap_other(&task.id)
     }
@@ -787,7 +803,7 @@ pub fn apply_tracker_always_on_top(app: &AppHandle, always_on_top: bool) {
     }
 }
 
-const TRACKER_WIDTH: f64 = 280.0;
+const TRACKER_WIDTH: f64 = 310.0;
 const TRACKER_HEIGHT: f64 = 40.0;
 /// Approximate logical width of the system tray + clock on Windows.
 #[cfg(target_os = "windows")]
@@ -905,6 +921,7 @@ mod tests {
             color: Some("#17BEBB".into()),
             description: None,
             notes: None,
+            jira_issue_key: None,
         })
         .unwrap()
     }
@@ -1271,6 +1288,7 @@ mod tests {
                 color: Some("#E4572E".into()),
                 description: None,
                 notes: None,
+                jira_issue_key: None,
             })
             .unwrap();
         let monday = week_start_monday(Local::now().date_naive());
@@ -1356,6 +1374,7 @@ mod tests {
                 notes: None,
                 archived: Some(true),
                 starred: None,
+                jira_issue_key: None,
             })
             .unwrap();
         assert!(eng.start_task(&task.id).unwrap_err().contains("archived"));

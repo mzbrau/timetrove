@@ -8,12 +8,12 @@ Inspired by Grindstone (work items + time slices + idle correction). Product req
 
 Do not add these unless the user explicitly expands scope:
 
-- Jira or other issue-tracker sync
 - Charts / insights beyond the timesheet grid
-- External timesheet / ERP submission
+- External timesheet / ERP submission (beyond optional Jira Cloud worklogs)
 - Multi-user, cloud sync, or multi-machine
 - In-app custom property engine
 - Decimal-hour CSV / reporting formats
+- Jira Server/DC, OAuth, multi-issue-per-task, or inbound Jira → TimeTrove sync
 
 ## Stack
 
@@ -45,7 +45,7 @@ One Vite entry ([`src/main.tsx`](src/main.tsx)); `getCurrentWebviewWindow().labe
 | Label | Role | UI |
 |-------|------|-----|
 | `main` | Tasks, timesheet, entries, settings, day timeline | [`src/windows/main/`](src/windows/main/) |
-| `tracker` | Always-visible compact bar (color, task, daily `HH:MM`) | [`src/windows/tracker/`](src/windows/tracker/) |
+| `tracker` | Always-visible compact bar (color, task, daily total; default `HH:MM`) | [`src/windows/tracker/`](src/windows/tracker/) |
 | `switcher` | Global-shortcut task search / create | [`src/windows/switcher/`](src/windows/switcher/) |
 | `gap` | Idle / sleep / startup attribution prompt | [`src/windows/gap/`](src/windows/gap/) |
 
@@ -59,9 +59,10 @@ Default task-switch shortcut: `Cmd/Ctrl+Shift+T`.
 | [`commands/`](src-tauri/src/commands/) | Thin `#[tauri::command]` wrappers → engine/db; emit `tracker-state` |
 | [`db/`](src-tauri/src/db/) | SQLite migrate + repo |
 | [`domain/`](src-tauri/src/domain/) | Models, time math, formatting, task colors |
+| [`jira/`](src-tauri/src/jira/) | Optional Jira Cloud worklog client + watermark sync (hourly + stop/switch flush) |
 | [`chrome/`](src-tauri/src/chrome/) | System tray / OS chrome |
 
-Background loops (idle check, checkpoint, midnight split, state emit) are wired from [`lib.rs`](src-tauri/src/lib.rs).
+Background loops (idle check, checkpoint, midnight split, Jira hourly sync, state emit) are wired from [`lib.rs`](src-tauri/src/lib.rs).
 
 ### Frontend (`src/`)
 
@@ -75,11 +76,12 @@ Prefer extending shared helpers over duplicating format or time math on either s
 
 ### Task
 
-Flat list (no projects): `name`, `color`, `description`, `notes`, `archived`.
+Flat list (no projects): `name`, `color`, `description`, `notes`, `archived`, optional `jira_issue_key` / `jira_reported_ms`.
 
 - Prefer unique task names
 - Colors auto-assigned to stay distinct; user-editable
 - Archived: hidden from switcher / start options; still appear on timesheets/history when they have time
+- Optional Jira Cloud link: when sync is enabled in settings, a task may store one issue key; `jira_reported_ms` is the watermark of time already posted as worklogs. Changing or clearing the issue key baselines the watermark at the task’s current total so only future work syncs (avoids double-counting history on the new key).
 
 ### Time slice
 
@@ -133,9 +135,9 @@ See [`engine/mod.rs`](src-tauri/src/engine/mod.rs) (`checkpoint_if_due`, `reconc
 
 ## UX rules agents should preserve
 
-- Always-visible tracker: color + task name when tracking; unmistakable **not tracking** when stopped; daily total `HH:MM`; color flips at daily goal (default 8h)
+- Always-visible tracker: color + task name when tracking (dot pulses while active); unmistakable **not tracking** when stopped; daily total defaults to `HH:MM`; color flips at daily goal (default 8h); hover reveals a stop control left of the time
 - Main window daily total: live `HH:MM:SS` via client interpolation; reset `receivedAt` **during render** when tracker state identity changes (avoid the every-~5s jump/snap from a lagging `useEffect`)
-- Tracker chrome stays `HH:MM` (server display / poll cadence), not the interpolated seconds clock
+- Tracker chrome defaults to `HH:MM` (server display / poll cadence); optional live `HH:MM:SS` via `trackerShowSeconds` setting (same client interpolation pattern as main)
 - Gap dialog: large duration, short labels, keyboard-first
 - Timeline gap/resize `<button>`s: reset WebKit appearance (`appearance: none`, no native bezel) in [`main.css`](src/windows/main/main.css)
 - DB failures: one clear error/recovery path — no popup spam
@@ -151,7 +153,7 @@ See [`engine/mod.rs`](src-tauri/src/engine/mod.rs) (`checkpoint_if_due`, `reconc
 - Serde / TS types: camelCase; engine phase uses tagged `kind`
 - Near-adjacent same-task closed slices may be coalesced (`coalesce_near_adjacent`); don’t assume every day read re-runs it
 - Gap/switcher windows are special-cased for visibility restore; main close typically hides rather than destroys
-- Do not invent cloud sync, multi-user, or Jira fields in v1
+- Do not invent multi-user or general cloud sync; Jira Cloud worklog sync is the only optional outbound integration
 
 ## Verify
 

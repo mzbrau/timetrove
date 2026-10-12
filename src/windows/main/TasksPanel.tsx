@@ -1,7 +1,13 @@
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../shared/api";
-import { normalizeHexColor } from "../../shared/format";
-import type { Task, TaskBookingSummary, TrackerState } from "../../shared/types";
+import { formatHm, normalizeHexColor } from "../../shared/format";
+import type {
+  Settings,
+  Task,
+  TaskBookingSummary,
+  TrackerState,
+} from "../../shared/types";
 import { ConfirmBar } from "./ConfirmBar";
 
 type Draft = {
@@ -9,6 +15,7 @@ type Draft = {
   color: string;
   description: string;
   notes: string;
+  jiraIssueKey: string;
 };
 
 function draftFromTask(task: Task): Draft {
@@ -17,6 +24,7 @@ function draftFromTask(task: Task): Draft {
     color: normalizeHexColor(task.color),
     description: task.description,
     notes: task.notes,
+    jiraIssueKey: task.jiraIssueKey ?? "",
   };
 }
 
@@ -54,10 +62,12 @@ export function TasksPanel({
     color: "#0f766e",
     description: "",
     notes: "",
+    jiraIssueKey: "",
   });
   const [error, setError] = useState<string | null>(null);
   const [pendingSelectId, setPendingSelectId] = useState<string | null>(null);
   const [booking, setBooking] = useState<TaskBookingSummary | null>(null);
+  const [jiraEnabled, setJiraEnabled] = useState(false);
 
   const load = async () => {
     const list = await api.listTasks(true);
@@ -67,6 +77,22 @@ export function TasksPanel({
 
   useEffect(() => {
     load().catch((e) => setError(String(e)));
+    api
+      .getSettings()
+      .then((s) => setJiraEnabled(s.jiraEnabled))
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<Settings>("settings-changed", (e) => {
+      setJiraEnabled(e.payload.jiraEnabled);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
   }, []);
 
   const phaseKind = state?.phase.kind;
@@ -128,7 +154,8 @@ export function TasksPanel({
       draft.name !== baseline.name ||
       draft.color !== baseline.color ||
       draft.description !== baseline.description ||
-      draft.notes !== baseline.notes
+      draft.notes !== baseline.notes ||
+      draft.jiraIssueKey !== baseline.jiraIssueKey
     );
   }, [selected, draft]);
 
@@ -145,6 +172,7 @@ export function TasksPanel({
       color,
       description: draft.description,
       notes: draft.notes,
+      ...(jiraEnabled ? { jiraIssueKey: draft.jiraIssueKey.trim() } : {}),
     });
     setDraft((d) => ({ ...d, color }));
     await load();
@@ -352,6 +380,25 @@ export function TasksPanel({
                 onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
               />
             </label>
+            {jiraEnabled && (
+              <label>
+                Jira issue
+                <input
+                  value={draft.jiraIssueKey}
+                  placeholder="THING-123"
+                  spellCheck={false}
+                  onChange={(e) =>
+                    setDraft({ ...draft, jiraIssueKey: e.target.value })
+                  }
+                />
+                <span className="hint">
+                  Reported to Jira:{" "}
+                  <span className="mono">
+                    {formatHm(selected.jiraReportedMs ?? 0)}
+                  </span>
+                </span>
+              </label>
+            )}
             <div className="task-activity" aria-live="polite">
               <div className="task-activity-title">Recent booking</div>
               {booking ? (
