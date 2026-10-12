@@ -58,6 +58,7 @@ export const api = {
     invoke<[TimeSlice, TimeSlice]>("split_slice", { input }),
   moveSlice: (id: string, taskId: string) =>
     invoke<TimeSlice>("move_slice", { id, taskId }),
+  coalesceNearAdjacent: () => invoke<void>("coalesce_near_adjacent"),
   getDbPath: () => invoke<string>("get_db_path"),
   revealDatabase: () => invoke<void>("reveal_database"),
   exportDatabase: (dest: string) => invoke<void>("export_database", { dest }),

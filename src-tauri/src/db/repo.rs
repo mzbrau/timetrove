@@ -1,5 +1,5 @@
 use crate::domain::*;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, Local, Utc};
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, DatabaseName, OptionalExtension};
 use std::path::{Path, PathBuf};
@@ -482,7 +482,7 @@ impl Db {
                 continue;
             }
 
-            if let Some(next) = self.find_near_next(&slice.task_id, end)? {
+            if let Some(next) = self.find_near_next(&slice.task_id, slice.start, end)? {
                 let next_end = next
                     .end
                     .ok_or_else(|| "Cannot merge with a running slice".to_string())?;
@@ -512,6 +512,11 @@ impl Db {
         gap >= chrono::Duration::zero() && gap < chrono::Duration::seconds(60)
     }
 
+    /// Keep midnight auto-splits: only merge slices that begin on the same local day.
+    fn same_local_day(a: DateTime<Utc>, b: DateTime<Utc>) -> bool {
+        a.with_timezone(&Local).date_naive() == b.with_timezone(&Local).date_naive()
+    }
+
     fn find_near_prev(
         &self,
         task_id: &str,
@@ -531,7 +536,10 @@ impl Db {
                 .map_err(|e| e.to_string())?;
             Ok(rows
                 .into_iter()
-                .filter(|s| s.end.is_some_and(|e| Self::near_gap(e, start)))
+                .filter(|s| {
+                    Self::same_local_day(s.start, start)
+                        && s.end.is_some_and(|e| Self::near_gap(e, start))
+                })
                 .max_by_key(|s| s.end))
         })
     }
@@ -539,6 +547,7 @@ impl Db {
     fn find_near_next(
         &self,
         task_id: &str,
+        current_start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Option<TimeSlice>, String> {
         self.with_conn(|conn| {
@@ -555,7 +564,9 @@ impl Db {
                 .map_err(|e| e.to_string())?;
             Ok(rows
                 .into_iter()
-                .filter(|s| Self::near_gap(end, s.start))
+                .filter(|s| {
+                    Self::same_local_day(current_start, s.start) && Self::near_gap(end, s.start)
+                })
                 .min_by_key(|s| s.start))
         })
     }
@@ -577,6 +588,9 @@ impl Db {
             for i in 0..rows.len() {
                 for j in (i + 1)..rows.len() {
                     if rows[i].task_id != rows[j].task_id {
+                        continue;
+                    }
+                    if !Self::same_local_day(rows[i].start, rows[j].start) {
                         continue;
                     }
                     let earlier_end = rows[i].end.expect("closed");
@@ -1074,7 +1088,7 @@ fn parse_dt(s: &str) -> rusqlite::Result<DateTime<Utc>> {
 mod tests {
     use super::*;
     use crate::test_support::test_db;
-    use chrono::{Duration, TimeZone};
+    use chrono::{Duration, Local, TimeZone};
 
     fn sample_task(db: &Db, name: &str) -> Task {
         db.create_task(CreateTaskInput {
@@ -1372,6 +1386,29 @@ mod tests {
         db.coalesce_near_adjacent().unwrap();
         assert_eq!(
             db.list_slices_between(t0, t3 + Duration::seconds(1))
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn does_not_merge_across_local_midnight() {
+        let (_dir, db) = test_db();
+        let a = sample_task(&db, "A");
+        let midnight = Local
+            .with_ymd_and_hms(2026, 6, 15, 0, 0, 0)
+            .single()
+            .expect("local midnight")
+            .with_timezone(&Utc);
+        let earlier_start = midnight - Duration::hours(2);
+        let later_end = midnight + Duration::hours(2);
+        db.insert_closed_slice(&a.id, earlier_start, midnight)
+            .unwrap();
+        db.insert_closed_slice(&a.id, midnight, later_end).unwrap();
+        db.coalesce_near_adjacent().unwrap();
+        assert_eq!(
+            db.list_slices_between(earlier_start, later_end + Duration::seconds(1))
                 .unwrap()
                 .len(),
             2

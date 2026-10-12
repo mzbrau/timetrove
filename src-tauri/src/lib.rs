@@ -202,6 +202,7 @@ pub fn run() {
             commands::delete_slice,
             commands::split_slice,
             commands::move_slice,
+            commands::coalesce_near_adjacent,
             commands::get_db_path,
             commands::reveal_database,
             commands::export_database,
