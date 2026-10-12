@@ -68,6 +68,9 @@ export const api = {
   openMainWindow: () => invoke<void>("open_main_window"),
   setTrackerVisible: (visible: boolean) =>
     invoke<void>("set_tracker_visible", { visible }),
+  resetTrackerPosition: () => invoke<void>("reset_tracker_position"),
+  setTrackerAlwaysOnTop: (alwaysOnTop: boolean) =>
+    invoke<Settings>("set_tracker_always_on_top", { alwaysOnTop }),
   currentWeekStart: () => invoke<string>("current_week_start"),
   shiftWeek: (weekStart: string, deltaWeeks: number) =>
     invoke<string>("shift_week", { weekStart, deltaWeeks }),

@@ -786,6 +786,12 @@ impl Db {
                             "dark".into()
                         };
                     }
+                    "tracker_always_on_top" => {
+                        settings.tracker_always_on_top = v == "true" || v == "1";
+                    }
+                    "tracker_visible" => {
+                        settings.tracker_visible = v == "true" || v == "1";
+                    }
                     _ => {}
                 }
             }
@@ -816,12 +822,62 @@ impl Db {
                     },
                 ),
                 ("theme", theme.into()),
+                (
+                    "tracker_always_on_top",
+                    if settings.tracker_always_on_top {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    },
+                ),
+                (
+                    "tracker_visible",
+                    if settings.tracker_visible {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    },
+                ),
             ];
             for (k, v) in pairs {
                 conn.execute(
                     "INSERT INTO settings (key, value) VALUES (?1, ?2)
                      ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                     params![k, v],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Whether the Windows/macOS default tracker dock position was applied once.
+    pub fn tracker_default_position_applied(&self) -> Result<bool, String> {
+        self.with_conn(|conn| {
+            let value: Option<String> = conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key = 'tracker_default_position_applied'",
+                    [],
+                    |r| r.get(0),
+                )
+                .ok();
+            Ok(matches!(value.as_deref(), Some("true") | Some("1")))
+        })
+    }
+
+    pub fn set_tracker_default_position_applied(&self, applied: bool) -> Result<(), String> {
+        self.with_conn(|conn| {
+            if applied {
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('tracker_default_position_applied', 'true')
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    [],
+                )
+                .map_err(|e| e.to_string())?;
+            } else {
+                conn.execute(
+                    "DELETE FROM settings WHERE key = 'tracker_default_position_applied'",
+                    [],
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -995,6 +1051,8 @@ mod tests {
         assert_eq!(s.idle_threshold_mins, 10);
         assert_eq!(s.daily_goal_mins, 480);
         assert_eq!(s.theme, "dark");
+        assert!(s.tracker_always_on_top);
+        assert!(s.tracker_visible);
     }
 
     #[test]
@@ -1354,12 +1412,16 @@ mod tests {
         s.daily_goal_mins = 300;
         s.theme = "light".into();
         s.autostart = false;
+        s.tracker_always_on_top = false;
+        s.tracker_visible = false;
         db.update_settings(&s).unwrap();
         let loaded = db.get_settings().unwrap();
         assert_eq!(loaded.idle_threshold_mins, 15);
         assert_eq!(loaded.daily_goal_mins, 300);
         assert_eq!(loaded.theme, "light");
         assert!(!loaded.autostart);
+        assert!(!loaded.tracker_always_on_top);
+        assert!(!loaded.tracker_visible);
     }
 
     #[test]

@@ -45,6 +45,8 @@ export interface Settings {
   switchShortcut: string;
   autostart: boolean;
   theme: "dark" | "light";
+  trackerAlwaysOnTop: boolean;
+  trackerVisible: boolean;
 }
 
 export interface TimeSlice {

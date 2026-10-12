@@ -103,6 +103,26 @@ export function SettingsPanel() {
         Start at login
       </label>
 
+      <label style={{ gridTemplateColumns: "auto 1fr", alignItems: "center" }}>
+        <input
+          type="checkbox"
+          checked={settings.trackerAlwaysOnTop}
+          onChange={(e) =>
+            setSettings({
+              ...settings,
+              trackerAlwaysOnTop: e.target.checked,
+            })
+          }
+        />
+        <span>
+          Keep tracker always on top
+          <span className="hint">
+            {" "}
+            Recommended on Windows when docked over the taskbar.
+          </span>
+        </span>
+      </label>
+
       <div className="row-actions">
         <button
           type="button"

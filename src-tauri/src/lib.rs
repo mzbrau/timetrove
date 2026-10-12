@@ -10,8 +10,8 @@ mod test_support;
 use chrome::{refresh_tray_tooltip, setup_tray};
 use db::open_db;
 use engine::{
-    hide_gap_window, hide_switcher, position_tracker, set_tracker_visible, show_main,
-    show_switcher, Engine,
+    apply_tracker_always_on_top, ensure_tracker_default_position, hide_gap_window, hide_switcher,
+    set_tracker_visible_persisted, show_main, show_switcher, Engine,
 };
 use std::time::Duration;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
@@ -76,6 +76,18 @@ pub fn run() {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = main_hide.hide();
+                }
+            });
+        }
+
+        // Hide tracker instead of destroying; persist closed state for tray restore.
+        if let Some(tracker) = app.get_webview_window("tracker") {
+            let eng_close = engine.clone();
+            let app_close = app.handle().clone();
+            tracker.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    set_tracker_visible_persisted(&app_close, &eng_close, false);
                 }
             });
         }
@@ -146,11 +158,10 @@ pub fn run() {
 
         engine.emit_state(app.handle());
 
-        // main/tracker start hidden so first paint happens after manage().
-        if let Some(tracker) = app.get_webview_window("tracker") {
-            position_tracker(&tracker);
-        }
-        set_tracker_visible(app.handle(), true);
+        // Apply tracker chrome after manage(); windows start hidden in tauri.conf.
+        apply_tracker_always_on_top(app.handle(), settings.tracker_always_on_top);
+        ensure_tracker_default_position(app.handle(), &engine, false);
+        set_tracker_visible_persisted(app.handle(), &engine, settings.tracker_visible);
         show_main(app.handle());
 
         Ok(())
@@ -187,6 +198,8 @@ pub fn run() {
             commands::close_switcher,
             commands::open_main_window,
             commands::set_tracker_visible,
+            commands::reset_tracker_position,
+            commands::set_tracker_always_on_top,
             commands::current_week_start,
             commands::shift_week,
         ])

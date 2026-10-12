@@ -113,5 +113,21 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
 
+    if version < 5 {
+        let defaults = [
+            ("tracker_always_on_top", "true"),
+            ("tracker_visible", "true"),
+        ];
+        for (k, v) in defaults {
+            conn.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?1, ?2)",
+                (k, v),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (5)", [])
+            .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }

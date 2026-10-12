@@ -614,21 +614,123 @@ pub fn set_tracker_visible(app: &AppHandle, visible: bool) {
     }
 }
 
+/// Show/hide the tracker and persist `tracker_visible` in settings.
+pub fn set_tracker_visible_persisted(app: &AppHandle, engine: &Engine, visible: bool) {
+    if let Ok(mut settings) = engine.db().get_settings() {
+        settings.tracker_visible = visible;
+        let _ = engine.db().update_settings(&settings);
+    }
+    set_tracker_visible(app, visible);
+}
+
+pub fn apply_tracker_always_on_top(app: &AppHandle, always_on_top: bool) {
+    if let Some(w) = app.get_webview_window("tracker") {
+        let _ = w.set_always_on_top(always_on_top);
+    }
+}
+
+const TRACKER_WIDTH: f64 = 280.0;
+const TRACKER_HEIGHT: f64 = 40.0;
+/// Approximate logical width of the system tray + clock on Windows.
+#[cfg(target_os = "windows")]
+const WINDOWS_TRAY_RESERVE: f64 = 200.0;
+
 pub fn position_tracker(window: &WebviewWindow) {
-    // Place near top-right on Mac; Windows dock handled in chrome module.
     if let Ok(Some(monitor)) = window.current_monitor() {
         let size = monitor.size();
         let scale = monitor.scale_factor();
-        let width = 280.0;
-        let height = 40.0;
-        let margin = 12.0;
+        let mon_w = size.width as f64 / scale;
+        let mon_x = monitor.position().x as f64 / scale;
+        let mon_y = monitor.position().y as f64 / scale;
+
         #[cfg(target_os = "windows")]
-        let y = (size.height as f64 / scale) - height - 48.0 - margin; // above taskbar
+        let (x, y) = {
+            let mon_h = size.height as f64 / scale;
+            windows_tracker_dock(mon_x, mon_y, mon_w, mon_h, monitor.work_area(), scale)
+        };
+
         #[cfg(not(target_os = "windows"))]
-        let y = margin;
-        let x = (size.width as f64 / scale) - width - margin;
-        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
+        let (x, y) = {
+            let margin = 12.0;
+            (
+                mon_x + mon_w - TRACKER_WIDTH - margin,
+                mon_y + margin,
+            )
+        };
+
+        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
+            width: TRACKER_WIDTH,
+            height: TRACKER_HEIGHT,
+        }));
         let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
+    }
+}
+
+/// Dock into the taskbar band, left of the system tray (typical bottom taskbar).
+#[cfg(target_os = "windows")]
+fn windows_tracker_dock(
+    mon_x: f64,
+    mon_y: f64,
+    mon_w: f64,
+    mon_h: f64,
+    work: &tauri::PhysicalRect<i32, u32>,
+    scale: f64,
+) -> (f64, f64) {
+    let work_x = work.position.x as f64 / scale;
+    let work_y = work.position.y as f64 / scale;
+    let work_w = work.size.width as f64 / scale;
+    let work_h = work.size.height as f64 / scale;
+    let work_bottom = work_y + work_h;
+    let work_right = work_x + work_w;
+    let mon_bottom = mon_y + mon_h;
+    let mon_right = mon_x + mon_w;
+
+    if work_bottom < mon_bottom - 1.0 {
+        // Bottom taskbar: center in band, left of tray.
+        let band_h = mon_bottom - work_bottom;
+        let y = if band_h >= TRACKER_HEIGHT {
+            work_bottom + (band_h - TRACKER_HEIGHT) / 2.0
+        } else {
+            mon_bottom - TRACKER_HEIGHT
+        };
+        let x = mon_right - TRACKER_WIDTH - WINDOWS_TRAY_RESERVE;
+        (x, y)
+    } else if work_y > mon_y + 1.0 {
+        // Top taskbar
+        let band_h = work_y - mon_y;
+        let y = if band_h >= TRACKER_HEIGHT {
+            mon_y + (band_h - TRACKER_HEIGHT) / 2.0
+        } else {
+            mon_y
+        };
+        let x = mon_right - TRACKER_WIDTH - WINDOWS_TRAY_RESERVE;
+        (x, y)
+    } else if work_x > mon_x + 1.0 {
+        // Left taskbar
+        (work_x, work_bottom - TRACKER_HEIGHT - 4.0)
+    } else if work_right < mon_right - 1.0 {
+        // Right taskbar
+        (work_right - TRACKER_WIDTH, work_bottom - TRACKER_HEIGHT - 4.0)
+    } else {
+        (
+            mon_right - TRACKER_WIDTH - WINDOWS_TRAY_RESERVE,
+            mon_bottom - TRACKER_HEIGHT,
+        )
+    }
+}
+
+/// Apply default dock position once (first launch), or force when `force` is true (Reset).
+pub fn ensure_tracker_default_position(app: &AppHandle, engine: &Engine, force: bool) {
+    let already = engine
+        .db()
+        .tracker_default_position_applied()
+        .unwrap_or(false);
+    if already && !force {
+        return;
+    }
+    if let Some(w) = app.get_webview_window("tracker") {
+        position_tracker(&w);
+        let _ = engine.db().set_tracker_default_position_applied(true);
     }
 }
 
