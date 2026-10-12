@@ -545,7 +545,8 @@
   user-select: none;
 }
 
-.day-timeline-gap {
+/* Beat `.entries button` (0,2,0) so handles/gaps stay transparent hit-targets. */
+.entries .day-timeline-gap {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -557,10 +558,11 @@
   background: transparent;
   border-radius: 0;
   box-shadow: none;
+  color: transparent;
   cursor: crosshair;
 }
 
-.day-timeline-gap:hover {
+.entries .day-timeline-gap:hover {
   background: rgba(61, 155, 143, 0.12);
 }
 
@@ -571,10 +573,11 @@
   border-radius: 6px;
   min-width: 4px;
   z-index: 1;
+  overflow: hidden;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
 }
 
-.day-timeline-handle {
+.entries .day-timeline-handle {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -595,25 +598,26 @@
   z-index: 2;
 }
 
-.day-timeline-handle:hover,
-.day-timeline-handle:active,
-.day-timeline-handle:focus {
+.entries .day-timeline-handle:hover,
+.entries .day-timeline-handle:active,
+.entries .day-timeline-handle:focus {
   background: transparent;
   box-shadow: none;
   outline: none;
+  color: transparent;
 }
 
-.day-timeline-handle:focus-visible {
+.entries .day-timeline-handle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
   background: rgba(255, 255, 255, 0.25);
 }
 
-.day-timeline-handle.start {
+.entries .day-timeline-handle.start {
   left: 0;
 }
 
-.day-timeline-handle.end {
+.entries .day-timeline-handle.end {
   right: 0;
 }
 

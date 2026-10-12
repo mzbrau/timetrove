@@ -56,6 +56,7 @@ export function EntriesPanel({ state }: Props) {
   );
   const [rowModes, setRowModes] = useState<Record<string, RowMode>>({});
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [merging, setMerging] = useState(false);
 
   const activeTasks = useMemo(
     () => tasks.filter((t) => !t.archived),
@@ -186,6 +187,24 @@ export function EntriesPanel({ state }: Props) {
         <div className="row-actions">
           <button type="button" onClick={() => setDay(todayStr())}>
             Today
+          </button>
+          <button
+            type="button"
+            disabled={merging}
+            onClick={async () => {
+              setMerging(true);
+              setError(null);
+              try {
+                await api.coalesceNearAdjacent();
+                await load();
+              } catch (e) {
+                setError(String(e));
+              } finally {
+                setMerging(false);
+              }
+            }}
+          >
+            {merging ? "Merging…" : "Merge adjacent"}
           </button>
           <button type="button" onClick={() => setShowAdd((v) => !v)}>
             {showAdd ? "Hide add entry" : "Add entry"}

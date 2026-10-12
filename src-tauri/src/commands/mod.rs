@@ -271,6 +271,17 @@ pub fn move_slice(
 }
 
 #[tauri::command]
+pub fn coalesce_near_adjacent(
+    engine: State<'_, Arc<Engine>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    engine.db().coalesce_near_adjacent()?;
+    let _ = engine.refresh_after_edit()?;
+    engine.emit_state(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn get_db_path(engine: State<'_, Arc<Engine>>) -> Result<String, String> {
     Ok(engine.db().path().display().to_string())
 }

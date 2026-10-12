@@ -216,6 +216,7 @@ impl Engine {
         let slice = self
             .db
             .replace_running_slice(old_id.as_deref(), task_id, now)?;
+        self.db.coalesce_near_adjacent()?;
         *self.phase.lock() = EnginePhase::Tracking {
             task_id: task_id.to_string(),
             slice_id: slice.id,
@@ -251,6 +252,7 @@ impl Engine {
             *self.previous_task_id.lock() = Some(task_id);
         }
         *self.phase.lock() = EnginePhase::Stopped;
+        self.db.coalesce_near_adjacent()?;
         self.db.set_last_good_at(None)?;
         self.db.set_snooze_until(None)?;
         self.touch_activity();
@@ -433,6 +435,7 @@ impl Engine {
         let now = Utc::now();
         if now > gap_start {
             self.db.insert_closed_slice(&prev_id, gap_start, now)?;
+            self.db.coalesce_near_adjacent()?;
         }
         self.clear_gap_phase();
         self.start_task(&prev_id)
@@ -443,6 +446,7 @@ impl Engine {
         let now = Utc::now();
         if now > gap_start {
             self.db.insert_closed_slice(task_id, gap_start, now)?;
+            self.db.coalesce_near_adjacent()?;
         }
         self.clear_gap_phase();
         self.start_task(task_id)
@@ -897,6 +901,38 @@ mod tests {
             eng.phase.lock().clone(),
             EnginePhase::Tracking { task_id, .. } if task_id == prev.id
         ));
+    }
+
+    #[test]
+    fn gap_resolve_previous_coalesces_closed_slices() {
+        let (_dir, eng) = engine_empty();
+        let prev = make_task(eng.db(), "Prev");
+        let start = Utc::now() - Duration::hours(1);
+        let slice = eng
+            .db()
+            .replace_running_slice(None, &prev.id, start)
+            .unwrap();
+        *eng.phase.lock() = EnginePhase::Tracking {
+            task_id: prev.id.clone(),
+            slice_id: slice.id,
+        };
+        let gap_start = Utc::now() - Duration::minutes(30);
+        eng.begin_gap(gap_start).unwrap();
+        eng.resolve_gap_previous().unwrap();
+
+        let closed: Vec<_> = eng
+            .db()
+            .list_slices_between(start - Duration::seconds(1), Utc::now() + Duration::seconds(1))
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.task_id == prev.id && s.end.is_some())
+            .collect();
+        assert_eq!(
+            closed.len(),
+            1,
+            "pre-gap work and gap attribution should merge"
+        );
+        assert!(eng.db().running_slice().unwrap().is_some());
     }
 
     #[test]
