@@ -420,6 +420,57 @@
   position: relative;
 }
 
+.timesheet-week-timelines {
+  margin-top: var(--s5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.timesheet-week-timelines h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.timesheet-day-timeline-row {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: var(--s2);
+  align-items: start;
+}
+
+.timesheet-day-timeline-label {
+  padding-top: 1.35rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.timesheet-day-timeline-row .day-timeline {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.day-timeline--readonly .day-timeline-scroll {
+  overflow-x: hidden;
+  padding: var(--s1) 0 var(--s2);
+}
+
+.day-timeline--readonly .day-timeline-labels {
+  height: 0.95rem;
+  margin-bottom: 2px;
+}
+
+.day-timeline--readonly .day-timeline-label {
+  font-size: 0.68rem;
+}
+
+.day-timeline--readonly .day-timeline-track {
+  height: 28px;
+}
+
 .timesheet-note-mark {
   display: inline-block;
   width: 5px;

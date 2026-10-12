@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bookedExtent,
+  clipSliceToDay,
   DAY_MS,
   dayDurationMs,
   dayMsToIso,
@@ -30,6 +31,36 @@ describe("timelineMath", () => {
     );
     const duration = dayDurationMs(day);
     expect(msInDay(day, dayMsToIso(day, duration))).toBe(duration);
+  });
+
+  it("clips open slices to now and omits future days", () => {
+    const mon = "2026-10-12";
+    const tue = "2026-10-13";
+    const start = new Date(2026, 9, 12, 18, 0, 0, 0).toISOString();
+    const nowMs = new Date(2026, 9, 12, 21, 30, 0, 0).getTime();
+
+    expect(clipSliceToDay(mon, start, null, nowMs)).toEqual({
+      startMs: 18 * 60 * 60_000,
+      endMs: 21.5 * 60 * 60_000,
+    });
+    expect(clipSliceToDay(tue, start, null, nowMs)).toBeNull();
+  });
+
+  it("clips closed slices that span midnight onto each day", () => {
+    const mon = "2026-10-12";
+    const tue = "2026-10-13";
+    const start = new Date(2026, 9, 12, 22, 0, 0, 0).toISOString();
+    const end = new Date(2026, 9, 13, 2, 0, 0, 0).toISOString();
+    const nowMs = new Date(2026, 9, 14, 12, 0, 0, 0).getTime();
+
+    expect(clipSliceToDay(mon, start, end, nowMs)).toEqual({
+      startMs: 22 * 60 * 60_000,
+      endMs: dayDurationMs(mon),
+    });
+    expect(clipSliceToDay(tue, start, end, nowMs)).toEqual({
+      startMs: 0,
+      endMs: 2 * 60 * 60_000,
+    });
   });
 
   it("derives day end from the next local midnight", () => {
