@@ -9,7 +9,10 @@ mod test_support;
 
 use chrome::{refresh_tray_tooltip, setup_tray};
 use db::open_db;
-use engine::{hide_gap_window, hide_switcher, position_tracker, show_switcher, Engine};
+use engine::{
+    hide_gap_window, hide_switcher, position_tracker, set_tracker_visible, show_main,
+    show_switcher, Engine,
+};
 use std::time::Duration;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
@@ -47,14 +50,12 @@ pub fn run() {
         let db_path = app_dir.join("timetrove.db");
         let conn = open_db(&db_path).map_err(|e| e.to_string())?;
         let database = db::Db::new(conn, db_path);
-        // Legacy near-adjacent same-task cleanup (idempotent; not done on day reads).
-        database.coalesce_near_adjacent()?;
         let engine = Engine::new(database);
+        // Register before any further work so webview invokes can resolve State.
         app.manage(engine.clone());
 
-        if let Some(tracker) = app.get_webview_window("tracker") {
-            position_tracker(&tracker);
-        }
+        // Legacy near-adjacent same-task cleanup (idempotent; not done on day reads).
+        engine.db().coalesce_near_adjacent()?;
 
         // Overlays must start hidden; window-state must not reopen them.
         hide_gap_window(app.handle());
@@ -144,6 +145,14 @@ pub fn run() {
         });
 
         engine.emit_state(app.handle());
+
+        // main/tracker start hidden so first paint happens after manage().
+        if let Some(tracker) = app.get_webview_window("tracker") {
+            position_tracker(&tracker);
+        }
+        set_tracker_visible(app.handle(), true);
+        show_main(app.handle());
+
         Ok(())
     });
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
+import { isUnmanagedStateError, withStartupRetry } from "./startupRetry";
 import type { TrackerState } from "./types";
 
 export function useTrackerState() {
@@ -12,10 +13,12 @@ export function useTrackerState() {
     let unlistenState: (() => void) | undefined;
     let unlistenError: (() => void) | undefined;
 
-    api
-      .getTrackerState()
+    withStartupRetry(() => api.getTrackerState())
       .then((s) => {
-        if (!disposed) setState(s);
+        if (!disposed) {
+          setState(s);
+          setError(null);
+        }
       })
       .catch((e) => {
         if (!disposed) setError(String(e));
@@ -23,7 +26,12 @@ export function useTrackerState() {
 
     listen<TrackerState>("tracker-state", (e) => {
       setState(e.payload);
-      if (e.payload.dbError) setError(e.payload.dbError);
+      if (e.payload.dbError) {
+        setError(e.payload.dbError);
+      } else {
+        // Clear sticky startup race errors once engine is emitting.
+        setError((prev) => (prev && isUnmanagedStateError(prev) ? null : prev));
+      }
     })
       .then((fn) => {
         if (disposed) {
