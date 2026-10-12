@@ -206,7 +206,7 @@ impl Db {
     pub fn running_slice(&self) -> Result<Option<TimeSlice>, String> {
         self.with_conn(|conn| {
             conn.query_row(
-                "SELECT id, task_id, start, end FROM time_slices WHERE end IS NULL LIMIT 1",
+                "SELECT id, task_id, start, end, note FROM time_slices WHERE end IS NULL LIMIT 1",
                 [],
                 map_slice,
             )
@@ -218,7 +218,7 @@ impl Db {
     pub fn get_slice(&self, id: &str) -> Result<Option<TimeSlice>, String> {
         self.with_conn(|conn| {
             conn.query_row(
-                "SELECT id, task_id, start, end FROM time_slices WHERE id = ?1",
+                "SELECT id, task_id, start, end, note FROM time_slices WHERE id = ?1",
                 [id],
                 map_slice,
             )
@@ -300,12 +300,14 @@ impl Db {
         old_id: Option<&str>,
         task_id: &str,
         now: DateTime<Utc>,
+        note: &str,
     ) -> Result<TimeSlice, String> {
         let slice = TimeSlice {
             id: Uuid::new_v4().to_string(),
             task_id: task_id.to_string(),
             start: now,
             end: None,
+            note: normalize_note(note),
         };
         self.with_conn(|conn| {
             conn.execute_batch("BEGIN IMMEDIATE")
@@ -336,8 +338,8 @@ impl Db {
                     }
                 }
                 conn.execute(
-                    "INSERT INTO time_slices (id, task_id, start, end) VALUES (?1, ?2, ?3, NULL)",
-                    params![slice.id, slice.task_id, slice.start.to_rfc3339()],
+                    "INSERT INTO time_slices (id, task_id, start, end, note) VALUES (?1, ?2, ?3, NULL, ?4)",
+                    params![slice.id, slice.task_id, slice.start.to_rfc3339(), slice.note],
                 )
                 .map_err(|e| e.to_string())?;
                 Ok(())
@@ -361,6 +363,7 @@ impl Db {
         task_id: &str,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
+        note: &str,
     ) -> Result<TimeSlice, String> {
         if end <= start {
             return Err("End must be after start".into());
@@ -371,15 +374,17 @@ impl Db {
             task_id: task_id.to_string(),
             start,
             end: Some(end),
+            note: normalize_note(note),
         };
         self.with_conn(|conn| {
             conn.execute(
-                "INSERT INTO time_slices (id, task_id, start, end) VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO time_slices (id, task_id, start, end, note) VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     slice.id,
                     slice.task_id,
                     slice.start.to_rfc3339(),
-                    end.to_rfc3339()
+                    end.to_rfc3339(),
+                    slice.note
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -396,7 +401,7 @@ impl Db {
         self.with_conn(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, task_id, start, end FROM time_slices
+                    "SELECT id, task_id, start, end, note FROM time_slices
                      WHERE start < ?2 AND (end IS NULL OR end > ?1)
                      ORDER BY start",
                 )
@@ -434,6 +439,27 @@ impl Db {
         let mut slice = self
             .get_slice(&input.id)?
             .ok_or_else(|| "Slice not found".to_string())?;
+        let was_running = slice.end.is_none();
+
+        // Running slices: allow note-only updates (switcher / Entries while tracking).
+        if was_running {
+            if input.task_id.is_some() || input.start.is_some() || input.end.is_some() {
+                return Err("Cannot clear end on update; stop tracking first".into());
+            }
+            if let Some(note) = input.note {
+                slice.note = normalize_note(&note);
+                self.with_conn(|conn| {
+                    conn.execute(
+                        "UPDATE time_slices SET note=?2 WHERE id=?1",
+                        params![slice.id, slice.note],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    Ok(())
+                })?;
+            }
+            return Ok(slice);
+        }
+
         if let Some(task_id) = input.task_id {
             slice.task_id = task_id;
         }
@@ -443,19 +469,26 @@ impl Db {
         if let Some(end) = input.end {
             slice.end = Some(end);
         }
-        let end = slice.end.ok_or_else(|| "Cannot clear end on update; stop tracking first".to_string())?;
+        if let Some(note) = input.note {
+            slice.note = normalize_note(&note);
+        }
+
+        let end = slice
+            .end
+            .ok_or_else(|| "Cannot clear end on update; stop tracking first".to_string())?;
         if end <= slice.start {
             return Err("End must be after start".into());
         }
         self.ensure_no_overlap(Some(&slice.id), slice.start, end)?;
         self.with_conn(|conn| {
             conn.execute(
-                "UPDATE time_slices SET task_id=?2, start=?3, end=?4 WHERE id=?1",
+                "UPDATE time_slices SET task_id=?2, start=?3, end=?4, note=?5 WHERE id=?1",
                 params![
                     slice.id,
                     slice.task_id,
                     slice.start.to_rfc3339(),
-                    end.to_rfc3339()
+                    end.to_rfc3339(),
+                    slice.note
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -525,7 +558,7 @@ impl Db {
         self.with_conn(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, task_id, start, end FROM time_slices
+                    "SELECT id, task_id, start, end, note FROM time_slices
                      WHERE task_id = ?1 AND end IS NOT NULL",
                 )
                 .map_err(|e| e.to_string())?;
@@ -553,7 +586,7 @@ impl Db {
         self.with_conn(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, task_id, start, end FROM time_slices
+                    "SELECT id, task_id, start, end, note FROM time_slices
                      WHERE task_id = ?1 AND end IS NOT NULL",
                 )
                 .map_err(|e| e.to_string())?;
@@ -575,7 +608,7 @@ impl Db {
         self.with_conn(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, task_id, start, end FROM time_slices
+                    "SELECT id, task_id, start, end, note FROM time_slices
                      WHERE end IS NOT NULL
                      ORDER BY start",
                 )
@@ -613,6 +646,14 @@ impl Db {
         if end <= start {
             return Err("Merged range invalid".into());
         }
+        let keep = self
+            .get_slice(keep_id)?
+            .ok_or_else(|| "Survivor slice not found".to_string())?;
+        let drop = self
+            .get_slice(drop_id)?
+            .ok_or_else(|| "Slice to merge not found".to_string())?;
+        // keep is earlier; combine notes in time order.
+        let note = combine_notes([keep.note.as_str(), drop.note.as_str()]);
         self.with_conn(|conn| {
             conn.execute_batch("BEGIN IMMEDIATE")
                 .map_err(|e| e.to_string())?;
@@ -625,8 +666,8 @@ impl Db {
                 }
                 let updated = conn
                     .execute(
-                        "UPDATE time_slices SET start = ?2, end = ?3 WHERE id = ?1",
-                        params![keep_id, start.to_rfc3339(), end.to_rfc3339()],
+                        "UPDATE time_slices SET start = ?2, end = ?3, note = ?4 WHERE id = ?1",
+                        params![keep_id, start.to_rfc3339(), end.to_rfc3339(), note],
                     )
                     .map_err(|e| e.to_string())?;
                 if updated == 0 {
@@ -670,12 +711,13 @@ impl Db {
                 )
                 .map_err(|e| e.to_string())?;
                 conn.execute(
-                    "INSERT INTO time_slices (id, task_id, start, end) VALUES (?1, ?2, ?3, ?4)",
+                    "INSERT INTO time_slices (id, task_id, start, end, note) VALUES (?1, ?2, ?3, ?4, ?5)",
                     params![
                         second_id,
                         slice.task_id,
                         input.at.to_rfc3339(),
-                        end.to_rfc3339()
+                        end.to_rfc3339(),
+                        slice.note
                     ],
                 )
                 .map_err(|e| e.to_string())?;
@@ -1075,6 +1117,7 @@ fn map_slice(row: &rusqlite::Row<'_>) -> rusqlite::Result<TimeSlice> {
         task_id: row.get(1)?,
         start: parse_dt(&row.get::<_, String>(2)?)?,
         end: end.map(|s| parse_dt(&s)).transpose()?,
+        note: row.get(4)?,
     })
 }
 
@@ -1187,12 +1230,14 @@ mod tests {
             &task.id,
             this_start + Duration::hours(9),
             this_start + Duration::hours(11),
+            "",
         )
         .unwrap();
         db.insert_closed_slice(
             &task.id,
             last_start + Duration::hours(10),
             last_start + Duration::hours(11) + Duration::minutes(30),
+            "",
         )
         .unwrap();
 
@@ -1208,6 +1253,7 @@ mod tests {
             &idle.id,
             old_end - Duration::hours(1),
             old_end,
+            "",
         )
         .unwrap();
         let idle_summary = db.task_booking_summary(&idle.id).unwrap();
@@ -1228,11 +1274,11 @@ mod tests {
         let a = sample_task(&db, "A");
         let b = sample_task(&db, "B");
         let now = Utc::now();
-        let s1 = db.replace_running_slice(None, &a.id, now).unwrap();
+        let s1 = db.replace_running_slice(None, &a.id, now, "").unwrap();
         assert!(db.running_slice().unwrap().is_some());
 
         let s2 = db
-            .replace_running_slice(Some(&s1.id), &b.id, now + Duration::minutes(5))
+            .replace_running_slice(Some(&s1.id), &b.id, now + Duration::minutes(5), "")
             .unwrap();
         let running = db.running_slice().unwrap().unwrap();
         assert_eq!(running.id, s2.id);
@@ -1242,7 +1288,7 @@ mod tests {
         assert!(closed.end.is_some());
 
         let err = db
-            .replace_running_slice(None, &a.id, now + Duration::minutes(10))
+            .replace_running_slice(None, &a.id, now + Duration::minutes(10), "")
             .unwrap_err();
         assert!(err.contains("already being tracked"));
     }
@@ -1253,13 +1299,14 @@ mod tests {
         let t = sample_task(&db, "Work");
         let start = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
         let end = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
-        db.insert_closed_slice(&t.id, start, end).unwrap();
+        db.insert_closed_slice(&t.id, start, end, "").unwrap();
 
         let err = db
             .insert_closed_slice(
                 &t.id,
                 Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap(),
                 Utc.with_ymd_and_hms(2026, 1, 1, 13, 0, 0).unwrap(),
+                "",
             )
             .unwrap_err();
         assert!(err.contains("overlaps"));
@@ -1272,7 +1319,7 @@ mod tests {
         let start = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
         let end = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
         let at = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
-        let slice = db.insert_closed_slice(&t.id, start, end).unwrap();
+        let slice = db.insert_closed_slice(&t.id, start, end, "").unwrap();
 
         let (first, second) = db
             .split_slice(SplitSliceInput {
@@ -1301,14 +1348,15 @@ mod tests {
         let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
         let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
         let t2 = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
-        let first = db.insert_closed_slice(&a.id, t0, t1).unwrap();
-        let second = db.insert_closed_slice(&b.id, t1, t2).unwrap();
+        let first = db.insert_closed_slice(&a.id, t0, t1, "").unwrap();
+        let second = db.insert_closed_slice(&b.id, t1, t2, "").unwrap();
 
         db.update_slice(UpdateSliceInput {
             id: second.id.clone(),
             task_id: Some(a.id.clone()),
             start: None,
             end: None,
+            note: None,
         })
         .unwrap();
         let merged = db.merge_adjacent_same_task(&second.id).unwrap();
@@ -1332,8 +1380,8 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
         let t2 = t1 + Duration::seconds(30);
         let t3 = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
-        db.insert_closed_slice(&a.id, t0, t1).unwrap();
-        let second = db.insert_closed_slice(&a.id, t2, t3).unwrap();
+        db.insert_closed_slice(&a.id, t0, t1, "").unwrap();
+        let second = db.insert_closed_slice(&a.id, t2, t3, "").unwrap();
         db.coalesce_near_adjacent().unwrap();
         let slices = db
             .list_slices_between(t0, t3 + Duration::seconds(1))
@@ -1353,14 +1401,15 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
         let t2 = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
         let t3 = Utc.with_ymd_and_hms(2026, 1, 1, 13, 0, 0).unwrap();
-        db.insert_closed_slice(&a.id, t0, t1).unwrap();
-        let second = db.insert_closed_slice(&b.id, t2, t3).unwrap();
+        db.insert_closed_slice(&a.id, t0, t1, "").unwrap();
+        let second = db.insert_closed_slice(&b.id, t2, t3, "").unwrap();
 
         db.update_slice(UpdateSliceInput {
             id: second.id.clone(),
             task_id: Some(a.id.clone()),
             start: None,
             end: None,
+            note: None,
         })
         .unwrap();
         let result = db.merge_adjacent_same_task(&second.id).unwrap();
@@ -1381,8 +1430,8 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
         let t2 = t1 + Duration::seconds(60);
         let t3 = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
-        db.insert_closed_slice(&a.id, t0, t1).unwrap();
-        db.insert_closed_slice(&a.id, t2, t3).unwrap();
+        db.insert_closed_slice(&a.id, t0, t1, "").unwrap();
+        db.insert_closed_slice(&a.id, t2, t3, "").unwrap();
         db.coalesce_near_adjacent().unwrap();
         assert_eq!(
             db.list_slices_between(t0, t3 + Duration::seconds(1))
@@ -1403,9 +1452,9 @@ mod tests {
             .with_timezone(&Utc);
         let earlier_start = midnight - Duration::hours(2);
         let later_end = midnight + Duration::hours(2);
-        db.insert_closed_slice(&a.id, earlier_start, midnight)
+        db.insert_closed_slice(&a.id, earlier_start, midnight, "")
             .unwrap();
-        db.insert_closed_slice(&a.id, midnight, later_end).unwrap();
+        db.insert_closed_slice(&a.id, midnight, later_end, "").unwrap();
         db.coalesce_near_adjacent().unwrap();
         assert_eq!(
             db.list_slices_between(earlier_start, later_end + Duration::seconds(1))
@@ -1421,19 +1470,19 @@ mod tests {
         let t = sample_task(&db, "Run");
         let now = Utc::now();
         let run_start = now - Duration::minutes(10);
-        let running = db.replace_running_slice(None, &t.id, run_start).unwrap();
+        let running = db.replace_running_slice(None, &t.id, run_start, "").unwrap();
 
         let future_start = now + Duration::minutes(5);
         let future_end = future_start + Duration::minutes(30);
         let created = db
-            .insert_closed_slice(&t.id, future_start, future_end)
+            .insert_closed_slice(&t.id, future_start, future_end, "")
             .unwrap();
         assert_eq!(created.start, future_start);
 
         let overlap_start = run_start + Duration::minutes(1);
         let overlap_end = now - Duration::minutes(1);
         let err = db
-            .insert_closed_slice(&t.id, overlap_start, overlap_end)
+            .insert_closed_slice(&t.id, overlap_start, overlap_end, "")
             .unwrap_err();
         assert!(err.contains("overlaps"));
 
@@ -1453,11 +1502,11 @@ mod tests {
         let closed_start = day_start + Duration::hours(1);
         let closed_end = closed_start + Duration::hours(2);
         let slice = db
-            .insert_closed_slice(&t.id, closed_start, closed_end)
+            .insert_closed_slice(&t.id, closed_start, closed_end, "")
             .unwrap();
 
         let running = db
-            .replace_running_slice(None, &t.id, day_start + Duration::hours(4))
+            .replace_running_slice(None, &t.id, day_start + Duration::hours(4), "")
             .unwrap();
         let total = db.daily_total_ms(day_start + Duration::hours(5)).unwrap();
         assert_eq!(total, 2 * 3_600_000 + 3_600_000);
@@ -1470,7 +1519,7 @@ mod tests {
         let moved_start = day_start + Duration::hours(6);
         let moved_end = moved_start + Duration::hours(1);
         let other = db
-            .insert_closed_slice(&t.id, moved_start, moved_end)
+            .insert_closed_slice(&t.id, moved_start, moved_end, "")
             .unwrap();
         let updated = db
             .update_slice(UpdateSliceInput {
@@ -1478,9 +1527,118 @@ mod tests {
                 task_id: None,
                 start: Some(moved_start + Duration::minutes(15)),
                 end: Some(moved_end),
+                note: None,
             })
             .unwrap();
         assert_eq!(updated.start, moved_start + Duration::minutes(15));
+    }
+
+    #[test]
+    fn update_slice_note_set_and_clear() {
+        let (_dir, db) = test_db();
+        let t = sample_task(&db, "Noted");
+        let start = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
+        let slice = db.insert_closed_slice(&t.id, start, end, "").unwrap();
+        assert_eq!(slice.note, "");
+
+        let updated = db
+            .update_slice(UpdateSliceInput {
+                id: slice.id.clone(),
+                task_id: None,
+                start: None,
+                end: None,
+                note: Some("  hello  ".into()),
+            })
+            .unwrap();
+        assert_eq!(updated.note, "hello");
+
+        let cleared = db
+            .update_slice(UpdateSliceInput {
+                id: slice.id.clone(),
+                task_id: None,
+                start: None,
+                end: None,
+                note: Some("   ".into()),
+            })
+            .unwrap();
+        assert_eq!(cleared.note, "");
+    }
+
+    #[test]
+    fn update_running_slice_note_only() {
+        let (_dir, db) = test_db();
+        let t = sample_task(&db, "Run");
+        let now = Utc::now();
+        let slice = db.replace_running_slice(None, &t.id, now, "").unwrap();
+        let updated = db
+            .update_slice(UpdateSliceInput {
+                id: slice.id.clone(),
+                task_id: None,
+                start: None,
+                end: None,
+                note: Some("live".into()),
+            })
+            .unwrap();
+        assert_eq!(updated.note, "live");
+        assert!(updated.end.is_none());
+        assert_eq!(db.running_slice().unwrap().unwrap().note, "live");
+    }
+
+    #[test]
+    fn coalesce_combines_distinct_notes() {
+        let (_dir, db) = test_db();
+        let a = sample_task(&db, "A");
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 30).unwrap();
+        let t3 = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        db.insert_closed_slice(&a.id, t0, t1, "first").unwrap();
+        db.insert_closed_slice(&a.id, t2, t3, "second").unwrap();
+        db.coalesce_near_adjacent().unwrap();
+        let slices = db
+            .list_slices_between(t0, t3 + Duration::seconds(1))
+            .unwrap();
+        assert_eq!(slices.len(), 1);
+        assert_eq!(slices[0].note, "first · second");
+    }
+
+    #[test]
+    fn coalesce_dedupes_identical_notes() {
+        let (_dir, db) = test_db();
+        let a = sample_task(&db, "A");
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
+        let t2 = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 30).unwrap();
+        let t3 = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        db.insert_closed_slice(&a.id, t0, t1, "same").unwrap();
+        db.insert_closed_slice(&a.id, t2, t3, "same").unwrap();
+        db.coalesce_near_adjacent().unwrap();
+        let slices = db
+            .list_slices_between(t0, t3 + Duration::seconds(1))
+            .unwrap();
+        assert_eq!(slices.len(), 1);
+        assert_eq!(slices[0].note, "same");
+    }
+
+    #[test]
+    fn split_slice_copies_note_to_both() {
+        let (_dir, db) = test_db();
+        let t = sample_task(&db, "Split");
+        let start = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let at = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
+        let slice = db
+            .insert_closed_slice(&t.id, start, end, "keep me")
+            .unwrap();
+        let (first, second) = db
+            .split_slice(SplitSliceInput {
+                id: slice.id.clone(),
+                at,
+            })
+            .unwrap();
+        assert_eq!(first.note, "keep me");
+        assert_eq!(second.note, "keep me");
     }
 
     #[test]

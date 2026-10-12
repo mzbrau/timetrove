@@ -416,6 +416,21 @@
   color: var(--ink);
 }
 
+.timesheet-day-cell.has-notes {
+  position: relative;
+}
+
+.timesheet-note-mark {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 4px;
+  margin-bottom: 2px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+
 .entries {
   display: flex;
   flex-direction: column;
@@ -649,7 +664,18 @@
   border: 1px solid var(--line);
   color: var(--ink);
   font-size: 0.82rem;
+}
+
+.day-timeline-tooltip-main {
   white-space: nowrap;
+}
+
+.day-timeline-tooltip-note {
+  margin-top: 3px;
+  max-width: min(280px, 40vw);
+  white-space: normal;
+  word-break: break-word;
+  color: var(--muted);
 }
 
 .entries-table-wrap {
@@ -683,6 +709,40 @@
   flex-direction: column;
   gap: var(--s2);
   min-width: 220px;
+}
+
+.note-popover-anchor {
+  position: relative;
+}
+
+.note-btn {
+  color: var(--muted);
+}
+
+.note-btn-has {
+  color: var(--ink);
+  border-color: rgba(61, 155, 143, 0.45);
+  background: var(--accent-soft);
+}
+
+.note-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 260px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: var(--s3);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.note-popover input {
+  width: 100%;
 }
 
 .task-picker {

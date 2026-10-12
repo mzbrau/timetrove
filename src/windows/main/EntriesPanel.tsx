@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../shared/api";
 import {
   addDays,
@@ -57,6 +57,9 @@ export function EntriesPanel({ state }: Props) {
   const [rowModes, setRowModes] = useState<Record<string, RowMode>>({});
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [merging, setMerging] = useState(false);
+  const [notePopoverId, setNotePopoverId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const notePopoverRef = useRef<HTMLDivElement | null>(null);
 
   const activeTasks = useMemo(
     () => tasks.filter((t) => !t.archived),
@@ -77,6 +80,7 @@ export function EntriesPanel({ state }: Props) {
   };
 
   useEffect(() => {
+    setNotePopoverId(null);
     load().catch((e) => setError(String(e)));
   }, [day]);
 
@@ -85,6 +89,27 @@ export function EntriesPanel({ state }: Props) {
     setAddStart(range.start);
     setAddEnd(range.end);
   }, [day]);
+
+  useEffect(() => {
+    if (!notePopoverId) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (!notePopoverRef.current?.contains(e.target as Node)) {
+        setNotePopoverId(null);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setNotePopoverId(null);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [notePopoverId]);
 
   useEffect(() => {
     const tick = () => setNowMs(Date.now());
@@ -153,7 +178,25 @@ export function EntriesPanel({ state }: Props) {
   }, [addValid, addStart, addEnd]);
 
   const setMode = (id: string, mode: RowMode) => {
+    setNotePopoverId(null);
     setRowModes((m) => ({ ...m, [id]: mode }));
+  };
+
+  const openNotePopover = (slice: TimeSlice) => {
+    setRowModes((m) => {
+      const next = { ...m };
+      delete next[slice.id];
+      return next;
+    });
+    setNoteDraft(slice.note);
+    setNotePopoverId(slice.id);
+  };
+
+  const saveNote = async (sliceId: string, note: string) => {
+    setError(null);
+    await api.updateSlice({ id: sliceId, note });
+    setNotePopoverId(null);
+    await load();
   };
 
   const clearMode = (id: string) => {
@@ -336,6 +379,83 @@ export function EntriesPanel({ state }: Props) {
                   <td>
                     {mode.kind === "idle" && (
                       <div className="row-actions">
+                        <div
+                          className="note-popover-anchor"
+                          ref={
+                            notePopoverId === slice.id ? notePopoverRef : null
+                          }
+                        >
+                          <button
+                            type="button"
+                            className={
+                              slice.note.trim()
+                                ? "note-btn note-btn-has"
+                                : "note-btn"
+                            }
+                            title={
+                              slice.note.trim() ? "Edit note" : "Add note"
+                            }
+                            onClick={() => openNotePopover(slice)}
+                          >
+                            Note
+                          </button>
+                          {notePopoverId === slice.id && (
+                            <div className="note-popover" role="dialog">
+                              <label className="field">
+                                Note
+                                <input
+                                  autoFocus
+                                  type="text"
+                                  value={noteDraft}
+                                  placeholder="Note for this slice…"
+                                  onChange={(e) =>
+                                    setNoteDraft(e.target.value)
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      void saveNote(
+                                        slice.id,
+                                        noteDraft,
+                                      ).catch((err) =>
+                                        setError(String(err)),
+                                      );
+                                    }
+                                  }}
+                                />
+                              </label>
+                              <div className="row-actions">
+                                <button
+                                  type="button"
+                                  className="btn"
+                                  onClick={() =>
+                                    void saveNote(slice.id, noteDraft).catch(
+                                      (err) => setError(String(err)),
+                                    )
+                                  }
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void saveNote(slice.id, "").catch((err) =>
+                                      setError(String(err)),
+                                    )
+                                  }
+                                >
+                                  Clear
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setNotePopoverId(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                         {slice.end && (
                           <>
                             <button

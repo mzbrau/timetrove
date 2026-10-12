@@ -89,6 +89,7 @@ export function DayTimeline({
     x: number;
     y: number;
     text: string;
+    note?: string;
   } | null>(null);
   const [pointerPos, setPointerPos] = useState<{ x: number; y: number } | null>(
     null,
@@ -624,15 +625,17 @@ export function DayTimeline({
                     width: `${(Math.max(dur, 60_000) / dayLength) * 100}%`,
                     backgroundColor: color,
                   }}
-                  onMouseEnter={(e) =>
+                  onMouseEnter={(e) => {
+                    const note = slice.note.trim();
                     setTooltip({
                       x: e.clientX,
                       y: e.clientY,
                       text: `${task?.name ?? "Task"} · ${formatHm(dur)}${
                         running ? " (running)" : ""
                       }`,
-                    })
-                  }
+                      note: note || undefined,
+                    });
+                  }}
                   onMouseMove={(e) =>
                     setTooltip((t) =>
                       t ? { ...t, x: e.clientX, y: e.clientY } : t,
@@ -731,7 +734,10 @@ export function DayTimeline({
           className="day-timeline-tooltip"
           style={{ left: activeTip.x + 12, top: activeTip.y + 12 }}
         >
-          {activeTip.text}
+          <div className="day-timeline-tooltip-main">{activeTip.text}</div>
+          {"note" in activeTip && activeTip.note ? (
+            <div className="day-timeline-tooltip-note">{activeTip.note}</div>
+          ) : null}
         </div>
       )}
     </div>

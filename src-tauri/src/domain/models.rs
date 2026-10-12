@@ -22,6 +22,7 @@ pub struct TimeSlice {
     pub task_id: String,
     pub start: DateTime<Utc>,
     pub end: Option<DateTime<Utc>>,
+    pub note: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +98,8 @@ pub struct TrackerState {
     pub tracking: bool,
     /// When set and in the future, gap prompts are suppressed while tracking continues.
     pub snooze_until: Option<DateTime<Utc>>,
+    /// Note on the running slice when tracking; empty otherwise.
+    pub current_slice_note: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +142,8 @@ pub struct TimesheetCell {
     pub day: String,
     pub duration_ms: i64,
     pub display: String,
+    /// Combined notes from slices overlapping this task-day (` · ` joined).
+    pub notes: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +174,8 @@ pub struct CreateSliceInput {
     pub task_id: String,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,6 +185,8 @@ pub struct UpdateSliceInput {
     pub task_id: Option<String>,
     pub start: Option<DateTime<Utc>>,
     pub end: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
