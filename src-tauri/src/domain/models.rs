@@ -15,6 +15,9 @@ pub struct Task {
     pub jira_issue_key: String,
     /// Milliseconds successfully posted to Jira for this task's current issue key.
     pub jira_reported_ms: i64,
+    /// In-flight worklog amount (ms) written before POST; reconciled on next sync.
+    #[serde(default)]
+    pub jira_pending_ms: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

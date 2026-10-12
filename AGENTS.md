@@ -81,7 +81,7 @@ Flat list (no projects): `name`, `color`, `description`, `notes`, `archived`, op
 - Prefer unique task names
 - Colors auto-assigned to stay distinct; user-editable
 - Archived: hidden from switcher / start options; still appear on timesheets/history when they have time
-- Optional Jira Cloud link: when sync is enabled in settings, a task may store one issue key; `jira_reported_ms` is the watermark of time already posted as worklogs
+- Optional Jira Cloud link: when sync is enabled in settings, a task may store one issue key; `jira_reported_ms` is the watermark of time already posted as worklogs. Changing or clearing the issue key baselines the watermark at the task’s current total so only future work syncs (avoids double-counting history on the new key).
 
 ### Time slice
 

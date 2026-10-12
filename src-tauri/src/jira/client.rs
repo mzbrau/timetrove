@@ -13,7 +13,7 @@ pub fn normalize_site_url(raw: &str) -> Result<String, String> {
     if trimmed.is_empty() {
         return Err("Jira site URL is required".into());
     }
-    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+    if !trimmed.starts_with("https://") {
         return Err("Jira site URL must start with https://".into());
     }
     Ok(trimmed.to_string())

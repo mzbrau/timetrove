@@ -10,6 +10,8 @@ export interface Task {
   jiraIssueKey: string;
   /** Milliseconds successfully posted to Jira for this task's current issue key. */
   jiraReportedMs: number;
+  /** In-flight worklog ms (internal); not shown in UI. */
+  jiraPendingMs: number;
   createdAt: string;
   updatedAt: string;
 }

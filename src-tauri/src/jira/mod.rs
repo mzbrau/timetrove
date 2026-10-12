@@ -34,5 +34,6 @@ mod tests {
         );
         assert!(normalize_site_url("").is_err());
         assert!(normalize_site_url("example.atlassian.net").is_err());
+        assert!(normalize_site_url("http://example.atlassian.net").is_err());
     }
 }

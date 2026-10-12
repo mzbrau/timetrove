@@ -35,12 +35,38 @@ fn credentials_from_db(db: &Db) -> Result<Option<JiraCredentials>, String> {
     }))
 }
 
+/// Post one task's unreported delta. Caller holds SYNC_LOCK and has reconciled pending.
+fn post_unreported(
+    db: &Db,
+    creds: &JiraCredentials,
+    task_id: &str,
+    issue_key: &str,
+    reported_ms: i64,
+) -> Result<bool, String> {
+    let now = Utc::now();
+    let total = db.task_total_ms(task_id, now)?;
+    let to_post = unreported_ms(total, reported_ms);
+    if to_post <= 0 {
+        return Ok(false);
+    }
+    db.set_jira_pending_ms(task_id, to_post)?;
+    let seconds = to_post / 1000;
+    let started = now - Duration::milliseconds(to_post);
+    match add_worklog(creds, issue_key, seconds, started) {
+        Ok(()) => {
+            db.commit_jira_reported_ms(task_id, to_post)?;
+            Ok(true)
+        }
+        Err(e) => {
+            let _ = db.clear_jira_pending_ms(task_id);
+            Err(e)
+        }
+    }
+}
+
 /// Sync one task's unreported time to Jira. No-op when disabled or nothing due.
 pub fn sync_task(db: &Db, task_id: &str) -> Result<(), String> {
     let _guard = SYNC_LOCK.lock();
-    let Some(creds) = credentials_from_db(db)? else {
-        return Ok(());
-    };
     let task = match db.get_task(task_id)? {
         Some(t) => t,
         None => return Ok(()),
@@ -48,19 +74,18 @@ pub fn sync_task(db: &Db, task_id: &str) -> Result<(), String> {
     if task.jira_issue_key.is_empty() {
         return Ok(());
     }
-    let now = Utc::now();
-    let total = db.task_total_ms(task_id, now)?;
-    let to_post = unreported_ms(total, task.jira_reported_ms);
-    if to_post <= 0 {
+    // At-most-once: apply any leftover pending from a prior POST before computing a new delta.
+    db.reconcile_jira_pending(task_id)?;
+    let Some(creds) = credentials_from_db(db)? else {
         return Ok(());
-    }
-    let seconds = to_post / 1000;
-    let started = now - Duration::milliseconds(to_post);
-    match add_worklog(&creds, &task.jira_issue_key, seconds, started) {
-        Ok(()) => {
-            db.bump_jira_reported_ms(task_id, to_post)?;
-            db.set_jira_last_error(None)?;
-            db.set_jira_last_synced_at(Some(Utc::now()))?;
+    };
+    let task = db.get_task(task_id)?.ok_or_else(|| "Task not found".to_string())?;
+    match post_unreported(db, &creds, task_id, &task.jira_issue_key, task.jira_reported_ms) {
+        Ok(posted) => {
+            if posted {
+                db.set_jira_last_error(None)?;
+                db.set_jira_last_synced_at(Some(Utc::now()))?;
+            }
             Ok(())
         }
         Err(e) => {
@@ -73,38 +98,27 @@ pub fn sync_task(db: &Db, task_id: &str) -> Result<(), String> {
 /// Sync all tasks that have a Jira issue key and unreported time.
 pub fn sync_all_due(db: &Db) -> Result<(), String> {
     let _guard = SYNC_LOCK.lock();
+    let tasks = db.list_tasks_with_jira_key()?;
+    for task in &tasks {
+        let _ = db.reconcile_jira_pending(&task.id);
+    }
     let Some(creds) = credentials_from_db(db)? else {
         return Ok(());
     };
     let tasks = db.list_tasks_with_jira_key()?;
-    let now = Utc::now();
     let mut last_err: Option<String> = None;
     let mut any_ok = false;
     for task in tasks {
-        let total = match db.task_total_ms(&task.id, now) {
-            Ok(ms) => ms,
-            Err(e) => {
-                last_err = Some(e);
-                continue;
-            }
-        };
-        let to_post = unreported_ms(total, task.jira_reported_ms);
-        if to_post <= 0 {
-            continue;
-        }
-        let seconds = to_post / 1000;
-        let started = now - Duration::milliseconds(to_post);
-        match add_worklog(&creds, &task.jira_issue_key, seconds, started) {
-            Ok(()) => {
-                if let Err(e) = db.bump_jira_reported_ms(&task.id, to_post) {
-                    last_err = Some(e);
-                    continue;
-                }
-                any_ok = true;
-            }
-            Err(e) => {
-                last_err = Some(e);
-            }
+        match post_unreported(
+            db,
+            &creds,
+            &task.id,
+            &task.jira_issue_key,
+            task.jira_reported_ms,
+        ) {
+            Ok(true) => any_ok = true,
+            Ok(false) => {}
+            Err(e) => last_err = Some(e),
         }
     }
     if any_ok {

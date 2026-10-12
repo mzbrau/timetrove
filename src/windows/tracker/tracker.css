@@ -57,6 +57,16 @@ body,
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .dot {
+    animation: none;
+  }
+
+  .tracker-stop {
+    transition: none;
+  }
+}
+
 .name {
   font-size: 13px;
   font-weight: 600;
@@ -107,7 +117,8 @@ body,
   transition: opacity 0.15s ease;
 }
 
-.tracker:hover .tracker-stop {
+.tracker:hover .tracker-stop,
+.tracker:focus-within .tracker-stop {
   opacity: 1;
   pointer-events: auto;
 }

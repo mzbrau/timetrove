@@ -57,13 +57,13 @@ impl Db {
             let mut stmt = if include_archived {
                 conn.prepare(
                     "SELECT id, name, color, description, notes, archived, starred,
-                            jira_issue_key, jira_reported_ms, created_at, updated_at
+                            jira_issue_key, jira_reported_ms, jira_pending_ms, created_at, updated_at
                      FROM tasks ORDER BY starred DESC, name COLLATE NOCASE",
                 )
             } else {
                 conn.prepare(
                     "SELECT id, name, color, description, notes, archived, starred,
-                            jira_issue_key, jira_reported_ms, created_at, updated_at
+                            jira_issue_key, jira_reported_ms, jira_pending_ms, created_at, updated_at
                      FROM tasks WHERE archived = 0 ORDER BY starred DESC, name COLLATE NOCASE",
                 )
             }
@@ -81,7 +81,7 @@ impl Db {
         self.with_conn(|conn| {
             conn.query_row(
                 "SELECT id, name, color, description, notes, archived, starred,
-                        jira_issue_key, jira_reported_ms, created_at, updated_at
+                        jira_issue_key, jira_reported_ms, jira_pending_ms, created_at, updated_at
                  FROM tasks WHERE id = ?1",
                 [id],
                 map_task,
@@ -126,14 +126,15 @@ impl Db {
             starred: false,
             jira_issue_key,
             jira_reported_ms: 0,
+            jira_pending_ms: 0,
             created_at: now,
             updated_at: now,
         };
         self.with_conn(|conn| {
             conn.execute(
                 "INSERT INTO tasks (id, name, color, description, notes, archived, starred,
-                                   jira_issue_key, jira_reported_ms, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, ?6, 0, ?7, ?8)",
+                                   jira_issue_key, jira_reported_ms, jira_pending_ms, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, ?6, 0, 0, ?7, ?8)",
                 params![
                     task.id,
                     task.name,
@@ -187,14 +188,16 @@ impl Db {
             let key = normalize_jira_issue_key_input(Some(&raw_key))?;
             if key != task.jira_issue_key {
                 task.jira_issue_key = key;
-                task.jira_reported_ms = 0;
+                // Baseline at current total so only future work syncs (avoids re-posting history).
+                task.jira_reported_ms = self.task_total_ms(&task.id, Utc::now())?;
+                task.jira_pending_ms = 0;
             }
         }
         task.updated_at = Utc::now();
         self.with_conn(|conn| {
             conn.execute(
                 "UPDATE tasks SET name=?2, color=?3, description=?4, notes=?5, archived=?6, starred=?7,
-                        jira_issue_key=?8, jira_reported_ms=?9, updated_at=?10
+                        jira_issue_key=?8, jira_reported_ms=?9, jira_pending_ms=?10, updated_at=?11
                  WHERE id=?1",
                 params![
                     task.id,
@@ -206,6 +209,7 @@ impl Db {
                     task.starred as i32,
                     task.jira_issue_key,
                     task.jira_reported_ms,
+                    task.jira_pending_ms,
                     task.updated_at.to_rfc3339(),
                 ],
             )
@@ -244,14 +248,37 @@ impl Db {
         })
     }
 
-    pub fn bump_jira_reported_ms(&self, task_id: &str, delta_ms: i64) -> Result<(), String> {
+    /// Mark an in-flight worklog amount before POSTing to Jira.
+    pub fn set_jira_pending_ms(&self, task_id: &str, pending_ms: i64) -> Result<(), String> {
+        self.with_conn(|conn| {
+            let changed = conn
+                .execute(
+                    "UPDATE tasks SET jira_pending_ms = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![task_id, pending_ms, Utc::now().to_rfc3339()],
+                )
+                .map_err(|e| e.to_string())?;
+            if changed == 0 {
+                return Err("Task not found".into());
+            }
+            Ok(())
+        })
+    }
+
+    /// Clear in-flight pending without changing the reported watermark (HTTP failure path).
+    pub fn clear_jira_pending_ms(&self, task_id: &str) -> Result<(), String> {
+        self.set_jira_pending_ms(task_id, 0)
+    }
+
+    /// Apply a successful (or reconciled) worklog: bump reported and clear pending atomically.
+    pub fn commit_jira_reported_ms(&self, task_id: &str, delta_ms: i64) -> Result<(), String> {
         if delta_ms <= 0 {
-            return Ok(());
+            return self.clear_jira_pending_ms(task_id);
         }
         self.with_conn(|conn| {
             let changed = conn
                 .execute(
-                    "UPDATE tasks SET jira_reported_ms = jira_reported_ms + ?2, updated_at = ?3
+                    "UPDATE tasks SET jira_reported_ms = jira_reported_ms + ?2,
+                            jira_pending_ms = 0, updated_at = ?3
                      WHERE id = ?1",
                     params![task_id, delta_ms, Utc::now().to_rfc3339()],
                 )
@@ -263,13 +290,27 @@ impl Db {
         })
     }
 
+    /// If a prior POST left pending ms, treat it as reported (at-most-once).
+    pub fn reconcile_jira_pending(&self, task_id: &str) -> Result<i64, String> {
+        let task = match self.get_task(task_id)? {
+            Some(t) => t,
+            None => return Ok(0),
+        };
+        if task.jira_pending_ms <= 0 {
+            return Ok(0);
+        }
+        let pending = task.jira_pending_ms;
+        self.commit_jira_reported_ms(task_id, pending)?;
+        Ok(pending)
+    }
+
     /// Tasks with a non-empty Jira issue key (for periodic sync).
     pub fn list_tasks_with_jira_key(&self) -> Result<Vec<Task>, String> {
         self.with_conn(|conn| {
             let mut stmt = conn
                 .prepare(
                     "SELECT id, name, color, description, notes, archived, starred,
-                            jira_issue_key, jira_reported_ms, created_at, updated_at
+                            jira_issue_key, jira_reported_ms, jira_pending_ms, created_at, updated_at
                      FROM tasks WHERE jira_issue_key != '' ORDER BY name COLLATE NOCASE",
                 )
                 .map_err(|e| e.to_string())?;
@@ -1289,8 +1330,9 @@ fn map_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         starred: row.get::<_, i32>(6)? != 0,
         jira_issue_key: row.get(7)?,
         jira_reported_ms: row.get(8)?,
-        created_at: parse_dt(&row.get::<_, String>(9)?)?,
-        updated_at: parse_dt(&row.get::<_, String>(10)?)?,
+        jira_pending_ms: row.get(9)?,
+        created_at: parse_dt(&row.get::<_, String>(10)?)?,
+        updated_at: parse_dt(&row.get::<_, String>(11)?)?,
     })
 }
 
@@ -1420,11 +1462,17 @@ mod tests {
     }
 
     #[test]
-    fn jira_issue_key_normalizes_and_resets_reported() {
+    fn jira_issue_key_normalizes_and_baselines_reported() {
         let (_dir, db) = test_db();
         let t = sample_task(&db, "JiraLinked");
         assert_eq!(t.jira_issue_key, "");
         assert_eq!(t.jira_reported_ms, 0);
+
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 10, 5, 0).unwrap();
+        db.insert_closed_slice(&t.id, t0, t1, "").unwrap();
+        let total = db.task_total_ms(&t.id, t1).unwrap();
+        assert_eq!(total, 300_000);
 
         let linked = db
             .update_task(UpdateTaskInput {
@@ -1439,11 +1487,13 @@ mod tests {
             })
             .unwrap();
         assert_eq!(linked.jira_issue_key, "THING-123");
+        assert_eq!(linked.jira_reported_ms, total);
+        assert_eq!(linked.jira_pending_ms, 0);
 
-        db.bump_jira_reported_ms(&t.id, 120_000).unwrap();
+        db.set_jira_pending_ms(&t.id, 60_000).unwrap();
         assert_eq!(
-            db.get_task(&t.id).unwrap().unwrap().jira_reported_ms,
-            120_000
+            db.get_task(&t.id).unwrap().unwrap().jira_pending_ms,
+            60_000
         );
 
         let relinked = db
@@ -1459,7 +1509,8 @@ mod tests {
             })
             .unwrap();
         assert_eq!(relinked.jira_issue_key, "OTHER-9");
-        assert_eq!(relinked.jira_reported_ms, 0);
+        assert_eq!(relinked.jira_reported_ms, total);
+        assert_eq!(relinked.jira_pending_ms, 0);
 
         let err = db
             .update_task(UpdateTaskInput {
@@ -1474,6 +1525,30 @@ mod tests {
             })
             .unwrap_err();
         assert!(err.contains("PROJECT-123"));
+    }
+
+    #[test]
+    fn jira_pending_reconcile_bumps_reported() {
+        let (_dir, db) = test_db();
+        let t = sample_task(&db, "Pending");
+        db.update_task(UpdateTaskInput {
+            id: t.id.clone(),
+            name: None,
+            color: None,
+            description: None,
+            notes: None,
+            archived: None,
+            starred: None,
+            jira_issue_key: Some("PROJ-1".into()),
+        })
+        .unwrap();
+        db.set_jira_pending_ms(&t.id, 90_000).unwrap();
+        let applied = db.reconcile_jira_pending(&t.id).unwrap();
+        assert_eq!(applied, 90_000);
+        let task = db.get_task(&t.id).unwrap().unwrap();
+        assert_eq!(task.jira_reported_ms, 90_000);
+        assert_eq!(task.jira_pending_ms, 0);
+        assert_eq!(db.reconcile_jira_pending(&t.id).unwrap(), 0);
     }
 
     #[test]

@@ -222,5 +222,18 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         })?;
     }
 
+    if version < 10 {
+        migrate_tx(conn, |conn| {
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN jira_pending_ms INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (10)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+    }
+
     Ok(())
 }
