@@ -47,13 +47,18 @@ export const api = {
     invoke<Timesheet>("get_timesheet", { weekStart }),
   listSlicesForDay: (day: string) =>
     invoke<TimeSlice[]>("list_slices_for_day", { day }),
-  createSlice: (input: { taskId: string; start: string; end: string }) =>
-    invoke<TimeSlice>("create_slice", { input }),
+  createSlice: (input: {
+    taskId: string;
+    start: string;
+    end: string;
+    note?: string;
+  }) => invoke<TimeSlice>("create_slice", { input }),
   updateSlice: (input: {
     id: string;
     taskId?: string;
     start?: string;
     end?: string;
+    note?: string;
   }) => invoke<TimeSlice>("update_slice", { input }),
   deleteSlice: (id: string) => invoke<void>("delete_slice", { id }),
   splitSlice: (input: { id: string; at: string }) =>

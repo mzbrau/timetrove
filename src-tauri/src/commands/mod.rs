@@ -202,9 +202,10 @@ pub fn create_slice(
     app: AppHandle,
     input: CreateSliceInput,
 ) -> Result<TimeSlice, String> {
+    let note = input.note.as_deref().unwrap_or("");
     let slice = engine
         .db()
-        .insert_closed_slice(&input.task_id, input.start, input.end)?;
+        .insert_closed_slice(&input.task_id, input.start, input.end, note)?;
     let merged = engine.db().merge_adjacent_same_task(&slice.id)?;
     engine.db().coalesce_near_adjacent()?;
     let out = engine
@@ -270,6 +271,7 @@ pub fn move_slice(
         task_id: Some(task_id),
         start: None,
         end: None,
+        note: None,
     })?;
     let merged = engine.db().merge_adjacent_same_task(&slice.id)?;
     engine.db().coalesce_near_adjacent()?;

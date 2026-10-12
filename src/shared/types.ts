@@ -39,6 +39,8 @@ export interface TrackerState {
   tracking: boolean;
   /** ISO datetime when set and in the future; gap prompts suppressed until then. */
   snoozeUntil: string | null;
+  /** Note on the running slice when tracking; empty otherwise. */
+  currentSliceNote: string;
 }
 
 export interface Settings {
@@ -56,6 +58,7 @@ export interface TimeSlice {
   taskId: string;
   start: string;
   end: string | null;
+  note: string;
 }
 
 export interface TimesheetCell {
@@ -63,6 +66,8 @@ export interface TimesheetCell {
   day: string;
   durationMs: number;
   display: string;
+  /** Combined notes for this task-day (` · ` joined). */
+  notes: string;
 }
 
 export interface TimesheetRow {

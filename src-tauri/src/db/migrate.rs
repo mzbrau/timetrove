@@ -136,5 +136,15 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
 
+    if version < 7 {
+        conn.execute(
+            "ALTER TABLE time_slices ADD COLUMN note TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (7)", [])
+            .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }

@@ -168,6 +168,14 @@ impl Engine {
                 (None, prev, Some(dur), Some(gap_band(dur).to_string()), false)
             }
         };
+        let current_slice_note = if tracking {
+            self.db
+                .running_slice()?
+                .map(|s| s.note)
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         Ok(TrackerState {
             phase,
             current_task,
@@ -181,6 +189,7 @@ impl Engine {
             db_error: self.db_error.lock().clone(),
             tracking,
             snooze_until,
+            current_slice_note,
         })
     }
 
@@ -215,7 +224,7 @@ impl Engine {
         };
         let slice = self
             .db
-            .replace_running_slice(old_id.as_deref(), task_id, now)?;
+            .replace_running_slice(old_id.as_deref(), task_id, now, "")?;
         self.db.coalesce_near_adjacent()?;
         *self.phase.lock() = EnginePhase::Tracking {
             task_id: task_id.to_string(),
@@ -434,7 +443,8 @@ impl Engine {
         let (gap_start, prev_id) = self.peek_gap()?;
         let now = Utc::now();
         if now > gap_start {
-            self.db.insert_closed_slice(&prev_id, gap_start, now)?;
+            self.db
+                .insert_closed_slice(&prev_id, gap_start, now, "")?;
             self.db.coalesce_near_adjacent()?;
         }
         self.clear_gap_phase();
@@ -445,7 +455,7 @@ impl Engine {
         let (gap_start, _) = self.peek_gap()?;
         let now = Utc::now();
         if now > gap_start {
-            self.db.insert_closed_slice(task_id, gap_start, now)?;
+            self.db.insert_closed_slice(task_id, gap_start, now, "")?;
             self.db.coalesce_near_adjacent()?;
         }
         self.clear_gap_phase();
@@ -502,10 +512,13 @@ impl Engine {
         if slice.start >= midnight {
             return Ok(());
         }
-        // Close at midnight, reopen atomically
-        let new_slice = self
-            .db
-            .replace_running_slice(Some(&slice_id), &task_id, midnight)?;
+        // Close at midnight, reopen atomically; copy note onto the new day slice.
+        let new_slice = self.db.replace_running_slice(
+            Some(&slice_id),
+            &task_id,
+            midnight,
+            &slice.note,
+        )?;
         *self.phase.lock() = EnginePhase::Tracking {
             task_id,
             slice_id: new_slice.id,
@@ -546,12 +559,20 @@ impl Engine {
                 let day = parse_day(day_str)?;
                 let (d0, d1) = local_day_bounds(day);
                 let mut ms = 0i64;
+                let mut day_notes: Vec<&str> = Vec::new();
                 for s in &slices {
                     if s.task_id != tid {
                         continue;
                     }
                     let end = s.end.unwrap_or(now);
-                    ms += overlap_ms(s.start, end, d0, d1);
+                    let overlap = overlap_ms(s.start, end, d0, d1);
+                    if overlap <= 0 {
+                        continue;
+                    }
+                    ms += overlap;
+                    if !s.note.trim().is_empty() {
+                        day_notes.push(s.note.as_str());
+                    }
                 }
                 row_total += ms;
                 day_totals[i] += ms;
@@ -560,6 +581,7 @@ impl Engine {
                     day: day_str.clone(),
                     duration_ms: ms,
                     display: format_hhmm(ms),
+                    notes: combine_notes(day_notes),
                 });
             }
             rows.push(TimesheetRow {
@@ -920,7 +942,7 @@ mod tests {
         let start = Utc::now() - Duration::hours(1);
         let slice = eng
             .db()
-            .replace_running_slice(None, &prev.id, start)
+            .replace_running_slice(None, &prev.id, start, "")
             .unwrap();
         *eng.phase.lock() = EnginePhase::Tracking {
             task_id: prev.id.clone(),
@@ -1035,7 +1057,7 @@ mod tests {
         // Plant an overlapping closed slice so attribution insert fails.
         let mid = gap_start + Duration::minutes(5);
         eng.db()
-            .insert_closed_slice(&task.id, mid, mid + Duration::minutes(10))
+            .insert_closed_slice(&task.id, mid, mid + Duration::minutes(10), "")
             .unwrap();
 
         let err = eng.resolve_gap_previous().unwrap_err();
@@ -1053,7 +1075,7 @@ mod tests {
             let (_dir, db) = test_db();
             let task = make_task(&db, "Stale");
             let start = Utc::now() - Duration::hours(2);
-            db.replace_running_slice(None, &task.id, start).unwrap();
+            db.replace_running_slice(None, &task.id, start, "").unwrap();
             let eng = Engine::new(db);
             assert!(matches!(
                 eng.phase.lock().clone(),
@@ -1065,7 +1087,7 @@ mod tests {
             let (_dir, db) = test_db();
             let task = make_task(&db, "Fresh");
             let start = Utc::now() - Duration::minutes(1);
-            db.replace_running_slice(None, &task.id, start).unwrap();
+            db.replace_running_slice(None, &task.id, start, "").unwrap();
             let eng = Engine::new(db);
             assert!(matches!(
                 eng.phase.lock().clone(),
@@ -1138,7 +1160,7 @@ mod tests {
         let task = make_task(&db, "Quit");
         let start = Utc::now() - Duration::hours(2);
         let checkpoint = Utc::now() - Duration::minutes(30);
-        let slice = db.replace_running_slice(None, &task.id, start).unwrap();
+        let slice = db.replace_running_slice(None, &task.id, start, "").unwrap();
         db.set_last_good_at(Some(checkpoint)).unwrap();
 
         let eng = Engine::new(db);
@@ -1163,7 +1185,7 @@ mod tests {
         let task = make_task(&db, "Resume");
         let start = Utc::now() - Duration::hours(2);
         let checkpoint = Utc::now() - Duration::minutes(2);
-        db.replace_running_slice(None, &task.id, start).unwrap();
+        db.replace_running_slice(None, &task.id, start, "").unwrap();
         db.set_last_good_at(Some(checkpoint)).unwrap();
 
         let eng = Engine::new(db);
@@ -1184,7 +1206,7 @@ mod tests {
         let before = midnight - Duration::hours(2);
         let slice = eng
             .db()
-            .replace_running_slice(None, &task.id, before)
+            .replace_running_slice(None, &task.id, before, "overnight")
             .unwrap();
         *eng.phase.lock() = EnginePhase::Tracking {
             task_id: task.id.clone(),
@@ -1193,6 +1215,7 @@ mod tests {
         eng.midnight_split().unwrap();
         let old = eng.db().get_slice(&slice.id).unwrap().unwrap();
         assert_eq!(old.end, Some(midnight));
+        assert_eq!(old.note, "overnight");
         let phase = eng.phase.lock().clone();
         match phase {
             EnginePhase::Tracking { slice_id, .. } => {
@@ -1200,6 +1223,7 @@ mod tests {
                 let neu = eng.db().get_slice(&slice_id).unwrap().unwrap();
                 assert_eq!(neu.start, midnight);
                 assert!(neu.end.is_none());
+                assert_eq!(neu.note, "overnight");
             }
             other => panic!("unexpected phase {other:?}"),
         }
@@ -1220,14 +1244,61 @@ mod tests {
         let monday = week_start_monday(Local::now().date_naive());
         let (d0, _) = local_day_bounds(monday);
         eng.db()
-            .insert_closed_slice(&task.id, d0 + Duration::hours(9), d0 + Duration::hours(11))
+            .insert_closed_slice(
+                &task.id,
+                d0 + Duration::hours(9),
+                d0 + Duration::hours(10),
+                "morning",
+            )
+            .unwrap();
+        eng.db()
+            .insert_closed_slice(
+                &task.id,
+                d0 + Duration::hours(10),
+                d0 + Duration::hours(11),
+                "afternoon",
+            )
             .unwrap();
         let sheet = eng.timesheet(&format_day(monday)).unwrap();
         assert_eq!(sheet.week_start, format_day(monday));
         assert_eq!(sheet.rows.len(), 1);
         assert_eq!(sheet.rows[0].total_ms, 2 * 3_600_000);
+        let monday_cell = sheet.rows[0]
+            .cells
+            .iter()
+            .find(|c| c.day == format_day(monday))
+            .unwrap();
+        assert_eq!(monday_cell.notes, "morning · afternoon");
         assert!(sheet.csv.contains("Say \"\"hi\"\""));
+        assert!(!sheet.csv.contains("morning"));
         assert_eq!(sheet.grand_total_ms, 2 * 3_600_000);
+    }
+
+    #[test]
+    fn snapshot_exposes_current_slice_note() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "NoteSnap");
+        eng.start_task(&task.id).unwrap();
+        let phase = eng.phase.lock().clone();
+        let EnginePhase::Tracking { slice_id, .. } = phase else {
+            panic!("expected tracking");
+        };
+        eng.db()
+            .update_slice(UpdateSliceInput {
+                id: slice_id,
+                task_id: None,
+                start: None,
+                end: None,
+                note: Some("from switcher".into()),
+            })
+            .unwrap();
+        let snap = eng.snapshot().unwrap();
+        assert!(snap.tracking);
+        assert_eq!(snap.current_slice_note, "from switcher");
+        eng.stop().unwrap();
+        let stopped = eng.snapshot().unwrap();
+        assert!(!stopped.tracking);
+        assert_eq!(stopped.current_slice_note, "");
     }
 
     #[test]
@@ -1375,7 +1446,7 @@ mod tests {
         let (_dir, db) = test_db();
         let task = make_task(&db, "SnoozeStartup");
         let start = Utc::now() - Duration::hours(2);
-        db.replace_running_slice(None, &task.id, start).unwrap();
+        db.replace_running_slice(None, &task.id, start, "").unwrap();
         db.set_last_good_at(Some(Utc::now() - Duration::hours(1)))
             .unwrap();
         db.set_snooze_until(Some(Utc::now() + Duration::hours(1)))

@@ -150,11 +150,32 @@ export function TimesheetPanel() {
                     {row.task.name}
                   </div>
                 </td>
-                {row.cells.map((c) => (
-                  <td key={c.day} className="mono">
-                    {c.durationMs > 0 ? c.display : "—"}
-                  </td>
-                ))}
+                {row.cells.map((c) => {
+                  const hasNotes = Boolean(c.notes?.trim());
+                  return (
+                    <td
+                      key={c.day}
+                      className={`mono timesheet-day-cell${
+                        hasNotes ? " has-notes" : ""
+                      }`}
+                      title={hasNotes ? c.notes : undefined}
+                    >
+                      {c.durationMs > 0 ? (
+                        <>
+                          {c.display}
+                          {hasNotes && (
+                            <span
+                              className="timesheet-note-mark"
+                              aria-hidden
+                            />
+                          )}
+                        </>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  );
+                })}
                 <td className="mono total-cell">{row.totalDisplay}</td>
               </tr>
             ))}

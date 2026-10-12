@@ -16,6 +16,44 @@ body,
   flex-direction: column;
 }
 
+.switcher-modes {
+  display: flex;
+  gap: 0;
+  padding: var(--s2) var(--s2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.switcher-modes button {
+  flex: 1;
+  border: 1px solid var(--line);
+  background: var(--control-bg);
+  color: var(--muted);
+  padding: var(--s2) var(--s3);
+  font-size: 0.85rem;
+  border-radius: 0;
+}
+
+.switcher-modes button:first-child {
+  border-radius: 8px 0 0 8px;
+}
+
+.switcher-modes button:last-child {
+  border-radius: 0 8px 8px 0;
+  margin-left: -1px;
+}
+
+.switcher-modes button:only-child {
+  border-radius: 8px;
+  margin-left: 0;
+}
+
+.switcher-modes button.active {
+  background: var(--accent-soft);
+  color: var(--ink);
+  border-color: rgba(61, 155, 143, 0.45);
+  z-index: 1;
+}
+
 .switcher input {
   width: 100%;
   border: none;
