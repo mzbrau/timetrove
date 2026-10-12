@@ -65,6 +65,11 @@ export const api = {
     invoke<void>("import_database", { source }),
   openSwitcher: () => invoke<void>("open_switcher"),
   closeSwitcher: () => invoke<void>("close_switcher"),
+  startSnooze: (until: string) =>
+    invoke<TrackerState>("start_snooze", { until }),
+  clearSnooze: () => invoke<TrackerState>("clear_snooze"),
+  openSnoozePicker: () => invoke<void>("open_snooze_picker"),
+  closeSnoozePicker: () => invoke<void>("close_snooze_picker"),
   openMainWindow: () => invoke<void>("open_main_window"),
   setTrackerVisible: (visible: boolean) =>
     invoke<void>("set_tracker_visible", { visible }),

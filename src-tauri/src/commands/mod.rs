@@ -1,9 +1,10 @@
 use crate::domain::*;
 use crate::engine::{
-    apply_tracker_always_on_top, ensure_tracker_default_position, hide_gap_window, hide_switcher,
-    set_tracker_visible_persisted, show_main, show_switcher, Engine,
+    apply_tracker_always_on_top, ensure_tracker_default_position, hide_gap_window,
+    hide_snooze_picker, hide_switcher, set_tracker_visible_persisted, show_main,
+    show_snooze_picker, show_switcher, Engine,
 };
-use chrono::Duration;
+use chrono::{DateTime, Duration, Utc};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
@@ -315,6 +316,39 @@ pub fn open_switcher(app: AppHandle) {
 #[tauri::command]
 pub fn close_switcher(app: AppHandle) {
     hide_switcher(&app);
+}
+
+#[tauri::command]
+pub fn start_snooze(
+    engine: State<'_, Arc<Engine>>,
+    app: AppHandle,
+    until: DateTime<Utc>,
+) -> Result<TrackerState, String> {
+    let state = engine.start_snooze(until)?;
+    hide_snooze_picker(&app);
+    engine.emit_state(&app);
+    Ok(state)
+}
+
+#[tauri::command]
+pub fn clear_snooze(
+    engine: State<'_, Arc<Engine>>,
+    app: AppHandle,
+) -> Result<TrackerState, String> {
+    let state = engine.clear_snooze()?;
+    hide_snooze_picker(&app);
+    engine.emit_state(&app);
+    Ok(state)
+}
+
+#[tauri::command]
+pub fn open_snooze_picker(app: AppHandle) {
+    show_snooze_picker(&app);
+}
+
+#[tauri::command]
+pub fn close_snooze_picker(app: AppHandle) {
+    hide_snooze_picker(&app);
 }
 
 #[tauri::command]

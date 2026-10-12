@@ -95,6 +95,8 @@ pub struct TrackerState {
     pub gap_band: Option<String>,
     pub db_error: Option<String>,
     pub tracking: bool,
+    /// When set and in the future, gap prompts are suppressed while tracking continues.
+    pub snooze_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

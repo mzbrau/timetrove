@@ -10,8 +10,9 @@ mod test_support;
 use chrome::{refresh_tray_tooltip, setup_tray};
 use db::open_db;
 use engine::{
-    apply_tracker_always_on_top, ensure_tracker_default_position, hide_gap_window, hide_switcher,
-    set_tracker_visible_persisted, show_main, show_switcher, Engine,
+    apply_tracker_always_on_top, ensure_tracker_default_position, hide_gap_window,
+    hide_snooze_picker, hide_switcher, set_tracker_visible_persisted, show_main, show_switcher,
+    Engine,
 };
 use std::time::Duration;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
@@ -28,9 +29,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(
             WindowStateBuilder::new()
-                // Never restore visibility — gap/switcher are ephemeral overlays
+                // Never restore visibility — gap/switcher/snooze are ephemeral overlays
                 .with_state_flags(StateFlags::all() - StateFlags::VISIBLE)
-                .with_denylist(&["gap", "switcher"])
+                .with_denylist(&["gap", "switcher", "snooze"])
                 .build(),
         )
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -60,11 +61,22 @@ pub fn run() {
         // Overlays must start hidden; window-state must not reopen them.
         hide_gap_window(app.handle());
         hide_switcher(app.handle());
+        hide_snooze_picker(app.handle());
 
         if let Some(gap) = app.get_webview_window("gap") {
             gap.on_window_event(|event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                }
+            });
+        }
+
+        if let Some(snooze) = app.get_webview_window("snooze") {
+            let app_snooze = app.handle().clone();
+            snooze.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    hide_snooze_picker(&app_snooze);
                 }
             });
         }
@@ -196,6 +208,10 @@ pub fn run() {
             commands::import_database,
             commands::open_switcher,
             commands::close_switcher,
+            commands::start_snooze,
+            commands::clear_snooze,
+            commands::open_snooze_picker,
+            commands::close_snooze_picker,
             commands::open_main_window,
             commands::set_tracker_visible,
             commands::reset_tracker_position,

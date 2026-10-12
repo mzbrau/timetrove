@@ -1,0 +1,107 @@
+html,
+body,
+#root {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+.snooze {
+  height: 100vh;
+  padding: var(--s4);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  box-sizing: border-box;
+}
+
+.snooze h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.snooze .hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.mode-tabs {
+  display: flex;
+  gap: var(--s2);
+}
+
+.mode-tabs button {
+  flex: 1;
+  border: 1px solid var(--line);
+  background: var(--control-bg);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: var(--s2) var(--s3);
+}
+
+.mode-tabs button.active {
+  background: var(--accent-soft);
+  border-color: rgba(61, 155, 143, 0.35);
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s3);
+}
+
+.fields.single {
+  grid-template-columns: 1fr;
+}
+
+.fields label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.fields input {
+  border: 1px solid var(--line);
+  background: var(--control-bg);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: var(--s2) var(--s3);
+  font-size: 1rem;
+}
+
+.snooze .error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.footer {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+}
+
+.footer button {
+  border: 1px solid var(--line);
+  background: var(--control-bg);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: var(--s2) var(--s4);
+}
+
+.footer button.primary {
+  background: var(--accent-soft);
+  border-color: rgba(61, 155, 143, 0.35);
+}
+
+.footer button.ghost {
+  background: transparent;
+}

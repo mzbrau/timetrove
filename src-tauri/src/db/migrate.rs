@@ -129,5 +129,12 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
 
+    // v6: snooze_until is an optional settings key (absent = not snoozing),
+    // same pattern as last_good_at — no default row required.
+    if version < 6 {
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (6)", [])
+            .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }

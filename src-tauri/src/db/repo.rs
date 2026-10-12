@@ -927,6 +927,48 @@ impl Db {
         })
     }
 
+    /// Persisted snooze deadline (not part of user-facing Settings).
+    pub fn get_snooze_until(&self) -> Result<Option<DateTime<Utc>>, String> {
+        self.with_conn(|conn| {
+            let value: Option<String> = conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key = 'snooze_until'",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            match value {
+                Some(s) if !s.is_empty() => {
+                    let dt = DateTime::parse_from_rfc3339(&s)
+                        .map_err(|e| e.to_string())?
+                        .with_timezone(&Utc);
+                    Ok(Some(dt))
+                }
+                _ => Ok(None),
+            }
+        })
+    }
+
+    pub fn set_snooze_until(&self, until: Option<DateTime<Utc>>) -> Result<(), String> {
+        self.with_conn(|conn| match until {
+            Some(dt) => {
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('snooze_until', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![dt.to_rfc3339()],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+            None => {
+                conn.execute("DELETE FROM settings WHERE key = 'snooze_until'", [])
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        })
+    }
+
     pub fn daily_total_ms(&self, now: DateTime<Utc>) -> Result<i64, String> {
         let day = now.with_timezone(&chrono::Local).date_naive();
         let (start, end) = local_day_bounds(day);
@@ -1434,6 +1476,18 @@ mod tests {
         assert_eq!(loaded.timestamp(), at.timestamp());
         db.set_last_good_at(None).unwrap();
         assert!(db.get_last_good_at().unwrap().is_none());
+    }
+
+    #[test]
+    fn snooze_until_round_trip() {
+        let (_dir, db) = test_db();
+        assert!(db.get_snooze_until().unwrap().is_none());
+        let until = Utc::now() + Duration::hours(1);
+        db.set_snooze_until(Some(until)).unwrap();
+        let loaded = db.get_snooze_until().unwrap().unwrap();
+        assert_eq!(loaded.timestamp(), until.timestamp());
+        db.set_snooze_until(None).unwrap();
+        assert!(db.get_snooze_until().unwrap().is_none());
     }
 
     #[test]
