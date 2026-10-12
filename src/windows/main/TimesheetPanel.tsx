@@ -5,14 +5,20 @@ import {
   isoWeekParts,
   mondayOfIsoWeek,
 } from "../../shared/datetime";
-import type { Timesheet } from "../../shared/types";
+import type { Task, TimeSlice, Timesheet } from "../../shared/types";
+import { DayTimeline } from "./DayTimeline";
 
 export function TimesheetPanel() {
   const [weekStart, setWeekStart] = useState<string>("");
   const [sheet, setSheet] = useState<Timesheet | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [slicesByDay, setSlicesByDay] = useState<Record<string, TimeSlice[]>>(
+    {},
+  );
   const [error, setError] = useState<string | null>(null);
   const [weekInput, setWeekInput] = useState("");
   const [yearInput, setYearInput] = useState("");
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const load = async (start?: string) => {
     const ws = start ?? (await api.currentWeekStart());
@@ -20,11 +26,46 @@ export function TimesheetPanel() {
     const parts = isoWeekParts(ws);
     setWeekInput(String(parts.week));
     setYearInput(String(parts.year));
-    setSheet(await api.getTimesheet(ws));
+    const nextSheet = await api.getTimesheet(ws);
+    setSheet(nextSheet);
+    const [taskList, ...daySlices] = await Promise.all([
+      api.listTasks(true),
+      ...nextSheet.days.map((day) => api.listSlicesForDay(day)),
+    ]);
+    setTasks(taskList);
+    const byDay: Record<string, TimeSlice[]> = {};
+    nextSheet.days.forEach((day, i) => {
+      byDay[day] = daySlices[i] ?? [];
+    });
+    setSlicesByDay(byDay);
   };
 
   useEffect(() => {
     load().catch((e) => setError(String(e)));
+  }, []);
+
+  useEffect(() => {
+    const tick = () => setNowMs(Date.now());
+    tick();
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const syncInterval = () => {
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+      if (document.visibilityState === "visible") {
+        tick();
+        interval = setInterval(tick, 60_000);
+      }
+    };
+
+    syncInterval();
+    document.addEventListener("visibilitychange", syncInterval);
+    return () => {
+      if (interval) clearInterval(interval);
+      document.removeEventListener("visibilitychange", syncInterval);
+    };
   }, []);
 
   const jumpToWeekYear = async () => {
@@ -128,70 +169,90 @@ export function TimesheetPanel() {
       </div>
       {error && <p className="err">{error}</p>}
       {sheet && (
-        <table className="timesheet-table">
-          <thead>
-            <tr>
-              <th>Task</th>
-              {sheet.days.map((d) => (
-                <th key={d}>{dayHeaderLabel(d)}</th>
-              ))}
-              <th className="total-cell">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sheet.rows.map((row) => (
-              <tr key={row.task.id}>
-                <td>
-                  <div className="task-cell">
-                    <span
-                      className="dot"
-                      style={{ background: row.task.color }}
-                    />
-                    {row.task.name}
-                  </div>
-                </td>
-                {row.cells.map((c) => {
-                  const hasNotes = Boolean(c.notes?.trim());
-                  return (
-                    <td
-                      key={c.day}
-                      className={`mono timesheet-day-cell${
-                        hasNotes ? " has-notes" : ""
-                      }`}
-                      title={hasNotes ? c.notes : undefined}
-                    >
-                      {c.durationMs > 0 ? (
-                        <>
-                          {c.display}
-                          {hasNotes && (
-                            <span
-                              className="timesheet-note-mark"
-                              aria-hidden
-                            />
-                          )}
-                        </>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                  );
-                })}
-                <td className="mono total-cell">{row.totalDisplay}</td>
+        <>
+          <table className="timesheet-table">
+            <thead>
+              <tr>
+                <th>Task</th>
+                {sheet.days.map((d) => (
+                  <th key={d}>{dayHeaderLabel(d)}</th>
+                ))}
+                <th className="total-cell">Total</th>
               </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr>
-              <th className="total-cell">Total</th>
-              {sheet.dayTotalsDisplay.map((d, i) => (
-                <th key={sheet.days[i]} className="mono total-cell">
-                  {d}
-                </th>
+            </thead>
+            <tbody>
+              {sheet.rows.map((row) => (
+                <tr key={row.task.id}>
+                  <td>
+                    <div className="task-cell">
+                      <span
+                        className="dot"
+                        style={{ background: row.task.color }}
+                      />
+                      {row.task.name}
+                    </div>
+                  </td>
+                  {row.cells.map((c) => {
+                    const hasNotes = Boolean(c.notes?.trim());
+                    return (
+                      <td
+                        key={c.day}
+                        className={`mono timesheet-day-cell${
+                          hasNotes ? " has-notes" : ""
+                        }`}
+                        title={hasNotes ? c.notes : undefined}
+                      >
+                        {c.durationMs > 0 ? (
+                          <>
+                            {c.display}
+                            {hasNotes && (
+                              <span
+                                className="timesheet-note-mark"
+                                aria-hidden
+                              />
+                            )}
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className="mono total-cell">{row.totalDisplay}</td>
+                </tr>
               ))}
-              <th className="mono total-cell">{sheet.grandTotalDisplay}</th>
-            </tr>
-          </tfoot>
-        </table>
+            </tbody>
+            <tfoot>
+              <tr>
+                <th className="total-cell">Total</th>
+                {sheet.dayTotalsDisplay.map((d, i) => (
+                  <th key={sheet.days[i]} className="mono total-cell">
+                    {d}
+                  </th>
+                ))}
+                <th className="mono total-cell">{sheet.grandTotalDisplay}</th>
+              </tr>
+            </tfoot>
+          </table>
+
+          <section className="timesheet-week-timelines">
+            <h3>Week timeline</h3>
+            {sheet.days.map((day) => (
+              <div key={day} className="timesheet-day-timeline-row">
+                <div className="timesheet-day-timeline-label">
+                  {dayHeaderLabel(day)}
+                </div>
+                <DayTimeline
+                  readOnly
+                  day={day}
+                  slices={slicesByDay[day] ?? []}
+                  tasks={tasks}
+                  nowMs={nowMs}
+                />
+              </div>
+            ))}
+          </section>
+        </>
       )}
     </div>
   );

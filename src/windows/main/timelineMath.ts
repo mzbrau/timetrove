@@ -24,6 +24,29 @@ export function msInDay(day: string, iso: string): number {
   return Math.max(0, Math.min(duration, offset));
 }
 
+/**
+ * Clip a slice to a local calendar day for display.
+ * Open slices use `nowMs` as end so they do not span into future days.
+ * Returns null when there is no overlap with the day.
+ */
+export function clipSliceToDay(
+  day: string,
+  sliceStartIso: string,
+  sliceEndIso: string | null,
+  nowMs: number,
+): { startMs: number; endMs: number } | null {
+  const dayStart = localDayStart(day).getTime();
+  const dayLength = dayDurationMs(day);
+  const dayEnd = dayStart + dayLength;
+  const sliceStart = new Date(sliceStartIso).getTime();
+  const effectiveEnd = sliceEndIso ? new Date(sliceEndIso).getTime() : nowMs;
+  if (effectiveEnd <= dayStart || sliceStart >= dayEnd) return null;
+  const startMs = Math.max(0, sliceStart - dayStart);
+  const endMs = Math.min(dayLength, effectiveEnd - dayStart);
+  if (endMs <= startMs) return null;
+  return { startMs, endMs };
+}
+
 export function dayMsToIso(day: string, ms: number): string {
   const duration = dayDurationMs(day);
   const clamped = Math.max(0, Math.min(duration, ms));

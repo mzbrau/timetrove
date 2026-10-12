@@ -15,8 +15,8 @@
       {
         "label": "main",
         "title": "TimeTrove",
-        "width": 1100,
-        "height": 740,
+        "width": 1200,
+        "height": 820,
         "visible": false,
         "backgroundColor": [18, 22, 26, 255]
       },

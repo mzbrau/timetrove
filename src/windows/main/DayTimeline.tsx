@@ -12,6 +12,7 @@ import type { Task, TimeSlice } from "../../shared/types";
 import { TaskPicker } from "./TaskPicker";
 import {
   bookedExtent,
+  clipSliceToDay,
   dayDurationMs,
   dayMsToIso,
   fitScrollRatio,
@@ -19,8 +20,6 @@ import {
   formatDayClock,
   gapsFromRanges,
   hourLabels,
-  localDayStart,
-  msInDay,
   nextZoomLevel,
   prevZoomLevel,
   resizeNeighborBounds,
@@ -58,8 +57,9 @@ type Props = {
   slices: TimeSlice[];
   tasks: Task[];
   nowMs: number;
-  onChanged: () => Promise<void>;
-  onError: (message: string) => void;
+  readOnly?: boolean;
+  onChanged?: () => Promise<void>;
+  onError?: (message: string) => void;
 };
 
 function taskById(tasks: Task[], id: string) {
@@ -71,6 +71,7 @@ export function DayTimeline({
   slices,
   tasks,
   nowMs,
+  readOnly = false,
   onChanged,
   onError,
 }: Props) {
@@ -109,17 +110,14 @@ export function DayTimeline({
   stepMinsRef.current = stepMins;
 
   const ranges = useMemo(() => {
-    return slices.map((slice) => {
-      const startMs = msInDay(day, slice.start);
-      const endMs = slice.end
-        ? msInDay(day, slice.end)
-        : Math.max(
-            startMs,
-            Math.min(dayLength, nowMs - localDayStart(day).getTime()),
-          );
-      return { slice, startMs, endMs };
-    });
-  }, [slices, day, nowMs, dayLength]);
+    const out: { slice: TimeSlice; startMs: number; endMs: number }[] = [];
+    for (const slice of slices) {
+      const clipped = clipSliceToDay(day, slice.start, slice.end, nowMs);
+      if (!clipped) continue;
+      out.push({ slice, startMs: clipped.startMs, endMs: clipped.endMs });
+    }
+    return out;
+  }, [slices, day, nowMs]);
   rangesRef.current = ranges;
 
   const clampResizePreview = (
@@ -255,7 +253,7 @@ export function DayTimeline({
   }, [zoom]);
 
   useEffect(() => {
-    if (!drag) return;
+    if (readOnly || !drag) return;
 
     const onMove = (e: PointerEvent) => {
       const current = dragRef.current;
@@ -298,9 +296,10 @@ export function DayTimeline({
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-  }, [drag, day, activeTasks]);
+  }, [drag, day, activeTasks, readOnly]);
 
   const finishDrag = async (current: DragState) => {
+    if (readOnly) return;
     const step = stepMinsRef.current;
     if (current.kind === "resize") {
       const startMs =
@@ -335,9 +334,9 @@ export function DayTimeline({
           start: dayMsToIso(day, snappedStart),
           end: dayMsToIso(day, snappedEnd),
         });
-        await onChanged();
+        await onChanged?.();
       } catch (err) {
-        onError(String(err));
+        onError?.(String(err));
       }
       return;
     }
@@ -371,6 +370,7 @@ export function DayTimeline({
     startMs: number,
     endMs: number,
   ) => {
+    if (readOnly) return;
     e.preventDefault();
     e.stopPropagation();
     setTooltip(null);
@@ -398,7 +398,7 @@ export function DayTimeline({
   };
 
   const beginGap = (e: ReactPointerEvent, gapStart: number, gapEnd: number) => {
-    if (pending) return;
+    if (readOnly || pending) return;
     e.preventDefault();
     const ms = clientXToMs(e.clientX);
     const clamped = Math.max(gapStart, Math.min(gapEnd, ms));
@@ -413,7 +413,7 @@ export function DayTimeline({
   };
 
   const openGapPending = (gapStart: number, gapEnd: number) => {
-    if (pending || drag) return;
+    if (readOnly || pending || drag) return;
     setPending({
       startMs: gapStart,
       endMs: gapEnd,
@@ -428,6 +428,7 @@ export function DayTimeline({
     endMs: number,
     direction: -1 | 1,
   ) => {
+    if (readOnly) return;
     const step = stepMinsRef.current * 60_000;
     const { minBound, maxBound } = resizeNeighborBounds(
       rangesRef.current.map((r) => ({
@@ -466,9 +467,9 @@ export function DayTimeline({
         start: dayMsToIso(day, nextStart),
         end: dayMsToIso(day, nextEnd),
       });
-      await onChanged();
+      await onChanged?.();
     } catch (err) {
-      onError(String(err));
+      onError?.(String(err));
     }
   };
 
@@ -479,6 +480,7 @@ export function DayTimeline({
     startMs: number,
     endMs: number,
   ) => {
+    if (readOnly) return;
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
     void nudgeEdge(
@@ -536,43 +538,48 @@ export function DayTimeline({
         }
       : null;
 
-  const activeTip = resizeTooltip ?? tooltip;
+  const activeTip = readOnly ? tooltip : resizeTooltip ?? tooltip;
+  const displayZoom = readOnly ? 1 : zoom;
 
   return (
-    <div className="day-timeline">
-      <div className="day-timeline-toolbar">
-        <span className="muted">Day timeline</span>
-        <div className="row-actions">
-          <button
-            type="button"
-            onClick={zoomOut}
-            disabled={prevZoomLevel(zoom) == null}
-          >
-            −
-          </button>
-          <span className="mono">{zoomLabel}×</span>
-          <button
-            type="button"
-            onClick={zoomIn}
-            disabled={nextZoomLevel(zoom) == null}
-          >
-            +
-          </button>
-          <button
-            type="button"
-            onClick={fitToBooked}
-            disabled={!extent}
-            title="Zoom to booked time"
-          >
-            Fit
-          </button>
+    <div
+      className={`day-timeline${readOnly ? " day-timeline--readonly" : ""}`}
+    >
+      {!readOnly && (
+        <div className="day-timeline-toolbar">
+          <span className="muted">Day timeline</span>
+          <div className="row-actions">
+            <button
+              type="button"
+              onClick={zoomOut}
+              disabled={prevZoomLevel(zoom) == null}
+            >
+              −
+            </button>
+            <span className="mono">{zoomLabel}×</span>
+            <button
+              type="button"
+              onClick={zoomIn}
+              disabled={nextZoomLevel(zoom) == null}
+            >
+              +
+            </button>
+            <button
+              type="button"
+              onClick={fitToBooked}
+              disabled={!extent}
+              title="Zoom to booked time"
+            >
+              Fit
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       <div ref={scrollRef} className="day-timeline-scroll">
         <div
           className="day-timeline-inner"
-          style={{ width: `${zoom * 100}%` }}
+          style={{ width: `${displayZoom * 100}%` }}
         >
           <div className="day-timeline-labels">
             {labels.map((h) => (
@@ -586,30 +593,31 @@ export function DayTimeline({
             ))}
           </div>
           <div ref={trackRef} className="day-timeline-track">
-            {gaps.map((gap) => (
-              <button
-                key={`gap-${gap.startMs}-${gap.endMs}`}
-                type="button"
-                className="day-timeline-gap"
-                style={{
-                  left: `${(gap.startMs / dayLength) * 100}%`,
-                  width: `${((gap.endMs - gap.startMs) / dayLength) * 100}%`,
-                }}
-                aria-label="Empty time"
-                onPointerDown={(e) => {
-                  gapPointerRef.current = true;
-                  beginGap(e, gap.startMs, gap.endMs);
-                }}
-                onClick={() => {
-                  // Pointer path already handled via drag finish; click is for keyboard.
-                  if (gapPointerRef.current) {
-                    gapPointerRef.current = false;
-                    return;
-                  }
-                  openGapPending(gap.startMs, gap.endMs);
-                }}
-              />
-            ))}
+            {!readOnly &&
+              gaps.map((gap) => (
+                <button
+                  key={`gap-${gap.startMs}-${gap.endMs}`}
+                  type="button"
+                  className="day-timeline-gap"
+                  style={{
+                    left: `${(gap.startMs / dayLength) * 100}%`,
+                    width: `${((gap.endMs - gap.startMs) / dayLength) * 100}%`,
+                  }}
+                  aria-label="Empty time"
+                  onPointerDown={(e) => {
+                    gapPointerRef.current = true;
+                    beginGap(e, gap.startMs, gap.endMs);
+                  }}
+                  onClick={() => {
+                    // Pointer path already handled via drag finish; click is for keyboard.
+                    if (gapPointerRef.current) {
+                      gapPointerRef.current = false;
+                      return;
+                    }
+                    openGapPending(gap.startMs, gap.endMs);
+                  }}
+                />
+              ))}
 
             {displayRanges.map(({ slice, startMs, endMs }) => {
               const task = taskById(tasks, slice.taskId);
@@ -643,7 +651,7 @@ export function DayTimeline({
                   }
                   onMouseLeave={() => setTooltip(null)}
                 >
-                  {!running && (
+                  {!readOnly && !running && (
                     <>
                       <button
                         type="button"
@@ -673,7 +681,7 @@ export function DayTimeline({
               );
             })}
 
-            {draftGap && (
+            {!readOnly && draftGap && (
               <div
                 className="day-timeline-draft"
                 style={{
@@ -689,7 +697,7 @@ export function DayTimeline({
         </div>
       </div>
 
-      {pending && (
+      {!readOnly && pending && (
         <div className="day-timeline-pending inline-action">
           <span className="muted">
             New entry {formatDayClock(day, pending.startMs)} –{" "}
@@ -714,9 +722,9 @@ export function DayTimeline({
                     end: dayMsToIso(day, pending.endMs),
                   });
                   setPending(null);
-                  await onChanged();
+                  await onChanged?.();
                 } catch (err) {
-                  onError(String(err));
+                  onError?.(String(err));
                 }
               }}
             >
@@ -735,7 +743,7 @@ export function DayTimeline({
           style={{ left: activeTip.x + 12, top: activeTip.y + 12 }}
         >
           <div className="day-timeline-tooltip-main">{activeTip.text}</div>
-          {"note" in activeTip && activeTip.note ? (
+          {"note" in activeTip && typeof activeTip.note === "string" ? (
             <div className="day-timeline-tooltip-note">{activeTip.note}</div>
           ) : null}
         </div>
