@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  InsightsReport,
   Settings,
   Task,
   TaskBookingSummary,
@@ -48,6 +49,8 @@ export const api = {
     invoke<Settings>("update_settings", { settings }),
   getTimesheet: (weekStart: string) =>
     invoke<Timesheet>("get_timesheet", { weekStart }),
+  getInsights: (rangeStart: string, rangeEnd: string) =>
+    invoke<InsightsReport>("get_insights", { rangeStart, rangeEnd }),
   listSlicesForDay: (day: string) =>
     invoke<TimeSlice[]>("list_slices_for_day", { day }),
   createSlice: (input: {

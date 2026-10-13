@@ -88,6 +88,7 @@
 .btn,
 .tasks-layout button,
 .timesheet-toolbar button,
+.insights-toolbar button,
 .entries button,
 .settings button,
 .confirm-bar button,
@@ -322,6 +323,9 @@
 .settings input,
 .settings select,
 .week-field input,
+.week-field select,
+.insights-toolbar select,
+.insights-toolbar input[type="date"],
 .task-picker input {
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -384,6 +388,10 @@
 
 .week-field input {
   width: 5.5rem;
+}
+
+.week-field select {
+  width: 9.5rem;
 }
 
 .timesheet-table {
@@ -866,4 +874,155 @@
 .settings .err {
   color: var(--danger);
   margin: 0;
+}
+
+/* —— Insights —— */
+.insights {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.insights-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  flex-shrink: 0;
+}
+
+.insights-toolbar button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.insights-period-fields {
+  align-items: flex-end;
+}
+
+.insights-range-label {
+  font-size: 0.88rem;
+  padding-bottom: 6px;
+}
+
+.insights-empty {
+  padding: var(--s6);
+  text-align: center;
+}
+
+.insights-empty p {
+  margin: 0 0 var(--s2);
+}
+
+.insights-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+  padding-bottom: var(--s5);
+}
+
+.insights-kpis,
+.insights-schedule-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--s3);
+}
+
+.insights-kpi {
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.insights-kpi-label {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.insights-kpi-value {
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.insights-schedule,
+.insights-tasks,
+.insights-trends {
+  display: grid;
+  gap: var(--s4);
+}
+
+.insights-schedule {
+  grid-template-columns: minmax(200px, 280px) 1fr;
+}
+
+.insights-tasks,
+.insights-trends {
+  grid-template-columns: 1fr 1fr;
+}
+
+@media (max-width: 900px) {
+  .insights-schedule,
+  .insights-tasks,
+  .insights-trends {
+    grid-template-columns: 1fr;
+  }
+}
+
+.insights-chart-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: var(--s4);
+  min-width: 0;
+}
+
+.insights-chart-card h3 {
+  margin: 0 0 var(--s3);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.insights-pie-wrap {
+  display: grid;
+  grid-template-columns: 1fr minmax(140px, 180px);
+  gap: var(--s3);
+  align-items: center;
+}
+
+.insights-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  max-height: 240px;
+  overflow: auto;
+}
+
+.insights-legend li {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 0.88rem;
+}
+
+.insights-legend-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -205,6 +205,7 @@ pub fn run() {
             commands::update_settings,
             commands::test_jira_connection,
             commands::get_timesheet,
+            commands::get_insights,
             commands::list_slices_for_day,
             commands::create_slice,
             commands::update_slice,

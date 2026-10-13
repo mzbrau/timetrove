@@ -935,6 +935,28 @@ impl Db {
         })
     }
 
+    pub fn list_discards_between(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<DiscardLogEntry>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, start, end, duration_ms, created_at FROM discard_log
+                     WHERE start < ?2 AND end > ?1
+                     ORDER BY start",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![start.to_rfc3339(), end.to_rfc3339()], map_discard)
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })
+    }
+
     pub fn insert_discard(
         &self,
         start: DateTime<Utc>,
@@ -1384,6 +1406,16 @@ fn map_slice(row: &rusqlite::Row<'_>) -> rusqlite::Result<TimeSlice> {
         start: parse_dt(&row.get::<_, String>(2)?)?,
         end: end.map(|s| parse_dt(&s)).transpose()?,
         note: row.get(4)?,
+    })
+}
+
+fn map_discard(row: &rusqlite::Row<'_>) -> rusqlite::Result<DiscardLogEntry> {
+    Ok(DiscardLogEntry {
+        id: row.get(0)?,
+        start: parse_dt(&row.get::<_, String>(1)?)?,
+        end: parse_dt(&row.get::<_, String>(2)?)?,
+        duration_ms: row.get(3)?,
+        created_at: parse_dt(&row.get::<_, String>(4)?)?,
     })
 }
 

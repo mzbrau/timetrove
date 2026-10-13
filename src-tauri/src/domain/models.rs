@@ -201,6 +201,48 @@ pub struct Timesheet {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct InsightsTaskTotal {
+    pub task_id: String,
+    pub name: String,
+    pub color: String,
+    pub total_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightsWeekTotal {
+    pub week_start: String,
+    pub total_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightsReport {
+    pub range_start: String,
+    pub range_end: String,
+    pub total_ms: i64,
+    pub max_day_ms: i64,
+    /// Mean daily total over qualifying days (≥2h); null if none.
+    pub avg_day_ms: Option<i64>,
+    /// Mon=0 … Sun=6; null entry when no qualifying days on that weekday.
+    pub avg_by_weekday_ms: Vec<Option<i64>>,
+    pub earliest_start_mins: Option<u32>,
+    pub latest_finish_mins: Option<u32>,
+    pub avg_start_mins: Option<u32>,
+    pub avg_finish_mins: Option<u32>,
+    pub avg_lunch_ms: Option<i64>,
+    pub qualifying_days: u32,
+    /// 0.0–1.0; null when no qualifying days.
+    pub goal_hit_rate: Option<f64>,
+    pub avg_session_ms: Option<i64>,
+    pub discarded_ms: i64,
+    pub tasks: Vec<InsightsTaskTotal>,
+    pub weekly: Vec<InsightsWeekTotal>,
+    pub by_hour_ms: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateSliceInput {
     pub task_id: String,
     pub start: DateTime<Utc>,

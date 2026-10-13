@@ -100,3 +100,38 @@ export interface Timesheet {
   grandTotalDisplay: string;
   csv: string;
 }
+
+export interface InsightsTaskTotal {
+  taskId: string;
+  name: string;
+  color: string;
+  totalMs: number;
+}
+
+export interface InsightsWeekTotal {
+  weekStart: string;
+  totalMs: number;
+}
+
+export interface InsightsReport {
+  rangeStart: string;
+  rangeEnd: string;
+  totalMs: number;
+  maxDayMs: number;
+  avgDayMs: number | null;
+  /** Mon=0 … Sun=6 */
+  avgByWeekdayMs: (number | null)[];
+  earliestStartMins: number | null;
+  latestFinishMins: number | null;
+  avgStartMins: number | null;
+  avgFinishMins: number | null;
+  avgLunchMs: number | null;
+  qualifyingDays: number;
+  /** 0–1 */
+  goalHitRate: number | null;
+  avgSessionMs: number | null;
+  discardedMs: number;
+  tasks: InsightsTaskTotal[];
+  weekly: InsightsWeekTotal[];
+  byHourMs: number[];
+}

@@ -212,6 +212,15 @@ pub fn get_timesheet(
 }
 
 #[tauri::command]
+pub fn get_insights(
+    engine: State<'_, Arc<Engine>>,
+    range_start: String,
+    range_end: String,
+) -> Result<InsightsReport, String> {
+    engine.insights(&range_start, &range_end)
+}
+
+#[tauri::command]
 pub fn list_slices_for_day(
     engine: State<'_, Arc<Engine>>,
     day: String,

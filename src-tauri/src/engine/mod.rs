@@ -576,6 +576,37 @@ impl Engine {
         Ok(())
     }
 
+    pub fn insights(&self, range_start: &str, range_end: &str) -> Result<InsightsReport, String> {
+        let start_day = parse_day(range_start)?;
+        let end_day = parse_day(range_end)?;
+        if end_day < start_day {
+            return Err("rangeEnd must be on or after rangeStart".into());
+        }
+        let (window_start, _) = local_day_bounds(start_day);
+        let (_, window_end) = local_day_bounds(end_day);
+        let slices = self.db.list_slices_between(window_start, window_end)?;
+        let discards = self.db.list_discards_between(window_start, window_end)?;
+        let mut task_ids: Vec<String> = slices.iter().map(|s| s.task_id.clone()).collect();
+        task_ids.sort();
+        task_ids.dedup();
+        let mut tasks = std::collections::HashMap::new();
+        for tid in task_ids {
+            if let Some(task) = self.db.get_task(&tid)? {
+                tasks.insert(tid, task);
+            }
+        }
+        let settings = self.db.get_settings()?;
+        Ok(compute_insights(
+            start_day,
+            end_day,
+            &slices,
+            &discards,
+            &tasks,
+            settings.daily_goal_mins,
+            Utc::now(),
+        ))
+    }
+
     pub fn timesheet(&self, week_start: &str) -> Result<Timesheet, String> {
         let start_day = parse_day(week_start)?;
         let week_start_day = week_start_monday(start_day);

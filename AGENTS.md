@@ -8,7 +8,6 @@ Inspired by Grindstone (work items + time slices + idle correction). Product req
 
 Do not add these unless the user explicitly expands scope:
 
-- Charts / insights beyond the timesheet grid
 - External timesheet / ERP submission (beyond optional Jira Cloud worklogs)
 - Multi-user, cloud sync, or multi-machine
 - In-app custom property engine
@@ -44,7 +43,7 @@ One Vite entry ([`src/main.tsx`](src/main.tsx)); `getCurrentWebviewWindow().labe
 
 | Label | Role | UI |
 |-------|------|-----|
-| `main` | Tasks, timesheet, entries, settings, day timeline | [`src/windows/main/`](src/windows/main/) |
+| `main` | Tasks, timesheet, insights, entries, settings, day timeline | [`src/windows/main/`](src/windows/main/) |
 | `tracker` | Always-visible compact bar (color, task, daily total; default `HH:MM`) | [`src/windows/tracker/`](src/windows/tracker/) |
 | `switcher` | Global-shortcut task search / create | [`src/windows/switcher/`](src/windows/switcher/) |
 | `gap` | Idle / sleep / startup attribution prompt | [`src/windows/gap/`](src/windows/gap/) |
@@ -58,7 +57,7 @@ Default task-switch shortcut: `Cmd/Ctrl+Shift+T`.
 | [`engine/`](src-tauri/src/engine/) | Phase machine, tracking, gaps, checkpoints, midnight split, window show/position helpers |
 | [`commands/`](src-tauri/src/commands/) | Thin `#[tauri::command]` wrappers → engine/db; emit `tracker-state` |
 | [`db/`](src-tauri/src/db/) | SQLite migrate + repo |
-| [`domain/`](src-tauri/src/domain/) | Models, time math, formatting, task colors |
+| [`domain/`](src-tauri/src/domain/) | Models, time math, insights aggregation, formatting, task colors |
 | [`jira/`](src-tauri/src/jira/) | Optional Jira Cloud worklog client + watermark sync (hourly + stop/switch flush) |
 | [`chrome/`](src-tauri/src/chrome/) | System tray / OS chrome |
 
@@ -71,6 +70,8 @@ Background loops (idle check, checkpoint, midnight split, Jira hourly sync, stat
 - State push: events `tracker-state` and `db-error`
 
 Prefer extending shared helpers over duplicating format or time math on either side of the FFI boundary.
+
+**Insights:** main-window tab ([`InsightsPanel.tsx`](src/windows/main/InsightsPanel.tsx)) loads one `get_insights(rangeStart, rangeEnd)` report from Rust ([`domain/insights.rs`](src-tauri/src/domain/insights.rs)). Qualifying days are local days with ≥2h booked; charts use each task’s color via Recharts.
 
 ## Domain model
 

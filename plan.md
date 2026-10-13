@@ -12,11 +12,11 @@ Inspired by [Grindstone](https://www.epiforge.com/grindstone/) (work items + tim
 - Make the current task and “hours today” always visible
 - Switch or create tasks with a global shortcut and almost no clicking
 - Produce a Monday-start weekly timesheet (task × day) with totals
+- Insights dashboard over selectable periods (task charts, schedule averages, trends)
 - Store everything locally in SQLite; backup/export without a cloud dependency
 
 ### Non-goals (v1)
 
-- Charts / insights beyond the timesheet grid
 - External timesheet / ERP submission (beyond optional Jira Cloud worklogs)
 - Multi-user, sync, or multiple machines
 - In-app custom property engine (add fields in code later if needed)
@@ -32,7 +32,7 @@ Inspired by [Grindstone](https://www.epiforge.com/grindstone/) (work items + tim
 | **Windows** | Product target | True taskbar embedding is not available on Windows 11. v1 uses a **docked always-on-top bar** pinned above the taskbar near the tray (color dot, task name, daily `HH:MM`) plus a **system tray** icon/menu as fallback when the bar is hidden. Not-tracking state must be obvious (no task name). |
 | **macOS** | Dev / test harness | Same app logic; **floating always-on-top** compact bar (draggable; can hide to menu bar / tray). No taskbar embedding. |
 
-Main window (both OS): tasks, timesheet, manual time editing, settings.
+Main window (both OS): tasks, timesheet, insights dashboard, manual time editing, settings.
 
 Auto-start at login: on for Windows; Mac login item for convenience while developing.
 
@@ -211,7 +211,7 @@ Grindstone already covers most of the core. Gaps that justify a custom tool:
 
 ## Post-v1 (ordered roughly)
 
-1. **Charts / insights** — e.g. per-task bar chart for the week
+1. **Richer Insights** — streaks, weekend vs weekday, switches/day, stddev
 2. **Richer Jira** — multi-issue links, issue picker, Server/DC
 3. Richer export / external timesheet systems
 4. Optional custom path for the DB (Dropbox/iCloud-friendly)
@@ -231,6 +231,7 @@ Grindstone already covers most of the core. Gaps that justify a custom tool:
 - [ ] Archive/unarchive; archived hidden from switcher, visible on timesheet when relevant
 - [ ] Full manual time edit (add / edit / split / delete / move)
 - [ ] Monday-start timesheet with sums; CSV + copy
+- [ ] Insights tab with period filter, KPIs, and task-colored charts
 - [ ] SQLite in app data; reveal + export/import backup
 - [ ] Settings: idle threshold, daily goal, shortcut, start at login
 - [ ] Mac: floating bar usable for daily testing
