@@ -737,7 +737,9 @@
   position: relative;
   height: 36px;
   border-radius: 8px;
-  background: rgba(232, 238, 242, 0.06);
+  border: 1px solid var(--line);
+  background: rgba(232, 238, 242, 0.1);
+  box-sizing: border-box;
   touch-action: none;
   user-select: none;
 }
@@ -765,13 +767,13 @@
 
 .day-timeline-seg {
   position: absolute;
-  top: 4px;
-  bottom: 4px;
-  border-radius: 6px;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 2px;
   min-width: 4px;
   z-index: 1;
   overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+  box-sizing: border-box;
 }
 
 .entries .day-timeline-handle {
@@ -820,9 +822,9 @@
 
 .day-timeline-draft {
   position: absolute;
-  top: 4px;
-  bottom: 4px;
-  border-radius: 6px;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 2px;
   background: rgba(61, 155, 143, 0.45);
   border: 1px dashed var(--accent);
   z-index: 3;

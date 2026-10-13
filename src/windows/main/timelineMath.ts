@@ -181,3 +181,49 @@ export function gapsFromRanges(
   if (cursor < dayLengthMs) gaps.push({ startMs: cursor, endMs: dayLengthMs });
   return gaps;
 }
+
+/** Snap a CSS length to the nearest device pixel. */
+export function snapCssPx(cssPx: number, devicePixelRatio = 1): number {
+  const dpr = devicePixelRatio > 0 ? devicePixelRatio : 1;
+  return Math.round(cssPx * dpr) / dpr;
+}
+
+/**
+ * Absolute left/width for a day-range on the track.
+ * Rounds both edges independently so adjacent segments stay flush on device pixels.
+ * Falls back to percentages before the track has been measured.
+ */
+export function pixelRangeStyle(
+  startMs: number,
+  endMs: number,
+  dayLengthMs: number,
+  trackWidthPx: number,
+  minWidthPx = 4,
+  devicePixelRatio = 1,
+): { left: string; width: string } {
+  if (dayLengthMs <= 0) {
+    return { left: "0px", width: `${minWidthPx}px` };
+  }
+  if (trackWidthPx <= 0) {
+    return {
+      left: `${(startMs / dayLengthMs) * 100}%`,
+      width: `${Math.max(((endMs - startMs) / dayLengthMs) * 100, 0)}%`,
+    };
+  }
+  const leftPx = snapCssPx(
+    (startMs / dayLengthMs) * trackWidthPx,
+    devicePixelRatio,
+  );
+  const rightPx = snapCssPx(
+    (endMs / dayLengthMs) * trackWidthPx,
+    devicePixelRatio,
+  );
+  const widthPx = Math.max(
+    snapCssPx(rightPx - leftPx, devicePixelRatio),
+    minWidthPx,
+  );
+  return {
+    left: `${leftPx}px`,
+    width: `${widthPx}px`,
+  };
+}

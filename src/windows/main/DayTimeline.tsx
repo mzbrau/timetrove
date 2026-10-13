@@ -21,6 +21,7 @@ import {
   gapsFromRanges,
   hourLabels,
   nextZoomLevel,
+  pixelRangeStyle,
   prevZoomLevel,
   resizeNeighborBounds,
   snapMs,
@@ -84,6 +85,10 @@ export function DayTimeline({
   >([]);
   const pendingScrollRatioRef = useRef<number | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [trackWidth, setTrackWidth] = useState(0);
+  const [dpr, setDpr] = useState(
+    typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1,
+  );
   const [drag, setDrag] = useState<DragState | null>(null);
   const [pending, setPending] = useState<PendingCreate | null>(null);
   const [tooltip, setTooltip] = useState<{
@@ -238,6 +243,23 @@ export function DayTimeline({
     pendingScrollRatioRef.current = null;
     if (scrollRef.current) scrollRef.current.scrollLeft = 0;
   }, [day]);
+
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const update = () => setTrackWidth(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const update = () => setDpr(window.devicePixelRatio || 1);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
 
   useEffect(() => {
     const ratio = pendingScrollRatioRef.current;
@@ -599,10 +621,14 @@ export function DayTimeline({
                   key={`gap-${gap.startMs}-${gap.endMs}`}
                   type="button"
                   className="day-timeline-gap"
-                  style={{
-                    left: `${(gap.startMs / dayLength) * 100}%`,
-                    width: `${((gap.endMs - gap.startMs) / dayLength) * 100}%`,
-                  }}
+                  style={pixelRangeStyle(
+                    gap.startMs,
+                    gap.endMs,
+                    dayLength,
+                    trackWidth,
+                    0,
+                    dpr,
+                  )}
                   aria-label="Empty time"
                   onPointerDown={(e) => {
                     gapPointerRef.current = true;
@@ -629,8 +655,14 @@ export function DayTimeline({
                   key={slice.id}
                   className="day-timeline-seg"
                   style={{
-                    left: `${(startMs / dayLength) * 100}%`,
-                    width: `${(Math.max(dur, 60_000) / dayLength) * 100}%`,
+                    ...pixelRangeStyle(
+                      startMs,
+                      startMs + Math.max(dur, 60_000),
+                      dayLength,
+                      trackWidth,
+                      4,
+                      dpr,
+                    ),
                     backgroundColor: color,
                   }}
                   onMouseEnter={(e) => {
@@ -684,13 +716,14 @@ export function DayTimeline({
             {!readOnly && draftGap && (
               <div
                 className="day-timeline-draft"
-                style={{
-                  left: `${(draftGap.startMs / dayLength) * 100}%`,
-                  width: `${(
-                    (draftGap.endMs - draftGap.startMs) /
-                    dayLength
-                  ) * 100}%`,
-                }}
+                style={pixelRangeStyle(
+                  draftGap.startMs,
+                  draftGap.endMs,
+                  dayLength,
+                  trackWidth,
+                  4,
+                  dpr,
+                )}
               />
             )}
           </div>
