@@ -45,17 +45,40 @@ pub fn compute_insights(
         }
         *task_totals.entry(slice.task_id.clone()).or_insert(0) += range_overlap;
 
-        let mut d = range_start;
-        while d <= range_end {
+        // Half-open clip to the report window; only walk local days the slice actually touches.
+        let clip_start = slice.start.max(window_start);
+        let clip_end = end.min(window_end);
+        if clip_end <= clip_start {
+            continue;
+        }
+        let first_day = clip_start
+            .with_timezone(&Local)
+            .date_naive()
+            .max(range_start);
+        let last_day = (clip_end - Duration::milliseconds(1))
+            .with_timezone(&Local)
+            .date_naive()
+            .min(range_end);
+        let mut d = first_day;
+        while d <= last_day {
             let (d0, d1) = local_day_bounds(d);
             let day_ms = overlap_ms(slice.start, end, d0, d1);
             if day_ms > 0 {
                 *day_totals.entry(d).or_insert(0) += day_ms;
                 *week_totals.entry(week_start_monday(d)).or_insert(0) += day_ms;
-            }
-            for hour in 0..24u32 {
-                let (h0, h1) = local_hour_bounds(d, hour);
-                by_hour_ms[hour as usize] += overlap_ms(slice.start, end, h0, h1);
+
+                let day_clip_start = clip_start.max(d0);
+                let day_clip_end = clip_end.min(d1);
+                if day_clip_end > day_clip_start {
+                    let start_hour = day_clip_start.with_timezone(&Local).hour();
+                    let end_hour_inclusive = (day_clip_end - Duration::milliseconds(1))
+                        .with_timezone(&Local)
+                        .hour();
+                    for hour in start_hour..=end_hour_inclusive {
+                        let (h0, h1) = local_hour_bounds(d, hour);
+                        by_hour_ms[hour as usize] += overlap_ms(slice.start, end, h0, h1);
+                    }
+                }
             }
             d += Duration::days(1);
         }
@@ -125,7 +148,13 @@ pub fn compute_insights(
             first_starts.push(local_mins_from_midnight(*first));
         }
         if let Some((_, last)) = segments.last() {
-            last_finishes.push(local_mins_from_midnight(*last));
+            // Day bounds are half-open; a finish exactly at next midnight is 24:00 (1440), not 00:00.
+            let mins = if *last == d1 {
+                24 * 60
+            } else {
+                local_mins_from_midnight(*last)
+            };
+            last_finishes.push(mins);
         }
 
         let lunch_start = local_clock(*d, LUNCH_START_HOUR, 0);
@@ -502,5 +531,36 @@ mod tests {
         assert!(report.avg_day_ms.is_none());
         assert!(report.earliest_start_mins.is_none());
         assert_eq!(report.total_ms, (1 * 3600 + 59 * 60) * 1000);
+    }
+
+    #[test]
+    fn finish_at_midnight_is_1440_not_zero() {
+        let day_a = NaiveDate::from_ymd_opt(2026, 3, 12).unwrap(); // Thursday
+        let day_b = NaiveDate::from_ymd_opt(2026, 3, 13).unwrap(); // Friday
+        let mut tasks = HashMap::new();
+        tasks.insert("t1".into(), task("t1", "Late", "#E4572E"));
+
+        // Day A: 22:00 → next midnight (2h qualifying). Day B: 16:00–18:00 (2h qualifying).
+        // Averaging must treat midnight as 1440, not 0 (else avg would be 09:00).
+        let slices = vec![
+            slice(
+                "a",
+                "t1",
+                local_dt(day_a, 22, 0),
+                local_day_bounds(day_a).1,
+            ),
+            slice(
+                "b",
+                "t1",
+                local_dt(day_b, 16, 0),
+                local_dt(day_b, 18, 0),
+            ),
+        ];
+        let report = compute_insights(day_a, day_b, &slices, &[], &tasks, 480, Utc::now());
+        assert_eq!(report.qualifying_days, 2);
+        assert_eq!(report.latest_finish_mins, Some(24 * 60));
+        assert_eq!(report.avg_finish_mins, Some((24 * 60 + 18 * 60) / 2));
+        assert_eq!(report.by_hour_ms[22], 3_600_000);
+        assert_eq!(report.by_hour_ms[23], 3_600_000);
     }
 }

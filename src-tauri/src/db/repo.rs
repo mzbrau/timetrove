@@ -230,57 +230,71 @@ impl Db {
         }
         task.updated_at = Utc::now();
         self.with_conn(|conn| {
-            if let Some((issue_key, title, booked_ms)) = archive_old {
+            conn.execute_batch("BEGIN IMMEDIATE")
+                .map_err(|e| e.to_string())?;
+            let result = (|| {
+                if let Some((issue_key, title, booked_ms)) = archive_old {
+                    conn.execute(
+                        "INSERT INTO task_jira_history (id, task_id, issue_key, title, booked_ms, unlinked_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        params![
+                            Uuid::new_v4().to_string(),
+                            task.id,
+                            issue_key,
+                            title,
+                            booked_ms,
+                            task.updated_at.to_rfc3339(),
+                        ],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
                 conn.execute(
-                    "INSERT INTO task_jira_history (id, task_id, issue_key, title, booked_ms, unlinked_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "UPDATE tasks SET name=?2, color=?3, description=?4, notes=?5, archived=?6, starred=?7,
+                            jira_issue_key=?8, jira_reported_ms=?9, jira_pending_ms=?10,
+                            jira_link_baseline_ms=?11, jira_issue_summary=?12, jira_issue_status=?13,
+                            jira_issue_assignee=?14, jira_issue_estimate_s=?15, jira_issue_total_spent_s=?16,
+                            jira_issue_fetched_at=?17, updated_at=?18
+                     WHERE id=?1",
                     params![
-                        Uuid::new_v4().to_string(),
                         task.id,
-                        issue_key,
-                        title,
-                        booked_ms,
+                        task.name,
+                        task.color,
+                        task.description,
+                        task.notes,
+                        task.archived as i32,
+                        task.starred as i32,
+                        task.jira_issue_key,
+                        task.jira_reported_ms,
+                        task.jira_pending_ms,
+                        task.jira_link_baseline_ms,
+                        task.jira_issue_summary,
+                        task.jira_issue_status,
+                        task.jira_issue_assignee,
+                        task.jira_issue_estimate_s,
+                        task.jira_issue_total_spent_s,
+                        task.jira_issue_fetched_at.map(|t| t.to_rfc3339()),
                         task.updated_at.to_rfc3339(),
                     ],
                 )
-                .map_err(|e| e.to_string())?;
-            }
-            conn.execute(
-                "UPDATE tasks SET name=?2, color=?3, description=?4, notes=?5, archived=?6, starred=?7,
-                        jira_issue_key=?8, jira_reported_ms=?9, jira_pending_ms=?10,
-                        jira_link_baseline_ms=?11, jira_issue_summary=?12, jira_issue_status=?13,
-                        jira_issue_assignee=?14, jira_issue_estimate_s=?15, jira_issue_total_spent_s=?16,
-                        jira_issue_fetched_at=?17, updated_at=?18
-                 WHERE id=?1",
-                params![
-                    task.id,
-                    task.name,
-                    task.color,
-                    task.description,
-                    task.notes,
-                    task.archived as i32,
-                    task.starred as i32,
-                    task.jira_issue_key,
-                    task.jira_reported_ms,
-                    task.jira_pending_ms,
-                    task.jira_link_baseline_ms,
-                    task.jira_issue_summary,
-                    task.jira_issue_status,
-                    task.jira_issue_assignee,
-                    task.jira_issue_estimate_s,
-                    task.jira_issue_total_spent_s,
-                    task.jira_issue_fetched_at.map(|t| t.to_rfc3339()),
-                    task.updated_at.to_rfc3339(),
-                ],
-            )
-            .map_err(|e| {
-                if e.to_string().contains("UNIQUE") {
-                    "A task with that name already exists".into()
-                } else {
-                    e.to_string()
+                .map_err(|e| {
+                    if e.to_string().contains("UNIQUE") {
+                        "A task with that name already exists".into()
+                    } else {
+                        e.to_string()
+                    }
+                })?;
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+                    Ok(())
                 }
-            })?;
-            Ok(())
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    Err(e)
+                }
+            }
         })?;
         Ok(task)
     }
@@ -1749,6 +1763,51 @@ mod tests {
             })
             .unwrap_err();
         assert!(err.contains("PROJECT-123"));
+    }
+
+    #[test]
+    fn jira_relink_rolls_back_history_when_update_fails() {
+        let (_dir, db) = test_db();
+        let a = sample_task(&db, "KeepName");
+        let t = sample_task(&db, "RelinkAtomic");
+        db.update_task(UpdateTaskInput {
+            id: t.id.clone(),
+            name: None,
+            color: None,
+            description: None,
+            notes: None,
+            archived: None,
+            starred: None,
+            jira_issue_key: Some("OLD-9".into()),
+            jira_issue_details: Some(JiraIssueDetails {
+                issue_key: "OLD-9".into(),
+                summary: "Old".into(),
+                status: "Open".into(),
+                assignee: "Unassigned".into(),
+                estimate_seconds: None,
+                total_spent_seconds: None,
+            }),
+        })
+        .unwrap();
+
+        let err = db
+            .update_task(UpdateTaskInput {
+                id: t.id.clone(),
+                name: Some(a.name.clone()), // duplicate → UPDATE fails
+                color: None,
+                description: None,
+                notes: None,
+                archived: None,
+                starred: None,
+                jira_issue_key: Some("NEW-9".into()),
+                jira_issue_details: None,
+            })
+            .unwrap_err();
+        assert!(err.contains("already exists"));
+        assert!(db.list_task_jira_history(&t.id).unwrap().is_empty());
+        let still = db.get_task(&t.id).unwrap().unwrap();
+        assert_eq!(still.jira_issue_key, "OLD-9");
+        assert_eq!(still.name, "RelinkAtomic");
     }
 
     #[test]

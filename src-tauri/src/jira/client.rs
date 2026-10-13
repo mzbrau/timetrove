@@ -116,14 +116,17 @@ pub fn fetch_issue(creds: &JiraCredentials, issue_key: &str) -> Result<JiraIssue
         "{base}/rest/api/3/issue/{key}?fields=summary,status,assignee,timetracking,timeoriginalestimate,aggregatetimespent"
     );
     let auth = basic_auth_header(creds.email.trim(), creds.api_token.trim());
-    let resp = ureq::get(&url)
+    let resp = match ureq::get(&url)
         .set("Authorization", &auth)
         .set("Accept", "application/json")
         .call()
-        .map_err(map_ureq_error)?;
-    if resp.status() == 404 {
-        return Err(format!("Jira issue {key} was not found"));
-    }
+    {
+        Ok(resp) => resp,
+        Err(ureq::Error::Status(404, _)) => {
+            return Err(format!("Jira issue {key} was not found"));
+        }
+        Err(e) => return Err(map_ureq_error(e)),
+    };
     if !(200..300).contains(&resp.status()) {
         let status = resp.status();
         let detail = resp.into_string().unwrap_or_default();

@@ -41,14 +41,12 @@ pub fn update_task(
     input: UpdateTaskInput,
 ) -> Result<Task, String> {
     // Flush unreported time to the old Jira key before switching, so history isn't dropped
-    // and the new key only receives future work.
+    // and the new key only receives future work. Rejects when a delta cannot be posted.
     if let Some(raw_key) = input.jira_issue_key.as_ref() {
         if let Some(current) = engine.db().get_task(&input.id)? {
             let new_key = crate::db::normalize_jira_issue_key_input(Some(raw_key))?;
             if new_key != current.jira_issue_key && !current.jira_issue_key.is_empty() {
-                crate::jira::sync_task(engine.db(), &current.id).map_err(|e| {
-                    format!("Could not sync time to {0} before switching: {e}", current.jira_issue_key)
-                })?;
+                crate::jira::flush_before_relink(engine.db(), &current.id)?;
             }
         }
     }
@@ -243,7 +241,7 @@ pub fn refresh_jira_issue(
     let creds = jira_creds_if_enabled(&engine)?;
     match crate::jira::fetch_issue(&creds, &task.jira_issue_key) {
         Ok(details) => {
-            let _ = engine.db().update_jira_issue_cache(&task_id, &details);
+            engine.db().update_jira_issue_cache(&task_id, &details)?;
             let _ = engine.db().set_jira_last_error(None);
             Ok(Some(details))
         }

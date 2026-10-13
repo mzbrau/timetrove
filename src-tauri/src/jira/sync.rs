@@ -95,6 +95,51 @@ pub fn sync_task(db: &Db, task_id: &str) -> Result<(), String> {
     }
 }
 
+/// Flush unreported time before changing/clearing a Jira issue key.
+///
+/// Unlike [`sync_task`], this rejects the operation when there is a postable delta but
+/// Jira sync is disabled or credentials are incomplete — so relink cannot silently drop time.
+pub fn flush_before_relink(db: &Db, task_id: &str) -> Result<(), String> {
+    let _guard = SYNC_LOCK.lock();
+    let task = match db.get_task(task_id)? {
+        Some(t) => t,
+        None => return Ok(()),
+    };
+    if task.jira_issue_key.is_empty() {
+        return Ok(());
+    }
+    db.reconcile_jira_pending(task_id)?;
+    let task = db.get_task(task_id)?.ok_or_else(|| "Task not found".to_string())?;
+    let now = Utc::now();
+    let total = db.task_total_ms(task_id, now)?;
+    let due = unreported_ms(total, task.jira_reported_ms);
+    if due <= 0 {
+        return Ok(());
+    }
+    let Some(creds) = credentials_from_db(db)? else {
+        return Err(format!(
+            "Enable and configure Jira sync before switching from {} (unreported time would be lost)",
+            task.jira_issue_key
+        ));
+    };
+    match post_unreported(db, &creds, task_id, &task.jira_issue_key, task.jira_reported_ms) {
+        Ok(posted) => {
+            if posted {
+                db.set_jira_last_error(None)?;
+                db.set_jira_last_synced_at(Some(Utc::now()))?;
+            }
+            Ok(())
+        }
+        Err(e) => {
+            let _ = db.set_jira_last_error(Some(&e));
+            Err(format!(
+                "Could not sync time to {} before switching: {e}",
+                task.jira_issue_key
+            ))
+        }
+    }
+}
+
 /// Sync all tasks that have a Jira issue key and unreported time.
 pub fn sync_all_due(db: &Db) -> Result<(), String> {
     let _guard = SYNC_LOCK.lock();
