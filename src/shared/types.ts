@@ -12,8 +12,35 @@ export interface Task {
   jiraReportedMs: number;
   /** In-flight worklog ms (internal); not shown in UI. */
   jiraPendingMs: number;
+  /** Task total ms when the current issue was linked. */
+  jiraLinkBaselineMs: number;
+  /** Cached Jira fields for the current linked issue. */
+  jiraIssueSummary: string;
+  jiraIssueStatus: string;
+  jiraIssueAssignee: string;
+  jiraIssueEstimateS: number | null;
+  jiraIssueTotalSpentS: number | null;
+  jiraIssueFetchedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface JiraIssueDetails {
+  issueKey: string;
+  summary: string;
+  status: string;
+  assignee: string;
+  estimateSeconds: number | null;
+  totalSpentSeconds: number | null;
+}
+
+export interface TaskJiraHistoryEntry {
+  id: string;
+  taskId: string;
+  issueKey: string;
+  title: string;
+  bookedMs: number;
+  unlinkedAt: string;
 }
 
 export interface TaskBookingSummary {

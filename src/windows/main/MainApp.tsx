@@ -162,7 +162,7 @@ export function MainApp() {
 
       {pendingTab && (
         <ConfirmBar
-          message="You have unsaved task changes."
+          message="You have unsaved task changes. Save to keep edits, including any Jira issue link."
           confirmLabel="Save"
           secondaryLabel="Discard"
           cancelLabel="Cancel"

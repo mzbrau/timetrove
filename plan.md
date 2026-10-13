@@ -21,7 +21,7 @@ Inspired by [Grindstone](https://www.epiforge.com/grindstone/) (work items + tim
 - Multi-user, sync, or multiple machines
 - In-app custom property engine (add fields in code later if needed)
 - Decimal-hour CSV / reporting formats
-- Jira Server/DC, OAuth, multi-issue-per-task, or inbound Jira → TimeTrove sync
+- Jira Server/DC, OAuth, concurrent multi-issue booking, or inbound Jira → TimeTrove sync
 
 ---
 
@@ -60,8 +60,10 @@ Flat list (no projects).
 | description | Static “what is this task” |
 | notes | Ongoing scratchpad while working |
 | archived | Soft-hide from timing switcher; **unarchive** supported |
-| jira_issue_key | Optional Jira Cloud issue key (e.g. `THING-123`) when worklog sync is enabled |
-| jira_reported_ms | Watermark of ms successfully posted to that issue as worklogs |
+| jira_issue_key | Optional active Jira Cloud issue key (e.g. `THING-123`) when worklog sync is enabled |
+| jira_reported_ms | Watermark of ms successfully posted for the current issue key |
+| jira_link_baseline_ms | Task total at link time; TimeTrove posted = reported − baseline |
+| previous tickets | History of prior keys (id, title, TimeTrove booked ms) — display only; only the active key receives new worklogs |
 
 Archived tasks:
 
@@ -89,7 +91,7 @@ When the user discards a gap:
 
 ### Optional Jira Cloud worklog sync
 
-Disabled by default. Settings: site URL, email, API token. When enabled, tasks may link one issue key; TimeTrove posts unreported time as Jira worklogs hourly and on stop/switch. Does not delete/edit remote worklogs if local history is shortened.
+Disabled by default. Settings: site URL, email, API token. When enabled, tasks may link one active issue key (validated via Add against Jira); TimeTrove posts unreported time as Jira worklogs hourly and on stop/switch. Relinking archives the prior key into previous tickets and baselines so time is not double-posted. Does not delete/edit remote worklogs if local history is shortened.
 
 ---
 
@@ -212,7 +214,7 @@ Grindstone already covers most of the core. Gaps that justify a custom tool:
 ## Post-v1 (ordered roughly)
 
 1. **Richer Insights** — streaks, weekend vs weekday, switches/day, stddev
-2. **Richer Jira** — multi-issue links, issue picker, Server/DC
+2. **Richer Jira** — concurrent multi-issue links, issue picker, Server/DC
 3. Richer export / external timesheet systems
 4. Optional custom path for the DB (Dropbox/iCloud-friendly)
 5. Hard-coded extra task fields if a real need appears (still not a user-facing property builder)

@@ -12,7 +12,7 @@ Do not add these unless the user explicitly expands scope:
 - Multi-user, cloud sync, or multi-machine
 - In-app custom property engine
 - Decimal-hour CSV / reporting formats
-- Jira Server/DC, OAuth, multi-issue-per-task, or inbound Jira → TimeTrove sync
+- Jira Server/DC, OAuth, concurrent multi-issue booking, or inbound Jira → TimeTrove sync
 
 ## Stack
 
@@ -82,7 +82,7 @@ Flat list (no projects): `name`, `color`, `description`, `notes`, `archived`, op
 - Prefer unique task names
 - Colors auto-assigned to stay distinct; user-editable
 - Archived: hidden from switcher / start options; still appear on timesheets/history when they have time
-- Optional Jira Cloud link: when sync is enabled in settings, a task may store one issue key; `jira_reported_ms` is the watermark of time already posted as worklogs. Changing or clearing the issue key baselines the watermark at the task’s current total so only future work syncs (avoids double-counting history on the new key).
+- Optional Jira Cloud link: when sync is enabled in settings, a task has **one active** issue key that receives worklogs. `jira_reported_ms` / `jira_link_baseline_ms` track TimeTrove-posted time for that key; changing or clearing the key flushes the old key, archives `{key, title, booked_ms}` into previous-ticket history, and baselines the watermark at the task’s current total so only future work syncs to the new key. The task UI validates via Add (fetch title/status/assignee/estimate/Jira total), shows a details card, and refreshes cached details in the background on select.
 
 ### Time slice
 

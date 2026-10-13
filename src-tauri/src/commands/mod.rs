@@ -40,6 +40,18 @@ pub fn update_task(
     app: AppHandle,
     input: UpdateTaskInput,
 ) -> Result<Task, String> {
+    // Flush unreported time to the old Jira key before switching, so history isn't dropped
+    // and the new key only receives future work.
+    if let Some(raw_key) = input.jira_issue_key.as_ref() {
+        if let Some(current) = engine.db().get_task(&input.id)? {
+            let new_key = crate::db::normalize_jira_issue_key_input(Some(raw_key))?;
+            if new_key != current.jira_issue_key && !current.jira_issue_key.is_empty() {
+                crate::jira::sync_task(engine.db(), &current.id).map_err(|e| {
+                    format!("Could not sync time to {0} before switching: {e}", current.jira_issue_key)
+                })?;
+            }
+        }
+    }
     let task = engine.db().update_task(input)?;
     engine.emit_state(&app);
     Ok(task)
@@ -172,6 +184,82 @@ pub fn test_jira_connection(
             Err(e)
         }
     }
+}
+
+fn jira_creds_if_enabled(engine: &Engine) -> Result<crate::jira::JiraCredentials, String> {
+    let settings = engine.db().get_settings()?;
+    if !settings.jira_enabled {
+        return Err("Enable Jira sync first".into());
+    }
+    if settings.jira_site_url.trim().is_empty()
+        || settings.jira_email.trim().is_empty()
+        || settings.jira_api_token.trim().is_empty()
+    {
+        return Err("Configure Jira site URL, email, and API token in Settings".into());
+    }
+    Ok(crate::jira::JiraCredentials {
+        site_url: settings.jira_site_url,
+        email: settings.jira_email,
+        api_token: settings.jira_api_token,
+    })
+}
+
+/// Validate an issue key against Jira and return live details (does not persist).
+#[tauri::command]
+pub fn fetch_jira_issue(
+    engine: State<'_, Arc<Engine>>,
+    issue_key: String,
+) -> Result<JiraIssueDetails, String> {
+    let key = crate::db::normalize_jira_issue_key_input(Some(&issue_key))?;
+    if key.is_empty() {
+        return Err("Jira issue key is required".into());
+    }
+    let creds = jira_creds_if_enabled(&engine)?;
+    match crate::jira::fetch_issue(&creds, &key) {
+        Ok(details) => {
+            let _ = engine.db().set_jira_last_error(None);
+            Ok(details)
+        }
+        Err(e) => {
+            let _ = engine.db().set_jira_last_error(Some(&e));
+            Err(e)
+        }
+    }
+}
+
+/// Refresh cached details for the task's currently linked issue (no-op if unlinked).
+#[tauri::command]
+pub fn refresh_jira_issue(
+    engine: State<'_, Arc<Engine>>,
+    task_id: String,
+) -> Result<Option<JiraIssueDetails>, String> {
+    let task = engine
+        .db()
+        .get_task(&task_id)?
+        .ok_or_else(|| "Task not found".to_string())?;
+    if task.jira_issue_key.is_empty() {
+        return Ok(None);
+    }
+    let creds = jira_creds_if_enabled(&engine)?;
+    match crate::jira::fetch_issue(&creds, &task.jira_issue_key) {
+        Ok(details) => {
+            let _ = engine.db().update_jira_issue_cache(&task_id, &details);
+            let _ = engine.db().set_jira_last_error(None);
+            Ok(Some(details))
+        }
+        Err(e) => {
+            let _ = engine.db().set_jira_last_error(Some(&e));
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn list_task_jira_history(
+    engine: State<'_, Arc<Engine>>,
+    task_id: String,
+) -> Result<Vec<TaskJiraHistoryEntry>, String> {
+    engine.db().list_task_jira_history(&task_id)
 }
 
 #[tauri::command]

@@ -285,6 +285,13 @@ mod tests {
             jira_issue_key: String::new(),
             jira_reported_ms: 0,
             jira_pending_ms: 0,
+            jira_link_baseline_ms: 0,
+            jira_issue_summary: String::new(),
+            jira_issue_status: String::new(),
+            jira_issue_assignee: String::new(),
+            jira_issue_estimate_s: None,
+            jira_issue_total_spent_s: None,
+            jira_issue_fetched_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

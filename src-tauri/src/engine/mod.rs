@@ -1403,6 +1403,7 @@ mod tests {
                 archived: Some(true),
                 starred: None,
                 jira_issue_key: None,
+                jira_issue_details: None,
             })
             .unwrap();
         assert!(eng.start_task(&task.id).unwrap_err().contains("archived"));

@@ -1,8 +1,8 @@
 mod client;
 mod sync;
 
-pub use client::{test_connection, JiraCredentials};
-pub use sync::{spawn_flush_all, spawn_flush_task};
+pub use client::{fetch_issue, test_connection, JiraCredentials};
+pub use sync::{spawn_flush_all, spawn_flush_task, sync_task};
 
 pub const MIN_WORKLOG_MS: i64 = 60_000;
 pub const SYNC_INTERVAL_SECS: u64 = 3600;

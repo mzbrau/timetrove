@@ -18,8 +18,59 @@ pub struct Task {
     /// In-flight worklog amount (ms) written before POST; reconciled on next sync.
     #[serde(default)]
     pub jira_pending_ms: i64,
+    /// Task total ms when the current issue key was linked; TimeTrove posted =
+    /// `max(0, jira_reported_ms - jira_link_baseline_ms)`.
+    #[serde(default)]
+    pub jira_link_baseline_ms: i64,
+    /// Cached Jira issue fields for the current key (refreshed on select / Add).
+    #[serde(default)]
+    pub jira_issue_summary: String,
+    #[serde(default)]
+    pub jira_issue_status: String,
+    #[serde(default)]
+    pub jira_issue_assignee: String,
+    #[serde(default)]
+    pub jira_issue_estimate_s: Option<i64>,
+    #[serde(default)]
+    pub jira_issue_total_spent_s: Option<i64>,
+    #[serde(default)]
+    pub jira_issue_fetched_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl Task {
+    /// Milliseconds TimeTrove has posted to the current issue while linked.
+    pub fn jira_timetrove_posted_ms(&self) -> i64 {
+        (self.jira_reported_ms - self.jira_link_baseline_ms).max(0)
+    }
+}
+
+/// Live / cached details for a Jira Cloud issue.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraIssueDetails {
+    pub issue_key: String,
+    pub summary: String,
+    pub status: String,
+    pub assignee: String,
+    /// Original estimate in seconds, if set on the issue.
+    pub estimate_seconds: Option<i64>,
+    /// Aggregate work logged on the issue in Jira (all authors), seconds.
+    pub total_spent_seconds: Option<i64>,
+}
+
+/// Prior Jira issue linked to a task (one active key; history for display only).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskJiraHistoryEntry {
+    pub id: String,
+    pub task_id: String,
+    pub issue_key: String,
+    pub title: String,
+    /// TimeTrove-posted ms while this key was linked.
+    pub booked_ms: i64,
+    pub unlinked_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,6 +203,9 @@ pub struct UpdateTaskInput {
     pub starred: Option<bool>,
     #[serde(default)]
     pub jira_issue_key: Option<String>,
+    /// Staged issue details from Add; applied when the issue key changes on Save.
+    #[serde(default)]
+    pub jira_issue_details: Option<JiraIssueDetails>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,3 +1,4 @@
+use crate::domain::JiraIssueDetails;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
@@ -98,6 +99,101 @@ pub fn add_worklog(
     Ok(())
 }
 
+/// Fetch issue summary, status, assignee, estimate, and aggregate time spent.
+pub fn fetch_issue(creds: &JiraCredentials, issue_key: &str) -> Result<JiraIssueDetails, String> {
+    let key = issue_key.trim().to_uppercase();
+    if key.is_empty() {
+        return Err("Jira issue key is required".into());
+    }
+    let base = normalize_site_url(&creds.site_url)?;
+    if creds.email.trim().is_empty() {
+        return Err("Jira email is required".into());
+    }
+    if creds.api_token.trim().is_empty() {
+        return Err("Jira API token is required".into());
+    }
+    let url = format!(
+        "{base}/rest/api/3/issue/{key}?fields=summary,status,assignee,timetracking,timeoriginalestimate,aggregatetimespent"
+    );
+    let auth = basic_auth_header(creds.email.trim(), creds.api_token.trim());
+    let resp = ureq::get(&url)
+        .set("Authorization", &auth)
+        .set("Accept", "application/json")
+        .call()
+        .map_err(map_ureq_error)?;
+    if resp.status() == 404 {
+        return Err(format!("Jira issue {key} was not found"));
+    }
+    if !(200..300).contains(&resp.status()) {
+        let status = resp.status();
+        let detail = resp.into_string().unwrap_or_default();
+        let snippet: String = detail.chars().take(200).collect();
+        return Err(format!("Jira issue fetch failed (HTTP {status}): {snippet}"));
+    }
+    let body: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
+    parse_issue_json(&key, &body)
+}
+
+/// Parse a Jira issue JSON body into details (shared with unit tests).
+pub fn parse_issue_json(fallback_key: &str, body: &serde_json::Value) -> Result<JiraIssueDetails, String> {
+    let key = body
+        .get("key")
+        .and_then(|v| v.as_str())
+        .unwrap_or(fallback_key)
+        .to_uppercase();
+    let fields = body
+        .get("fields")
+        .ok_or_else(|| "Jira issue response missing fields".to_string())?;
+    let summary = fields
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let status = fields
+        .get("status")
+        .and_then(|s| s.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let assignee = fields
+        .get("assignee")
+        .and_then(|a| {
+            if a.is_null() {
+                None
+            } else {
+                a.get("displayName").and_then(|v| v.as_str())
+            }
+        })
+        .unwrap_or("Unassigned")
+        .to_string();
+    let estimate_seconds = fields
+        .get("timeoriginalestimate")
+        .and_then(|v| v.as_i64())
+        .or_else(|| {
+            fields
+                .get("timetracking")
+                .and_then(|t| t.get("originalEstimateSeconds"))
+                .and_then(|v| v.as_i64())
+        });
+    let total_spent_seconds = fields
+        .get("aggregatetimespent")
+        .and_then(|v| v.as_i64())
+        .or_else(|| {
+            fields
+                .get("timetracking")
+                .and_then(|t| t.get("timeSpentSeconds"))
+                .and_then(|v| v.as_i64())
+        });
+    Ok(JiraIssueDetails {
+        issue_key: key,
+        summary,
+        status,
+        assignee,
+        estimate_seconds,
+        total_spent_seconds,
+    })
+}
+
 fn map_ureq_error(err: ureq::Error) -> String {
     match err {
         ureq::Error::Status(code, resp) => {
@@ -131,5 +227,46 @@ mod tests {
         let v = serde_json::to_value(&body).unwrap();
         assert_eq!(v["timeSpentSeconds"], 3600);
         assert_eq!(v["started"], "2026-03-15T14:30:00.000+0000");
+    }
+
+    #[test]
+    fn parse_issue_json_maps_fields() {
+        let body = serde_json::json!({
+            "key": "THING-42",
+            "fields": {
+                "summary": "Fix the widget",
+                "status": { "name": "In Progress" },
+                "assignee": { "displayName": "Ada Lovelace" },
+                "timeoriginalestimate": 7200,
+                "aggregatetimespent": 3600
+            }
+        });
+        let d = parse_issue_json("THING-42", &body).unwrap();
+        assert_eq!(d.issue_key, "THING-42");
+        assert_eq!(d.summary, "Fix the widget");
+        assert_eq!(d.status, "In Progress");
+        assert_eq!(d.assignee, "Ada Lovelace");
+        assert_eq!(d.estimate_seconds, Some(7200));
+        assert_eq!(d.total_spent_seconds, Some(3600));
+    }
+
+    #[test]
+    fn parse_issue_json_unassigned_and_timetracking_fallback() {
+        let body = serde_json::json!({
+            "key": "ABC-1",
+            "fields": {
+                "summary": "Untitled",
+                "status": { "name": "To Do" },
+                "assignee": null,
+                "timetracking": {
+                    "originalEstimateSeconds": 1800,
+                    "timeSpentSeconds": 900
+                }
+            }
+        });
+        let d = parse_issue_json("ABC-1", &body).unwrap();
+        assert_eq!(d.assignee, "Unassigned");
+        assert_eq!(d.estimate_seconds, Some(1800));
+        assert_eq!(d.total_spent_seconds, Some(900));
     }
 }
