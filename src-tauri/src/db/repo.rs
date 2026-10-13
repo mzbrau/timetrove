@@ -55,17 +55,13 @@ impl Db {
     pub fn list_tasks(&self, include_archived: bool) -> Result<Vec<Task>, String> {
         self.with_conn(|conn| {
             let mut stmt = if include_archived {
-                conn.prepare(
-                    "SELECT id, name, color, description, notes, archived, starred,
-                            jira_issue_key, jira_reported_ms, jira_pending_ms, created_at, updated_at
-                     FROM tasks ORDER BY starred DESC, name COLLATE NOCASE",
-                )
+                conn.prepare(&format!(
+                    "SELECT {TASK_SELECT} FROM tasks ORDER BY starred DESC, name COLLATE NOCASE"
+                ))
             } else {
-                conn.prepare(
-                    "SELECT id, name, color, description, notes, archived, starred,
-                            jira_issue_key, jira_reported_ms, jira_pending_ms, created_at, updated_at
-                     FROM tasks WHERE archived = 0 ORDER BY starred DESC, name COLLATE NOCASE",
-                )
+                conn.prepare(&format!(
+                    "SELECT {TASK_SELECT} FROM tasks WHERE archived = 0 ORDER BY starred DESC, name COLLATE NOCASE"
+                ))
             }
             .map_err(|e| e.to_string())?;
             let rows = stmt
@@ -80,9 +76,7 @@ impl Db {
     pub fn get_task(&self, id: &str) -> Result<Option<Task>, String> {
         self.with_conn(|conn| {
             conn.query_row(
-                "SELECT id, name, color, description, notes, archived, starred,
-                        jira_issue_key, jira_reported_ms, jira_pending_ms, created_at, updated_at
-                 FROM tasks WHERE id = ?1",
+                &format!("SELECT {TASK_SELECT} FROM tasks WHERE id = ?1"),
                 [id],
                 map_task,
             )
@@ -127,14 +121,24 @@ impl Db {
             jira_issue_key,
             jira_reported_ms: 0,
             jira_pending_ms: 0,
+            jira_link_baseline_ms: 0,
+            jira_issue_summary: String::new(),
+            jira_issue_status: String::new(),
+            jira_issue_assignee: String::new(),
+            jira_issue_estimate_s: None,
+            jira_issue_total_spent_s: None,
+            jira_issue_fetched_at: None,
             created_at: now,
             updated_at: now,
         };
         self.with_conn(|conn| {
             conn.execute(
                 "INSERT INTO tasks (id, name, color, description, notes, archived, starred,
-                                   jira_issue_key, jira_reported_ms, jira_pending_ms, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, ?6, 0, 0, ?7, ?8)",
+                                   jira_issue_key, jira_reported_ms, jira_pending_ms,
+                                   jira_link_baseline_ms, jira_issue_summary, jira_issue_status,
+                                   jira_issue_assignee, jira_issue_estimate_s, jira_issue_total_spent_s,
+                                   jira_issue_fetched_at, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, ?6, 0, 0, 0, '', '', '', NULL, NULL, NULL, ?7, ?8)",
                 params![
                     task.id,
                     task.name,
@@ -184,42 +188,171 @@ impl Db {
         if let Some(starred) = input.starred {
             task.starred = starred;
         }
+        let mut key_changed = false;
+        let mut archive_old: Option<(String, String, i64)> = None;
         if let Some(raw_key) = input.jira_issue_key {
             let key = normalize_jira_issue_key_input(Some(&raw_key))?;
             if key != task.jira_issue_key {
+                key_changed = true;
+                if !task.jira_issue_key.is_empty() {
+                    let title = if task.jira_issue_summary.is_empty() {
+                        task.jira_issue_key.clone()
+                    } else {
+                        task.jira_issue_summary.clone()
+                    };
+                    archive_old = Some((
+                        task.jira_issue_key.clone(),
+                        title,
+                        task.jira_timetrove_posted_ms(),
+                    ));
+                }
                 task.jira_issue_key = key;
                 // Baseline at current total so only future work syncs (avoids re-posting history).
-                task.jira_reported_ms = self.task_total_ms(&task.id, Utc::now())?;
+                let total = self.task_total_ms(&task.id, Utc::now())?;
+                task.jira_reported_ms = total;
+                task.jira_link_baseline_ms = total;
                 task.jira_pending_ms = 0;
+                if let Some(details) = input.jira_issue_details {
+                    apply_jira_cache_to_task(&mut task, &details, Utc::now());
+                } else {
+                    clear_jira_cache_on_task(&mut task);
+                }
             }
+        } else if let Some(details) = input.jira_issue_details {
+            // Refresh cache without changing the key.
+            if details.issue_key == task.jira_issue_key {
+                apply_jira_cache_to_task(&mut task, &details, Utc::now());
+            }
+        }
+        // If key cleared, drop cache.
+        if key_changed && task.jira_issue_key.is_empty() {
+            clear_jira_cache_on_task(&mut task);
         }
         task.updated_at = Utc::now();
         self.with_conn(|conn| {
+            conn.execute_batch("BEGIN IMMEDIATE")
+                .map_err(|e| e.to_string())?;
+            let result = (|| {
+                if let Some((issue_key, title, booked_ms)) = archive_old {
+                    conn.execute(
+                        "INSERT INTO task_jira_history (id, task_id, issue_key, title, booked_ms, unlinked_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        params![
+                            Uuid::new_v4().to_string(),
+                            task.id,
+                            issue_key,
+                            title,
+                            booked_ms,
+                            task.updated_at.to_rfc3339(),
+                        ],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+                conn.execute(
+                    "UPDATE tasks SET name=?2, color=?3, description=?4, notes=?5, archived=?6, starred=?7,
+                            jira_issue_key=?8, jira_reported_ms=?9, jira_pending_ms=?10,
+                            jira_link_baseline_ms=?11, jira_issue_summary=?12, jira_issue_status=?13,
+                            jira_issue_assignee=?14, jira_issue_estimate_s=?15, jira_issue_total_spent_s=?16,
+                            jira_issue_fetched_at=?17, updated_at=?18
+                     WHERE id=?1",
+                    params![
+                        task.id,
+                        task.name,
+                        task.color,
+                        task.description,
+                        task.notes,
+                        task.archived as i32,
+                        task.starred as i32,
+                        task.jira_issue_key,
+                        task.jira_reported_ms,
+                        task.jira_pending_ms,
+                        task.jira_link_baseline_ms,
+                        task.jira_issue_summary,
+                        task.jira_issue_status,
+                        task.jira_issue_assignee,
+                        task.jira_issue_estimate_s,
+                        task.jira_issue_total_spent_s,
+                        task.jira_issue_fetched_at.map(|t| t.to_rfc3339()),
+                        task.updated_at.to_rfc3339(),
+                    ],
+                )
+                .map_err(|e| {
+                    if e.to_string().contains("UNIQUE") {
+                        "A task with that name already exists".into()
+                    } else {
+                        e.to_string()
+                    }
+                })?;
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    Err(e)
+                }
+            }
+        })?;
+        Ok(task)
+    }
+
+    pub fn list_task_jira_history(&self, task_id: &str) -> Result<Vec<TaskJiraHistoryEntry>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, task_id, issue_key, title, booked_ms, unlinked_at
+                     FROM task_jira_history
+                     WHERE task_id = ?1
+                     ORDER BY unlinked_at DESC",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([task_id], map_jira_history)
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })
+    }
+
+    /// Persist fetched Jira issue details onto the task cache columns.
+    pub fn update_jira_issue_cache(
+        &self,
+        task_id: &str,
+        details: &JiraIssueDetails,
+    ) -> Result<Task, String> {
+        let mut task = self
+            .get_task(task_id)?
+            .ok_or_else(|| "Task not found".to_string())?;
+        if task.jira_issue_key.is_empty() {
+            return Err("Task has no linked Jira issue".into());
+        }
+        if details.issue_key != task.jira_issue_key {
+            return Err("Issue key does not match the linked task".into());
+        }
+        apply_jira_cache_to_task(&mut task, details, Utc::now());
+        task.updated_at = Utc::now();
+        self.with_conn(|conn| {
             conn.execute(
-                "UPDATE tasks SET name=?2, color=?3, description=?4, notes=?5, archived=?6, starred=?7,
-                        jira_issue_key=?8, jira_reported_ms=?9, jira_pending_ms=?10, updated_at=?11
+                "UPDATE tasks SET jira_issue_summary=?2, jira_issue_status=?3, jira_issue_assignee=?4,
+                        jira_issue_estimate_s=?5, jira_issue_total_spent_s=?6, jira_issue_fetched_at=?7,
+                        updated_at=?8
                  WHERE id=?1",
                 params![
                     task.id,
-                    task.name,
-                    task.color,
-                    task.description,
-                    task.notes,
-                    task.archived as i32,
-                    task.starred as i32,
-                    task.jira_issue_key,
-                    task.jira_reported_ms,
-                    task.jira_pending_ms,
+                    task.jira_issue_summary,
+                    task.jira_issue_status,
+                    task.jira_issue_assignee,
+                    task.jira_issue_estimate_s,
+                    task.jira_issue_total_spent_s,
+                    task.jira_issue_fetched_at.map(|t| t.to_rfc3339()),
                     task.updated_at.to_rfc3339(),
                 ],
             )
-            .map_err(|e| {
-                if e.to_string().contains("UNIQUE") {
-                    "A task with that name already exists".into()
-                } else {
-                    e.to_string()
-                }
-            })?;
+            .map_err(|e| e.to_string())?;
             Ok(())
         })?;
         Ok(task)
@@ -308,11 +441,9 @@ impl Db {
     pub fn list_tasks_with_jira_key(&self) -> Result<Vec<Task>, String> {
         self.with_conn(|conn| {
             let mut stmt = conn
-                .prepare(
-                    "SELECT id, name, color, description, notes, archived, starred,
-                            jira_issue_key, jira_reported_ms, jira_pending_ms, created_at, updated_at
-                     FROM tasks WHERE jira_issue_key != '' ORDER BY name COLLATE NOCASE",
-                )
+                .prepare(&format!(
+                    "SELECT {TASK_SELECT} FROM tasks WHERE jira_issue_key != '' ORDER BY name COLLATE NOCASE"
+                ))
                 .map_err(|e| e.to_string())?;
             let rows = stmt
                 .query_map([], map_task)
@@ -935,6 +1066,28 @@ impl Db {
         })
     }
 
+    pub fn list_discards_between(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<DiscardLogEntry>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, start, end, duration_ms, created_at FROM discard_log
+                     WHERE start < ?2 AND end > ?1
+                     ORDER BY start",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![start.to_rfc3339(), end.to_rfc3339()], map_discard)
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })
+    }
+
     pub fn insert_discard(
         &self,
         start: DateTime<Utc>,
@@ -1319,7 +1472,14 @@ impl Db {
     }
 }
 
+const TASK_SELECT: &str = "id, name, color, description, notes, archived, starred,
+    jira_issue_key, jira_reported_ms, jira_pending_ms, jira_link_baseline_ms,
+    jira_issue_summary, jira_issue_status, jira_issue_assignee,
+    jira_issue_estimate_s, jira_issue_total_spent_s, jira_issue_fetched_at,
+    created_at, updated_at";
+
 fn map_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
+    let fetched: Option<String> = row.get(16)?;
     Ok(Task {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -1331,13 +1491,51 @@ fn map_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         jira_issue_key: row.get(7)?,
         jira_reported_ms: row.get(8)?,
         jira_pending_ms: row.get(9)?,
-        created_at: parse_dt(&row.get::<_, String>(10)?)?,
-        updated_at: parse_dt(&row.get::<_, String>(11)?)?,
+        jira_link_baseline_ms: row.get(10)?,
+        jira_issue_summary: row.get(11)?,
+        jira_issue_status: row.get(12)?,
+        jira_issue_assignee: row.get(13)?,
+        jira_issue_estimate_s: row.get(14)?,
+        jira_issue_total_spent_s: row.get(15)?,
+        jira_issue_fetched_at: fetched
+            .map(|s| parse_dt(&s))
+            .transpose()?,
+        created_at: parse_dt(&row.get::<_, String>(17)?)?,
+        updated_at: parse_dt(&row.get::<_, String>(18)?)?,
     })
 }
 
+fn map_jira_history(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskJiraHistoryEntry> {
+    Ok(TaskJiraHistoryEntry {
+        id: row.get(0)?,
+        task_id: row.get(1)?,
+        issue_key: row.get(2)?,
+        title: row.get(3)?,
+        booked_ms: row.get(4)?,
+        unlinked_at: parse_dt(&row.get::<_, String>(5)?)?,
+    })
+}
+
+fn apply_jira_cache_to_task(task: &mut Task, details: &JiraIssueDetails, now: DateTime<Utc>) {
+    task.jira_issue_summary = details.summary.clone();
+    task.jira_issue_status = details.status.clone();
+    task.jira_issue_assignee = details.assignee.clone();
+    task.jira_issue_estimate_s = details.estimate_seconds;
+    task.jira_issue_total_spent_s = details.total_spent_seconds;
+    task.jira_issue_fetched_at = Some(now);
+}
+
+fn clear_jira_cache_on_task(task: &mut Task) {
+    task.jira_issue_summary.clear();
+    task.jira_issue_status.clear();
+    task.jira_issue_assignee.clear();
+    task.jira_issue_estimate_s = None;
+    task.jira_issue_total_spent_s = None;
+    task.jira_issue_fetched_at = None;
+}
+
 /// Empty clears the link. Non-empty must look like `PROJ-123`.
-fn normalize_jira_issue_key_input(raw: Option<&str>) -> Result<String, String> {
+pub fn normalize_jira_issue_key_input(raw: Option<&str>) -> Result<String, String> {
     let Some(raw) = raw else {
         return Ok(String::new());
     };
@@ -1384,6 +1582,16 @@ fn map_slice(row: &rusqlite::Row<'_>) -> rusqlite::Result<TimeSlice> {
         start: parse_dt(&row.get::<_, String>(2)?)?,
         end: end.map(|s| parse_dt(&s)).transpose()?,
         note: row.get(4)?,
+    })
+}
+
+fn map_discard(row: &rusqlite::Row<'_>) -> rusqlite::Result<DiscardLogEntry> {
+    Ok(DiscardLogEntry {
+        id: row.get(0)?,
+        start: parse_dt(&row.get::<_, String>(1)?)?,
+        end: parse_dt(&row.get::<_, String>(2)?)?,
+        duration_ms: row.get(3)?,
+        created_at: parse_dt(&row.get::<_, String>(4)?)?,
     })
 }
 
@@ -1452,6 +1660,7 @@ mod tests {
                 archived: Some(true),
                 starred: None,
                 jira_issue_key: None,
+                jira_issue_details: None,
             })
             .unwrap();
         assert_eq!(updated.name, "Beta");
@@ -1484,11 +1693,22 @@ mod tests {
                 archived: None,
                 starred: None,
                 jira_issue_key: Some("thing-123".into()),
+                jira_issue_details: Some(JiraIssueDetails {
+                    issue_key: "THING-123".into(),
+                    summary: "Thing title".into(),
+                    status: "Open".into(),
+                    assignee: "Unassigned".into(),
+                    estimate_seconds: Some(3600),
+                    total_spent_seconds: Some(0),
+                }),
             })
             .unwrap();
         assert_eq!(linked.jira_issue_key, "THING-123");
         assert_eq!(linked.jira_reported_ms, total);
+        assert_eq!(linked.jira_link_baseline_ms, total);
         assert_eq!(linked.jira_pending_ms, 0);
+        assert_eq!(linked.jira_issue_summary, "Thing title");
+        assert_eq!(linked.jira_timetrove_posted_ms(), 0);
 
         db.set_jira_pending_ms(&t.id, 60_000).unwrap();
         assert_eq!(
@@ -1506,11 +1726,28 @@ mod tests {
                 archived: None,
                 starred: None,
                 jira_issue_key: Some("OTHER-9".into()),
+                jira_issue_details: Some(JiraIssueDetails {
+                    issue_key: "OTHER-9".into(),
+                    summary: "Other title".into(),
+                    status: "In Progress".into(),
+                    assignee: "Ada".into(),
+                    estimate_seconds: None,
+                    total_spent_seconds: Some(1200),
+                }),
             })
             .unwrap();
         assert_eq!(relinked.jira_issue_key, "OTHER-9");
         assert_eq!(relinked.jira_reported_ms, total);
+        assert_eq!(relinked.jira_link_baseline_ms, total);
         assert_eq!(relinked.jira_pending_ms, 0);
+        assert_eq!(relinked.jira_issue_summary, "Other title");
+
+        let history = db.list_task_jira_history(&t.id).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].issue_key, "THING-123");
+        assert_eq!(history[0].title, "Thing title");
+        // No TimeTrove posts yet while THING-123 was linked.
+        assert_eq!(history[0].booked_ms, 0);
 
         let err = db
             .update_task(UpdateTaskInput {
@@ -1522,9 +1759,113 @@ mod tests {
                 archived: None,
                 starred: None,
                 jira_issue_key: Some("not a key".into()),
+                jira_issue_details: None,
             })
             .unwrap_err();
         assert!(err.contains("PROJECT-123"));
+    }
+
+    #[test]
+    fn jira_relink_rolls_back_history_when_update_fails() {
+        let (_dir, db) = test_db();
+        let a = sample_task(&db, "KeepName");
+        let t = sample_task(&db, "RelinkAtomic");
+        db.update_task(UpdateTaskInput {
+            id: t.id.clone(),
+            name: None,
+            color: None,
+            description: None,
+            notes: None,
+            archived: None,
+            starred: None,
+            jira_issue_key: Some("OLD-9".into()),
+            jira_issue_details: Some(JiraIssueDetails {
+                issue_key: "OLD-9".into(),
+                summary: "Old".into(),
+                status: "Open".into(),
+                assignee: "Unassigned".into(),
+                estimate_seconds: None,
+                total_spent_seconds: None,
+            }),
+        })
+        .unwrap();
+
+        let err = db
+            .update_task(UpdateTaskInput {
+                id: t.id.clone(),
+                name: Some(a.name.clone()), // duplicate → UPDATE fails
+                color: None,
+                description: None,
+                notes: None,
+                archived: None,
+                starred: None,
+                jira_issue_key: Some("NEW-9".into()),
+                jira_issue_details: None,
+            })
+            .unwrap_err();
+        assert!(err.contains("already exists"));
+        assert!(db.list_task_jira_history(&t.id).unwrap().is_empty());
+        let still = db.get_task(&t.id).unwrap().unwrap();
+        assert_eq!(still.jira_issue_key, "OLD-9");
+        assert_eq!(still.name, "RelinkAtomic");
+    }
+
+    #[test]
+    fn jira_relink_archives_posted_hours() {
+        let (_dir, db) = test_db();
+        let t = sample_task(&db, "RelinkPosted");
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 10, 0, 0).unwrap();
+        let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 10, 5, 0).unwrap();
+        db.insert_closed_slice(&t.id, t0, t1, "").unwrap();
+        let total = db.task_total_ms(&t.id, t1).unwrap();
+
+        db.update_task(UpdateTaskInput {
+            id: t.id.clone(),
+            name: None,
+            color: None,
+            description: None,
+            notes: None,
+            archived: None,
+            starred: None,
+            jira_issue_key: Some("OLD-1".into()),
+            jira_issue_details: Some(JiraIssueDetails {
+                issue_key: "OLD-1".into(),
+                summary: "Old issue".into(),
+                status: "Done".into(),
+                assignee: "Bob".into(),
+                estimate_seconds: None,
+                total_spent_seconds: None,
+            }),
+        })
+        .unwrap();
+        // Simulate TimeTrove posting 2 minutes while linked.
+        db.commit_jira_reported_ms(&t.id, 120_000).unwrap();
+        let after_post = db.get_task(&t.id).unwrap().unwrap();
+        assert_eq!(after_post.jira_timetrove_posted_ms(), 120_000);
+        assert_eq!(after_post.jira_reported_ms, total + 120_000);
+
+        db.update_task(UpdateTaskInput {
+            id: t.id.clone(),
+            name: None,
+            color: None,
+            description: None,
+            notes: None,
+            archived: None,
+            starred: None,
+            jira_issue_key: Some("NEW-2".into()),
+            jira_issue_details: None,
+        })
+        .unwrap();
+        let history = db.list_task_jira_history(&t.id).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].issue_key, "OLD-1");
+        assert_eq!(history[0].title, "Old issue");
+        assert_eq!(history[0].booked_ms, 120_000);
+        let linked = db.get_task(&t.id).unwrap().unwrap();
+        assert_eq!(linked.jira_issue_key, "NEW-2");
+        assert_eq!(linked.jira_timetrove_posted_ms(), 0);
+        // Baseline absorbs prior total+posted so NEW-2 only gets future work.
+        assert_eq!(linked.jira_reported_ms, linked.jira_link_baseline_ms);
     }
 
     #[test]
@@ -1540,6 +1881,7 @@ mod tests {
             archived: None,
             starred: None,
             jira_issue_key: Some("PROJ-1".into()),
+            jira_issue_details: None,
         })
         .unwrap();
         db.set_jira_pending_ms(&t.id, 90_000).unwrap();
@@ -1579,6 +1921,7 @@ mod tests {
             archived: None,
             starred: Some(true),
             jira_issue_key: None,
+            jira_issue_details: None,
         })
         .unwrap();
 

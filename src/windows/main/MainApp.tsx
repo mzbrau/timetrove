@@ -6,11 +6,12 @@ import { TasksPanel } from "./TasksPanel";
 import { TimesheetPanel } from "./TimesheetPanel";
 import { EntriesPanel } from "./EntriesPanel";
 import { SettingsPanel } from "./SettingsPanel";
+import { InsightsPanel } from "./InsightsPanel";
 import { ConfirmBar } from "./ConfirmBar";
 import { api } from "../../shared/api";
 import "./main.css";
 
-type Tab = "tasks" | "timesheet" | "entries" | "settings";
+type Tab = "tasks" | "timesheet" | "insights" | "entries" | "settings";
 
 export function MainApp() {
   const { state, error, setError } = useTrackerState();
@@ -143,6 +144,7 @@ export function MainApp() {
           [
             ["tasks", "Tasks"],
             ["timesheet", "Timesheet"],
+            ["insights", "Insights"],
             ["entries", "Time entries"],
             ["settings", "Settings"],
           ] as const
@@ -160,7 +162,7 @@ export function MainApp() {
 
       {pendingTab && (
         <ConfirmBar
-          message="You have unsaved task changes."
+          message="You have unsaved task changes. Save to keep edits, including any Jira issue link."
           confirmLabel="Save"
           secondaryLabel="Discard"
           cancelLabel="Cancel"
@@ -193,6 +195,7 @@ export function MainApp() {
           />
         )}
         {tab === "timesheet" && <TimesheetPanel />}
+        {tab === "insights" && <InsightsPanel />}
         {tab === "entries" && <EntriesPanel state={state} />}
         {tab === "settings" && <SettingsPanel />}
       </main>

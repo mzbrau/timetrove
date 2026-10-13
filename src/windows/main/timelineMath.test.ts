@@ -15,6 +15,7 @@ import {
   MAX_FIT_ZOOM,
   msInDay,
   nextZoomLevel,
+  pixelRangeStyle,
   prevZoomLevel,
   resizeNeighborBounds,
   snapMs,
@@ -178,5 +179,48 @@ describe("timelineMath", () => {
     expect(formatDayClock("2026-10-12", 13 * 60 * 60_000 + 5 * 60_000)).toBe(
       "13:05",
     );
+  });
+
+  it("pixel-snaps range edges and falls back to percent before measure", () => {
+    expect(pixelRangeStyle(0, DAY_MS / 2, DAY_MS, 0)).toEqual({
+      left: "0%",
+      width: "50%",
+    });
+    expect(pixelRangeStyle(0, DAY_MS / 2, DAY_MS, 1000)).toEqual({
+      left: "0px",
+      width: "500px",
+    });
+    // Half-pixel midpoints round independently so neighbors stay flush.
+    expect(pixelRangeStyle(0, DAY_MS / 3, DAY_MS, 100)).toEqual({
+      left: "0px",
+      width: "33px",
+    });
+    expect(pixelRangeStyle(DAY_MS / 3, (2 * DAY_MS) / 3, DAY_MS, 100)).toEqual({
+      left: "33px",
+      width: "34px",
+    });
+    expect(pixelRangeStyle(0, 1, DAY_MS, 1000, 4)).toEqual({
+      left: "0px",
+      width: "4px",
+    });
+  });
+
+  it("snaps range edges to device pixels", () => {
+    // At 2x, 33.3 CSS px → 33.5 (device-aligned).
+    expect(pixelRangeStyle(0, DAY_MS / 3, DAY_MS, 100, 4, 2)).toEqual({
+      left: "0px",
+      width: "33.5px",
+    });
+    expect(pixelRangeStyle(DAY_MS / 3, (2 * DAY_MS) / 3, DAY_MS, 100, 4, 2)).toEqual(
+      {
+        left: "33.5px",
+        width: "33px",
+      },
+    );
+    // At 1.5x, round(33.333*1.5)/1.5 = round(50)/1.5 = 50/1.5.
+    expect(pixelRangeStyle(0, DAY_MS / 3, DAY_MS, 100, 4, 1.5)).toEqual({
+      left: "0px",
+      width: `${50 / 1.5}px`,
+    });
   });
 });

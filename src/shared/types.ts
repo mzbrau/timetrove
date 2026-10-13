@@ -12,8 +12,35 @@ export interface Task {
   jiraReportedMs: number;
   /** In-flight worklog ms (internal); not shown in UI. */
   jiraPendingMs: number;
+  /** Task total ms when the current issue was linked. */
+  jiraLinkBaselineMs: number;
+  /** Cached Jira fields for the current linked issue. */
+  jiraIssueSummary: string;
+  jiraIssueStatus: string;
+  jiraIssueAssignee: string;
+  jiraIssueEstimateS: number | null;
+  jiraIssueTotalSpentS: number | null;
+  jiraIssueFetchedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface JiraIssueDetails {
+  issueKey: string;
+  summary: string;
+  status: string;
+  assignee: string;
+  estimateSeconds: number | null;
+  totalSpentSeconds: number | null;
+}
+
+export interface TaskJiraHistoryEntry {
+  id: string;
+  taskId: string;
+  issueKey: string;
+  title: string;
+  bookedMs: number;
+  unlinkedAt: string;
 }
 
 export interface TaskBookingSummary {
@@ -99,4 +126,39 @@ export interface Timesheet {
   grandTotalMs: number;
   grandTotalDisplay: string;
   csv: string;
+}
+
+export interface InsightsTaskTotal {
+  taskId: string;
+  name: string;
+  color: string;
+  totalMs: number;
+}
+
+export interface InsightsWeekTotal {
+  weekStart: string;
+  totalMs: number;
+}
+
+export interface InsightsReport {
+  rangeStart: string;
+  rangeEnd: string;
+  totalMs: number;
+  maxDayMs: number;
+  avgDayMs: number | null;
+  /** Mon=0 … Sun=6 */
+  avgByWeekdayMs: (number | null)[];
+  earliestStartMins: number | null;
+  latestFinishMins: number | null;
+  avgStartMins: number | null;
+  avgFinishMins: number | null;
+  avgLunchMs: number | null;
+  qualifyingDays: number;
+  /** 0–1 */
+  goalHitRate: number | null;
+  avgSessionMs: number | null;
+  discardedMs: number;
+  tasks: InsightsTaskTotal[];
+  weekly: InsightsWeekTotal[];
+  byHourMs: number[];
 }

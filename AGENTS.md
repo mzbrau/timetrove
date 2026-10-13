@@ -8,12 +8,11 @@ Inspired by Grindstone (work items + time slices + idle correction). Product req
 
 Do not add these unless the user explicitly expands scope:
 
-- Charts / insights beyond the timesheet grid
 - External timesheet / ERP submission (beyond optional Jira Cloud worklogs)
 - Multi-user, cloud sync, or multi-machine
 - In-app custom property engine
 - Decimal-hour CSV / reporting formats
-- Jira Server/DC, OAuth, multi-issue-per-task, or inbound Jira → TimeTrove sync
+- Jira Server/DC, OAuth, concurrent multi-issue booking, or inbound Jira → TimeTrove sync
 
 ## Stack
 
@@ -44,7 +43,7 @@ One Vite entry ([`src/main.tsx`](src/main.tsx)); `getCurrentWebviewWindow().labe
 
 | Label | Role | UI |
 |-------|------|-----|
-| `main` | Tasks, timesheet, entries, settings, day timeline | [`src/windows/main/`](src/windows/main/) |
+| `main` | Tasks, timesheet, insights, entries, settings, day timeline | [`src/windows/main/`](src/windows/main/) |
 | `tracker` | Always-visible compact bar (color, task, daily total; default `HH:MM`) | [`src/windows/tracker/`](src/windows/tracker/) |
 | `switcher` | Global-shortcut task search / create | [`src/windows/switcher/`](src/windows/switcher/) |
 | `gap` | Idle / sleep / startup attribution prompt | [`src/windows/gap/`](src/windows/gap/) |
@@ -58,7 +57,7 @@ Default task-switch shortcut: `Cmd/Ctrl+Shift+T`.
 | [`engine/`](src-tauri/src/engine/) | Phase machine, tracking, gaps, checkpoints, midnight split, window show/position helpers |
 | [`commands/`](src-tauri/src/commands/) | Thin `#[tauri::command]` wrappers → engine/db; emit `tracker-state` |
 | [`db/`](src-tauri/src/db/) | SQLite migrate + repo |
-| [`domain/`](src-tauri/src/domain/) | Models, time math, formatting, task colors |
+| [`domain/`](src-tauri/src/domain/) | Models, time math, insights aggregation, formatting, task colors |
 | [`jira/`](src-tauri/src/jira/) | Optional Jira Cloud worklog client + watermark sync (hourly + stop/switch flush) |
 | [`chrome/`](src-tauri/src/chrome/) | System tray / OS chrome |
 
@@ -72,6 +71,8 @@ Background loops (idle check, checkpoint, midnight split, Jira hourly sync, stat
 
 Prefer extending shared helpers over duplicating format or time math on either side of the FFI boundary.
 
+**Insights:** main-window tab ([`InsightsPanel.tsx`](src/windows/main/InsightsPanel.tsx)) loads one `get_insights(rangeStart, rangeEnd)` report from Rust ([`domain/insights.rs`](src-tauri/src/domain/insights.rs)). Qualifying days are local days with ≥2h booked; charts use each task’s color via Recharts.
+
 ## Domain model
 
 ### Task
@@ -81,7 +82,7 @@ Flat list (no projects): `name`, `color`, `description`, `notes`, `archived`, op
 - Prefer unique task names
 - Colors auto-assigned to stay distinct; user-editable
 - Archived: hidden from switcher / start options; still appear on timesheets/history when they have time
-- Optional Jira Cloud link: when sync is enabled in settings, a task may store one issue key; `jira_reported_ms` is the watermark of time already posted as worklogs. Changing or clearing the issue key baselines the watermark at the task’s current total so only future work syncs (avoids double-counting history on the new key).
+- Optional Jira Cloud link: when sync is enabled in settings, a task has **one active** issue key that receives worklogs. `jira_reported_ms` / `jira_link_baseline_ms` track TimeTrove-posted time for that key; changing or clearing the key flushes the old key, archives `{key, title, booked_ms}` into previous-ticket history, and baselines the watermark at the task’s current total so only future work syncs to the new key. The task UI validates via Add (fetch title/status/assignee/estimate/Jira total), shows a details card, and refreshes cached details in the background on select.
 
 ### Time slice
 

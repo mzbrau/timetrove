@@ -12,16 +12,16 @@ Inspired by [Grindstone](https://www.epiforge.com/grindstone/) (work items + tim
 - Make the current task and “hours today” always visible
 - Switch or create tasks with a global shortcut and almost no clicking
 - Produce a Monday-start weekly timesheet (task × day) with totals
+- Insights dashboard over selectable periods (task charts, schedule averages, trends)
 - Store everything locally in SQLite; backup/export without a cloud dependency
 
 ### Non-goals (v1)
 
-- Charts / insights beyond the timesheet grid
 - External timesheet / ERP submission (beyond optional Jira Cloud worklogs)
 - Multi-user, sync, or multiple machines
 - In-app custom property engine (add fields in code later if needed)
 - Decimal-hour CSV / reporting formats
-- Jira Server/DC, OAuth, multi-issue-per-task, or inbound Jira → TimeTrove sync
+- Jira Server/DC, OAuth, concurrent multi-issue booking, or inbound Jira → TimeTrove sync
 
 ---
 
@@ -32,7 +32,7 @@ Inspired by [Grindstone](https://www.epiforge.com/grindstone/) (work items + tim
 | **Windows** | Product target | True taskbar embedding is not available on Windows 11. v1 uses a **docked always-on-top bar** pinned above the taskbar near the tray (color dot, task name, daily `HH:MM`) plus a **system tray** icon/menu as fallback when the bar is hidden. Not-tracking state must be obvious (no task name). |
 | **macOS** | Dev / test harness | Same app logic; **floating always-on-top** compact bar (draggable; can hide to menu bar / tray). No taskbar embedding. |
 
-Main window (both OS): tasks, timesheet, manual time editing, settings.
+Main window (both OS): tasks, timesheet, insights dashboard, manual time editing, settings.
 
 Auto-start at login: on for Windows; Mac login item for convenience while developing.
 
@@ -60,8 +60,10 @@ Flat list (no projects).
 | description | Static “what is this task” |
 | notes | Ongoing scratchpad while working |
 | archived | Soft-hide from timing switcher; **unarchive** supported |
-| jira_issue_key | Optional Jira Cloud issue key (e.g. `THING-123`) when worklog sync is enabled |
-| jira_reported_ms | Watermark of ms successfully posted to that issue as worklogs |
+| jira_issue_key | Optional active Jira Cloud issue key (e.g. `THING-123`) when worklog sync is enabled |
+| jira_reported_ms | Watermark of ms successfully posted for the current issue key |
+| jira_link_baseline_ms | Task total at link time; TimeTrove posted = reported − baseline |
+| previous tickets | History of prior keys (id, title, TimeTrove booked ms) — display only; only the active key receives new worklogs |
 
 Archived tasks:
 
@@ -89,7 +91,7 @@ When the user discards a gap:
 
 ### Optional Jira Cloud worklog sync
 
-Disabled by default. Settings: site URL, email, API token. When enabled, tasks may link one issue key; TimeTrove posts unreported time as Jira worklogs hourly and on stop/switch. Does not delete/edit remote worklogs if local history is shortened.
+Disabled by default. Settings: site URL, email, API token. When enabled, tasks may link one active issue key (validated via Add against Jira); TimeTrove posts unreported time as Jira worklogs hourly and on stop/switch. Relinking archives the prior key into previous tickets and baselines so time is not double-posted. Does not delete/edit remote worklogs if local history is shortened.
 
 ---
 
@@ -211,8 +213,8 @@ Grindstone already covers most of the core. Gaps that justify a custom tool:
 
 ## Post-v1 (ordered roughly)
 
-1. **Charts / insights** — e.g. per-task bar chart for the week
-2. **Richer Jira** — multi-issue links, issue picker, Server/DC
+1. **Richer Insights** — streaks, weekend vs weekday, switches/day, stddev
+2. **Richer Jira** — concurrent multi-issue links, issue picker, Server/DC
 3. Richer export / external timesheet systems
 4. Optional custom path for the DB (Dropbox/iCloud-friendly)
 5. Hard-coded extra task fields if a real need appears (still not a user-facing property builder)
@@ -231,6 +233,7 @@ Grindstone already covers most of the core. Gaps that justify a custom tool:
 - [ ] Archive/unarchive; archived hidden from switcher, visible on timesheet when relevant
 - [ ] Full manual time edit (add / edit / split / delete / move)
 - [ ] Monday-start timesheet with sums; CSV + copy
+- [ ] Insights tab with period filter, KPIs, and task-colored charts
 - [ ] SQLite in app data; reveal + export/import backup
 - [ ] Settings: idle threshold, daily goal, shortcut, start at login
 - [ ] Mac: floating bar usable for daily testing

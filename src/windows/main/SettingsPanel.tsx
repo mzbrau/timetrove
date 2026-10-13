@@ -166,24 +166,6 @@ export function SettingsPanel() {
         </span>
       </label>
 
-      <div className="row-actions">
-        <button
-          type="button"
-          onClick={async () => {
-            try {
-              const saved = await api.updateSettings(settings);
-              setSettings(saved);
-              applyTheme(saved.theme === "light" ? "light" : "dark");
-              setMessage("Settings saved.");
-            } catch (e) {
-              setError(String(e));
-            }
-          }}
-        >
-          Save settings
-        </button>
-      </div>
-
       <hr
         style={{ border: 0, borderTop: "1px solid var(--line)", width: "100%" }}
       />
@@ -329,6 +311,24 @@ export function SettingsPanel() {
             Import backup
           </button>
         </div>
+      </div>
+
+      <div className="row-actions">
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              const saved = await api.updateSettings(settings);
+              setSettings(saved);
+              applyTheme(saved.theme === "light" ? "light" : "dark");
+              setMessage("Settings saved.");
+            } catch (e) {
+              setError(String(e));
+            }
+          }}
+        >
+          Save settings
+        </button>
       </div>
     </div>
   );

@@ -235,5 +235,88 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         })?;
     }
 
+    // v11: re-dock tracker once — dock geometry moved from taskbar band into work area.
+    if version < 11 {
+        migrate_tx(conn, |conn| {
+            conn.execute(
+                "DELETE FROM settings WHERE key = 'tracker_default_position_applied'",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (11)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+    }
+
+    // v12: Jira issue cache, link baseline, and previous-ticket history.
+    if version < 12 {
+        migrate_tx(conn, |conn| {
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN jira_link_baseline_ms INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN jira_issue_summary TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN jira_issue_status TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN jira_issue_assignee TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN jira_issue_estimate_s INTEGER",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN jira_issue_total_spent_s INTEGER",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN jira_issue_fetched_at TEXT",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            // Existing links: treat current reported watermark as already-baselined
+            // (posted amount unknown historically → show 0 TimeTrove posted until new syncs).
+            conn.execute(
+                "UPDATE tasks SET jira_link_baseline_ms = jira_reported_ms WHERE jira_issue_key != ''",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "CREATE TABLE task_jira_history (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    task_id TEXT NOT NULL,
+                    issue_key TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    booked_ms INTEGER NOT NULL DEFAULT 0,
+                    unlinked_at TEXT NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+                )",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "CREATE INDEX idx_task_jira_history_task ON task_jira_history(task_id, unlinked_at DESC)",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (12)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+    }
+
     Ok(())
 }

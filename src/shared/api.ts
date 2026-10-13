@@ -1,8 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  InsightsReport,
+  JiraIssueDetails,
   Settings,
   Task,
   TaskBookingSummary,
+  TaskJiraHistoryEntry,
   TimeSlice,
   Timesheet,
   TrackerState,
@@ -28,8 +31,15 @@ export const api = {
     archived?: boolean;
     starred?: boolean;
     jiraIssueKey?: string;
+    jiraIssueDetails?: JiraIssueDetails;
   }) => invoke<Task>("update_task", { input }),
   testJiraConnection: () => invoke<string>("test_jira_connection"),
+  fetchJiraIssue: (issueKey: string) =>
+    invoke<JiraIssueDetails>("fetch_jira_issue", { issueKey }),
+  refreshJiraIssue: (taskId: string) =>
+    invoke<JiraIssueDetails | null>("refresh_jira_issue", { taskId }),
+  listTaskJiraHistory: (taskId: string) =>
+    invoke<TaskJiraHistoryEntry[]>("list_task_jira_history", { taskId }),
   getTaskBookingSummary: (taskId: string) =>
     invoke<TaskBookingSummary>("get_task_booking_summary", { taskId }),
   startTask: (taskId: string) => invoke<TrackerState>("start_task", { taskId }),
@@ -48,6 +58,8 @@ export const api = {
     invoke<Settings>("update_settings", { settings }),
   getTimesheet: (weekStart: string) =>
     invoke<Timesheet>("get_timesheet", { weekStart }),
+  getInsights: (rangeStart: string, rangeEnd: string) =>
+    invoke<InsightsReport>("get_insights", { rangeStart, rangeEnd }),
   listSlicesForDay: (day: string) =>
     invoke<TimeSlice[]>("list_slices_for_day", { day }),
   createSlice: (input: {

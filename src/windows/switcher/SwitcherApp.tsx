@@ -101,7 +101,6 @@ export function SwitcherApp() {
   const submitSwitch = async () => {
     setError(null);
     const q = query.trim();
-    if (!q) return;
     try {
       if (exact) {
         await api.switchTask(exact.id);
@@ -113,6 +112,7 @@ export function SwitcherApp() {
         );
         return;
       }
+      if (!q) return;
       if (!confirmCreate) {
         setConfirmCreate(true);
         return;
@@ -250,8 +250,12 @@ export function SwitcherApp() {
               </button>
             </li>
           ))}
-          {filtered.length === 0 && query.trim() && (
-            <li className="empty">No matches — Enter to create</li>
+          {filtered.length === 0 && (
+            <li className="empty">
+              {query.trim()
+                ? "No matches — Enter to create"
+                : "No tasks yet — type a name and press Enter to create"}
+            </li>
           )}
         </ul>
       )}
