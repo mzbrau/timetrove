@@ -235,5 +235,19 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         })?;
     }
 
+    // v11: re-dock tracker once — dock geometry moved from taskbar band into work area.
+    if version < 11 {
+        migrate_tx(conn, |conn| {
+            conn.execute(
+                "DELETE FROM settings WHERE key = 'tracker_default_position_applied'",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (11)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+    }
+
     Ok(())
 }

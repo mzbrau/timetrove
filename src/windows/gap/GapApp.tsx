@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { api } from "../../shared/api";
 import { formatGap } from "../../shared/format";
+import { withStartupRetry } from "../../shared/startupRetry";
 import { useTrackerState } from "../../shared/useTrackerState";
 import type { Task } from "../../shared/types";
 import "./gap.css";
@@ -15,9 +16,50 @@ export function GapApp() {
   const [confirmCreate, setConfirmCreate] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const loadTasks = () => {
+    withStartupRetry(() => api.listTasks(false))
+      .then((list) => {
+        setTasks(list);
+        setError(null);
+      })
+      .catch((e) => setError(String(e)));
+  };
+
+  const leaveSearch = () => {
+    setMode("choose");
+    setQuery("");
+    setConfirmCreate(false);
+    setSelectedIndex(0);
+  };
+
+  const enterSearch = () => {
+    setMode("search");
+    setQuery("");
+    setConfirmCreate(false);
+    setSelectedIndex(0);
+    setError(null);
+    loadTasks();
+  };
+
   useEffect(() => {
-    api.listTasks(false).then(setTasks).catch(() => undefined);
+    loadTasks();
+    const onFocus = () => loadTasks();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, []);
+
+  const gapStart =
+    state?.phase.kind === "needsAttribution" ? state.phase.gapStart : null;
+
+  // New gap while the window stays mounted — return to the choose screen.
+  useEffect(() => {
+    if (gapStart) {
+      leaveSearch();
+      setError(null);
+      loadTasks();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset when gap identity changes
+  }, [gapStart]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -34,25 +76,9 @@ export function GapApp() {
     setConfirmCreate(false);
   }, [query, filtered.length]);
 
-  const leaveSearch = () => {
-    setMode("choose");
-    setQuery("");
-    setConfirmCreate(false);
-    setSelectedIndex(0);
-  };
-
-  const enterSearch = () => {
-    setMode("search");
-    setQuery("");
-    setConfirmCreate(false);
-    setSelectedIndex(0);
-    setError(null);
-  };
-
   const submitSearch = async () => {
     setError(null);
     const q = query.trim();
-    if (!q) return;
     try {
       if (exact) {
         await api.resolveGapOther(exact.id);
@@ -64,6 +90,7 @@ export function GapApp() {
         );
         return;
       }
+      if (!q) return;
       if (!confirmCreate) {
         setConfirmCreate(true);
         return;
@@ -194,8 +221,12 @@ export function GapApp() {
                 </button>
               </li>
             ))}
-            {filtered.length === 0 && query.trim() && (
-              <li className="empty">No matches — Enter to create</li>
+            {filtered.length === 0 && (
+              <li className="empty">
+                {query.trim()
+                  ? "No matches — Enter to create"
+                  : "No tasks yet — type a name and press Enter to create"}
+              </li>
             )}
           </ul>
           <button type="button" className="back" onClick={leaveSearch}>

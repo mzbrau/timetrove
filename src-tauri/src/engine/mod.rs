@@ -782,6 +782,12 @@ pub fn set_tracker_visible(app: &AppHandle, visible: bool) {
     if let Some(w) = app.get_webview_window("tracker") {
         if visible {
             let _ = w.show();
+            // Re-assert topmost after show — shell can drop it when the bar was hidden.
+            if let Some(engine) = app.try_state::<Arc<Engine>>() {
+                if let Ok(settings) = engine.db().get_settings() {
+                    let _ = w.set_always_on_top(settings.tracker_always_on_top);
+                }
+            }
         } else {
             let _ = w.hide();
         }
@@ -840,7 +846,7 @@ pub fn position_tracker(window: &WebviewWindow) {
     }
 }
 
-/// Dock into the taskbar band, left of the system tray (typical bottom taskbar).
+/// Dock just inside the work area above/beside the taskbar, left of the system tray.
 #[cfg(target_os = "windows")]
 fn windows_tracker_dock(
     mon_x: f64,
@@ -850,6 +856,7 @@ fn windows_tracker_dock(
     work: &tauri::PhysicalRect<i32, u32>,
     scale: f64,
 ) -> (f64, f64) {
+    const MARGIN: f64 = 4.0;
     let work_x = work.position.x as f64 / scale;
     let work_y = work.position.y as f64 / scale;
     let work_w = work.size.width as f64 / scale;
@@ -858,37 +865,27 @@ fn windows_tracker_dock(
     let work_right = work_x + work_w;
     let mon_bottom = mon_y + mon_h;
     let mon_right = mon_x + mon_w;
+    let tray_x = mon_right - TRACKER_WIDTH - WINDOWS_TRAY_RESERVE;
 
     if work_bottom < mon_bottom - 1.0 {
-        // Bottom taskbar: center in band, left of tray.
-        let band_h = mon_bottom - work_bottom;
-        let y = if band_h >= TRACKER_HEIGHT {
-            work_bottom + (band_h - TRACKER_HEIGHT) / 2.0
-        } else {
-            mon_bottom - TRACKER_HEIGHT
-        };
-        let x = mon_right - TRACKER_WIDTH - WINDOWS_TRAY_RESERVE;
-        (x, y)
+        // Bottom taskbar: sit above it in the work area, left of tray.
+        (tray_x, work_bottom - TRACKER_HEIGHT - MARGIN)
     } else if work_y > mon_y + 1.0 {
-        // Top taskbar
-        let band_h = work_y - mon_y;
-        let y = if band_h >= TRACKER_HEIGHT {
-            mon_y + (band_h - TRACKER_HEIGHT) / 2.0
-        } else {
-            mon_y
-        };
-        let x = mon_right - TRACKER_WIDTH - WINDOWS_TRAY_RESERVE;
-        (x, y)
+        // Top taskbar: sit just below it in the work area.
+        (tray_x, work_y + MARGIN)
     } else if work_x > mon_x + 1.0 {
         // Left taskbar
-        (work_x, work_bottom - TRACKER_HEIGHT - 4.0)
+        (work_x + MARGIN, work_bottom - TRACKER_HEIGHT - MARGIN)
     } else if work_right < mon_right - 1.0 {
         // Right taskbar
-        (work_right - TRACKER_WIDTH, work_bottom - TRACKER_HEIGHT - 4.0)
+        (
+            work_right - TRACKER_WIDTH - MARGIN,
+            work_bottom - TRACKER_HEIGHT - MARGIN,
+        )
     } else {
         (
-            mon_right - TRACKER_WIDTH - WINDOWS_TRAY_RESERVE,
-            mon_bottom - TRACKER_HEIGHT,
+            tray_x,
+            work_bottom - TRACKER_HEIGHT - MARGIN,
         )
     }
 }
