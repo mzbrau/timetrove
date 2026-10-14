@@ -5,7 +5,9 @@ use crate::engine::{
     show_snooze_picker, show_switcher, Engine,
 };
 use chrono::{DateTime, Duration, Utc};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
@@ -159,29 +161,93 @@ pub fn get_settings(engine: State<'_, Arc<Engine>>) -> Result<Settings, String> 
     engine.db().get_settings()
 }
 
+static JIRA_CONNECTION_TEST_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JiraConnectionTestEvent {
+    phase: String,
+    message: String,
+}
+
+fn emit_jira_test(app: &AppHandle, phase: &str, message: impl Into<String>) {
+    let _ = app.emit(
+        "jira-connection-test",
+        &JiraConnectionTestEvent {
+            phase: phase.into(),
+            message: message.into(),
+        },
+    );
+}
+
+/// Starts a Jira connection test on a background thread and emits progress via
+/// `jira-connection-test`. Returns immediately so the UI stays responsive.
 #[tauri::command]
-pub fn test_jira_connection(
+pub fn start_jira_connection_test(
     engine: State<'_, Arc<Engine>>,
-) -> Result<String, String> {
-    let settings = engine.db().get_settings()?;
+    app: AppHandle,
+) -> Result<(), String> {
+    if JIRA_CONNECTION_TEST_IN_PROGRESS
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("Jira connection test already in progress".into());
+    }
+
+    let settings = match engine.db().get_settings() {
+        Ok(s) => s,
+        Err(e) => {
+            JIRA_CONNECTION_TEST_IN_PROGRESS.store(false, Ordering::SeqCst);
+            return Err(e);
+        }
+    };
     if !settings.jira_enabled {
+        JIRA_CONNECTION_TEST_IN_PROGRESS.store(false, Ordering::SeqCst);
         return Err("Enable Jira sync first".into());
     }
+
     let creds = crate::jira::JiraCredentials {
         site_url: settings.jira_site_url,
         email: settings.jira_email,
         api_token: settings.jira_api_token,
+        proxy_url: settings.jira_proxy_url,
     };
-    match crate::jira::test_connection(&creds) {
-        Ok(name) => {
-            let _ = engine.db().set_jira_last_error(None);
-            Ok(format!("Connected as {name}"))
+    let db = engine.db().clone();
+    let use_proxy = !creds.proxy_url.trim().is_empty();
+
+    std::thread::spawn(move || {
+        let finish = |phase: &str, message: String| {
+            emit_jira_test(&app, phase, message);
+            JIRA_CONNECTION_TEST_IN_PROGRESS.store(false, Ordering::SeqCst);
+        };
+
+        emit_jira_test(
+            &app,
+            "validating",
+            "Validating site URL and credentials…",
+        );
+
+        let connect_msg = if use_proxy {
+            "Connecting via proxy…"
+        } else {
+            "Connecting to Jira…"
+        };
+        emit_jira_test(&app, "connecting", connect_msg);
+
+        match crate::jira::test_connection(&creds) {
+            Ok(name) => {
+                emit_jira_test(&app, "verifying", "Verifying account…");
+                let _ = db.set_jira_last_error(None);
+                finish("succeeded", format!("Connected as {name}"));
+            }
+            Err(e) => {
+                let _ = db.set_jira_last_error(Some(&e));
+                finish("failed", e);
+            }
         }
-        Err(e) => {
-            let _ = engine.db().set_jira_last_error(Some(&e));
-            Err(e)
-        }
-    }
+    });
+
+    Ok(())
 }
 
 fn jira_creds_if_enabled(engine: &Engine) -> Result<crate::jira::JiraCredentials, String> {
@@ -199,6 +265,7 @@ fn jira_creds_if_enabled(engine: &Engine) -> Result<crate::jira::JiraCredentials
         site_url: settings.jira_site_url,
         email: settings.jira_email,
         api_token: settings.jira_api_token,
+        proxy_url: settings.jira_proxy_url,
     })
 }
 

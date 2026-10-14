@@ -89,8 +89,15 @@ export interface Settings {
   jiraSiteUrl: string;
   jiraEmail: string;
   jiraApiToken: string;
+  /** Optional HTTP CONNECT proxy (`http://host:port`). Empty = none. */
+  jiraProxyUrl: string;
   jiraLastError: string | null;
   jiraLastSyncedAt: string | null;
+}
+
+export interface JiraConnectionTestEvent {
+  phase: "validating" | "connecting" | "verifying" | "succeeded" | "failed" | string;
+  message: string;
 }
 
 export interface TimeSlice {

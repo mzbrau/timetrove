@@ -1,12 +1,15 @@
 use crate::domain::JiraIssueDetails;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct JiraCredentials {
     pub site_url: String,
     pub email: String,
     pub api_token: String,
+    /// Optional HTTP CONNECT proxy (`http://host:port` or with user:pass). Empty = none.
+    pub proxy_url: String,
 }
 
 pub fn normalize_site_url(raw: &str) -> Result<String, String> {
@@ -18,6 +21,33 @@ pub fn normalize_site_url(raw: &str) -> Result<String, String> {
         return Err("Jira site URL must start with https://".into());
     }
     Ok(trimmed.to_string())
+}
+
+/// Build a ureq Agent with connect/overall timeouts and optional HTTP proxy.
+pub fn build_agent(creds: &JiraCredentials) -> Result<ureq::Agent, String> {
+    let mut builder = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(15))
+        .timeout(Duration::from_secs(30));
+    let proxy = creds.proxy_url.trim();
+    if !proxy.is_empty() {
+        let parsed = ureq::Proxy::new(proxy)
+            .map_err(|e| format!("Invalid Jira proxy URL: {e}"))?;
+        builder = builder.proxy(parsed);
+    }
+    Ok(builder.build())
+}
+
+fn validate_creds(creds: &JiraCredentials) -> Result<String, String> {
+    let base = normalize_site_url(&creds.site_url)?;
+    if creds.email.trim().is_empty() {
+        return Err("Jira email is required".into());
+    }
+    if creds.api_token.trim().is_empty() {
+        return Err("Jira API token is required".into());
+    }
+    // Validate proxy early so callers get a clear error before network I/O.
+    let _ = build_agent(creds)?;
+    Ok(base)
 }
 
 fn basic_auth_header(email: &str, token: &str) -> String {
@@ -42,16 +72,12 @@ pub fn format_jira_started(dt: DateTime<Utc>) -> String {
 }
 
 pub fn test_connection(creds: &JiraCredentials) -> Result<String, String> {
-    let base = normalize_site_url(&creds.site_url)?;
-    if creds.email.trim().is_empty() {
-        return Err("Jira email is required".into());
-    }
-    if creds.api_token.trim().is_empty() {
-        return Err("Jira API token is required".into());
-    }
+    let base = validate_creds(creds)?;
+    let agent = build_agent(creds)?;
     let url = format!("{base}/rest/api/3/myself");
     let auth = basic_auth_header(creds.email.trim(), creds.api_token.trim());
-    let resp = ureq::get(&url)
+    let resp = agent
+        .get(&url)
         .set("Authorization", &auth)
         .set("Accept", "application/json")
         .call()
@@ -78,13 +104,15 @@ pub fn add_worklog(
         return Ok(());
     }
     let base = normalize_site_url(&creds.site_url)?;
+    let agent = build_agent(creds)?;
     let url = format!("{base}/rest/api/3/issue/{issue_key}/worklog");
     let auth = basic_auth_header(creds.email.trim(), creds.api_token.trim());
     let body = WorklogBody {
         time_spent_seconds,
         started: format_jira_started(started),
     };
-    let resp = ureq::post(&url)
+    let resp = agent
+        .post(&url)
         .set("Authorization", &auth)
         .set("Accept", "application/json")
         .set("Content-Type", "application/json")
@@ -105,18 +133,14 @@ pub fn fetch_issue(creds: &JiraCredentials, issue_key: &str) -> Result<JiraIssue
     if key.is_empty() {
         return Err("Jira issue key is required".into());
     }
-    let base = normalize_site_url(&creds.site_url)?;
-    if creds.email.trim().is_empty() {
-        return Err("Jira email is required".into());
-    }
-    if creds.api_token.trim().is_empty() {
-        return Err("Jira API token is required".into());
-    }
+    let base = validate_creds(creds)?;
+    let agent = build_agent(creds)?;
     let url = format!(
         "{base}/rest/api/3/issue/{key}?fields=summary,status,assignee,timetracking,timeoriginalestimate,aggregatetimespent"
     );
     let auth = basic_auth_header(creds.email.trim(), creds.api_token.trim());
-    let resp = match ureq::get(&url)
+    let resp = match agent
+        .get(&url)
         .set("Authorization", &auth)
         .set("Accept", "application/json")
         .call()
@@ -271,5 +295,33 @@ mod tests {
         assert_eq!(d.assignee, "Unassigned");
         assert_eq!(d.estimate_seconds, Some(1800));
         assert_eq!(d.total_spent_seconds, Some(900));
+    }
+
+    fn sample_creds(proxy: &str) -> JiraCredentials {
+        JiraCredentials {
+            site_url: "https://example.atlassian.net".into(),
+            email: "dev@example.com".into(),
+            api_token: "token".into(),
+            proxy_url: proxy.into(),
+        }
+    }
+
+    #[test]
+    fn build_agent_ok_without_proxy() {
+        assert!(build_agent(&sample_creds("")).is_ok());
+        assert!(build_agent(&sample_creds("   ")).is_ok());
+    }
+
+    #[test]
+    fn build_agent_ok_with_http_proxy() {
+        assert!(build_agent(&sample_creds("http://127.0.0.1:8080")).is_ok());
+        assert!(build_agent(&sample_creds("http://user:pass@proxy.example:3128")).is_ok());
+    }
+
+    #[test]
+    fn build_agent_rejects_invalid_proxy() {
+        // ureq only accepts http / socks* schemes when a scheme is present.
+        let err = build_agent(&sample_creds("ftp://proxy.example:8080")).unwrap_err();
+        assert!(err.contains("Invalid Jira proxy URL"));
     }
 }

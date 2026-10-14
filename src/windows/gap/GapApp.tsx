@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { api } from "../../shared/api";
 import { formatGap } from "../../shared/format";
-import { withStartupRetry } from "../../shared/startupRetry";
 import { useTrackerState } from "../../shared/useTrackerState";
 import type { Task } from "../../shared/types";
 import "./gap.css";
@@ -17,7 +16,8 @@ export function GapApp() {
   const [error, setError] = useState<string | null>(null);
 
   const loadTasks = () => {
-    withStartupRetry(() => api.listTasks(false))
+    api
+      .listTasks(false)
       .then((list) => {
         setTasks(list);
         setError(null);

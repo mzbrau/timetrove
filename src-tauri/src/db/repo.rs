@@ -1161,6 +1161,7 @@ impl Db {
                     "jira_site_url" => settings.jira_site_url = v,
                     "jira_email" => settings.jira_email = v,
                     "jira_api_token" => settings.jira_api_token = v,
+                    "jira_proxy_url" => settings.jira_proxy_url = v,
                     "jira_last_error" => {
                         settings.jira_last_error = if v.is_empty() { None } else { Some(v) };
                     }
@@ -1232,6 +1233,7 @@ impl Db {
                 ("jira_site_url", settings.jira_site_url.clone()),
                 ("jira_email", settings.jira_email.clone()),
                 ("jira_api_token", settings.jira_api_token.clone()),
+                ("jira_proxy_url", settings.jira_proxy_url.clone()),
             ];
             for (k, v) in pairs {
                 conn.execute(
@@ -2402,6 +2404,7 @@ mod tests {
         s.jira_site_url = "https://example.atlassian.net".into();
         s.jira_email = "dev@example.com".into();
         s.jira_api_token = "secret-token".into();
+        s.jira_proxy_url = "http://proxy.example:8080".into();
         db.update_settings(&s).unwrap();
         let loaded = db.get_settings().unwrap();
         assert_eq!(loaded.idle_threshold_mins, 15);
@@ -2415,6 +2418,7 @@ mod tests {
         assert_eq!(loaded.jira_site_url, "https://example.atlassian.net");
         assert_eq!(loaded.jira_email, "dev@example.com");
         assert_eq!(loaded.jira_api_token, "secret-token");
+        assert_eq!(loaded.jira_proxy_url, "http://proxy.example:8080");
     }
 
     #[test]

@@ -113,6 +113,9 @@ pub struct Settings {
     pub jira_site_url: String,
     pub jira_email: String,
     pub jira_api_token: String,
+    /// Optional HTTP CONNECT proxy for Jira requests (`http://host:port`). Empty = none.
+    #[serde(default)]
+    pub jira_proxy_url: String,
     /// Last sync/connection error (read-only for Settings UI; not cleared by save).
     #[serde(default)]
     pub jira_last_error: Option<String>,
@@ -136,6 +139,7 @@ impl Default for Settings {
             jira_site_url: String::new(),
             jira_email: String::new(),
             jira_api_token: String::new(),
+            jira_proxy_url: String::new(),
             jira_last_error: None,
             jira_last_synced_at: None,
         }
@@ -342,6 +346,7 @@ mod tests {
         assert!(s.jira_site_url.is_empty());
         assert!(s.jira_email.is_empty());
         assert!(s.jira_api_token.is_empty());
+        assert!(s.jira_proxy_url.is_empty());
         assert!(s.jira_last_error.is_none());
         assert!(s.jira_last_synced_at.is_none());
     }

@@ -32,6 +32,7 @@ fn credentials_from_db(db: &Db) -> Result<Option<JiraCredentials>, String> {
         site_url: settings.jira_site_url,
         email: settings.jira_email,
         api_token: settings.jira_api_token,
+        proxy_url: settings.jira_proxy_url,
     }))
 }
 

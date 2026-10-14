@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
-import { isUnmanagedStateError, withStartupRetry } from "./startupRetry";
+import { isUnmanagedStateError } from "./startupRetry";
 import type { TrackerState } from "./types";
 
 export function useTrackerState() {
@@ -13,7 +13,8 @@ export function useTrackerState() {
     let unlistenState: (() => void) | undefined;
     let unlistenError: (() => void) | undefined;
 
-    withStartupRetry(() => api.getTrackerState())
+    api
+      .getTrackerState()
       .then((s) => {
         if (!disposed) {
           setState(s);

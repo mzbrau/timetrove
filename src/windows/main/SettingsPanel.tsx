@@ -2,13 +2,16 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { api } from "../../shared/api";
 import { applyTheme } from "../../shared/theme";
-import type { Settings } from "../../shared/types";
+import type { JiraConnectionTestEvent, Settings } from "../../shared/types";
 
 export function SettingsPanel() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [dbPath, setDbPath] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [jiraTesting, setJiraTesting] = useState(false);
+  const [jiraTestPhase, setJiraTestPhase] = useState<string | null>(null);
+  const [jiraTestStatus, setJiraTestStatus] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([api.getSettings(), api.getDbPath()])
@@ -223,28 +226,88 @@ export function SettingsPanel() {
                 database.
               </span>
             </label>
+            <label>
+              Proxy URL (optional)
+              <input
+                value={settings.jiraProxyUrl}
+                placeholder="http://host:port"
+                autoComplete="off"
+                onChange={(e) =>
+                  setSettings({ ...settings, jiraProxyUrl: e.target.value })
+                }
+              />
+              <span className="hint">
+                HTTP CONNECT proxy if required by your network — e.g.
+                http://host:port or http://user:pass@host:port. Leave empty for
+                a direct connection.
+              </span>
+            </label>
             <div className="row-actions">
               <button
                 type="button"
+                disabled={jiraTesting}
                 onClick={async () => {
+                  setError(null);
+                  setMessage(null);
+                  setJiraTesting(true);
+                  setJiraTestPhase("saving");
+                  setJiraTestStatus("Saving settings…");
+
+                  let unlisten: (() => void) | undefined;
                   try {
-                    setError(null);
                     const saved = await api.updateSettings(settings);
                     setSettings(saved);
-                    const result = await api.testJiraConnection();
-                    const refreshed = await api.getSettings();
-                    setSettings(refreshed);
-                    setMessage(result);
+
+                    unlisten = await listen<JiraConnectionTestEvent>(
+                      "jira-connection-test",
+                      (e) => {
+                        const { phase, message: status } = e.payload;
+                        setJiraTestPhase(phase);
+                        setJiraTestStatus(status);
+                        if (phase === "succeeded" || phase === "failed") {
+                          void api.getSettings().then(setSettings).catch(() => {});
+                          setJiraTesting(false);
+                          if (phase === "succeeded") {
+                            setMessage(status);
+                            setError(null);
+                          } else {
+                            setError(status);
+                            setMessage(null);
+                          }
+                          unlisten?.();
+                          unlisten = undefined;
+                        }
+                      },
+                    );
+
+                    await api.startJiraConnectionTest();
                   } catch (e) {
+                    unlisten?.();
+                    setJiraTesting(false);
+                    setJiraTestPhase("failed");
+                    setJiraTestStatus(String(e));
+                    setError(String(e));
                     const refreshed = await api.getSettings().catch(() => null);
                     if (refreshed) setSettings(refreshed);
-                    setError(String(e));
                   }
                 }}
               >
-                Test connection
+                {jiraTesting ? "Testing…" : "Test connection"}
               </button>
             </div>
+            {jiraTestStatus && (
+              <p
+                className={
+                  jiraTestPhase === "failed"
+                    ? "err"
+                    : jiraTestPhase === "succeeded"
+                      ? "hint"
+                      : "muted"
+                }
+              >
+                {jiraTestStatus}
+              </p>
+            )}
             {(settings.jiraLastError || settings.jiraLastSyncedAt) && (
               <p className="hint">
                 {settings.jiraLastError

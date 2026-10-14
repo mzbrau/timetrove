@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { withStartupRetry } from "./startupRetry";
 import type {
   InsightsReport,
   JiraIssueDetails,
@@ -11,17 +12,25 @@ import type {
   TrackerState,
 } from "./types";
 
+/** Retry while Tauri setup is still registering managed engine state. */
+function invokeManaged<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  return withStartupRetry(() => invoke<T>(cmd, args));
+}
+
 export const api = {
-  getTrackerState: () => invoke<TrackerState>("get_tracker_state"),
+  getTrackerState: () => invokeManaged<TrackerState>("get_tracker_state"),
   listTasks: (includeArchived = true) =>
-    invoke<Task[]>("list_tasks", { includeArchived }),
+    invokeManaged<Task[]>("list_tasks", { includeArchived }),
   createTask: (input: {
     name: string;
     color?: string;
     description?: string;
     notes?: string;
     jiraIssueKey?: string;
-  }) => invoke<Task>("create_task", { input }),
+  }) => invokeManaged<Task>("create_task", { input }),
   updateTask: (input: {
     id: string;
     name?: string;
@@ -32,74 +41,78 @@ export const api = {
     starred?: boolean;
     jiraIssueKey?: string;
     jiraIssueDetails?: JiraIssueDetails;
-  }) => invoke<Task>("update_task", { input }),
-  testJiraConnection: () => invoke<string>("test_jira_connection"),
+  }) => invokeManaged<Task>("update_task", { input }),
+  startJiraConnectionTest: () =>
+    invokeManaged<void>("start_jira_connection_test"),
   fetchJiraIssue: (issueKey: string) =>
-    invoke<JiraIssueDetails>("fetch_jira_issue", { issueKey }),
+    invokeManaged<JiraIssueDetails>("fetch_jira_issue", { issueKey }),
   refreshJiraIssue: (taskId: string) =>
-    invoke<JiraIssueDetails | null>("refresh_jira_issue", { taskId }),
+    invokeManaged<JiraIssueDetails | null>("refresh_jira_issue", { taskId }),
   listTaskJiraHistory: (taskId: string) =>
-    invoke<TaskJiraHistoryEntry[]>("list_task_jira_history", { taskId }),
+    invokeManaged<TaskJiraHistoryEntry[]>("list_task_jira_history", { taskId }),
   getTaskBookingSummary: (taskId: string) =>
-    invoke<TaskBookingSummary>("get_task_booking_summary", { taskId }),
-  startTask: (taskId: string) => invoke<TrackerState>("start_task", { taskId }),
-  stopTracking: () => invoke<TrackerState>("stop_tracking"),
-  switchTask: (taskId: string) => invoke<TrackerState>("switch_task", { taskId }),
+    invokeManaged<TaskBookingSummary>("get_task_booking_summary", { taskId }),
+  startTask: (taskId: string) =>
+    invokeManaged<TrackerState>("start_task", { taskId }),
+  stopTracking: () => invokeManaged<TrackerState>("stop_tracking"),
+  switchTask: (taskId: string) =>
+    invokeManaged<TrackerState>("switch_task", { taskId }),
   createAndStart: (name: string) =>
-    invoke<TrackerState>("create_and_start", { name }),
-  resolveGapPrevious: () => invoke<TrackerState>("resolve_gap_previous"),
+    invokeManaged<TrackerState>("create_and_start", { name }),
+  resolveGapPrevious: () => invokeManaged<TrackerState>("resolve_gap_previous"),
   resolveGapOther: (taskId: string) =>
-    invoke<TrackerState>("resolve_gap_other", { taskId }),
+    invokeManaged<TrackerState>("resolve_gap_other", { taskId }),
   createAndResolveGapOther: (name: string) =>
-    invoke<TrackerState>("create_and_resolve_gap_other", { name }),
-  resolveGapDiscard: () => invoke<TrackerState>("resolve_gap_discard"),
-  getSettings: () => invoke<Settings>("get_settings"),
+    invokeManaged<TrackerState>("create_and_resolve_gap_other", { name }),
+  resolveGapDiscard: () => invokeManaged<TrackerState>("resolve_gap_discard"),
+  getSettings: () => invokeManaged<Settings>("get_settings"),
   updateSettings: (settings: Settings) =>
-    invoke<Settings>("update_settings", { settings }),
+    invokeManaged<Settings>("update_settings", { settings }),
   getTimesheet: (weekStart: string) =>
-    invoke<Timesheet>("get_timesheet", { weekStart }),
+    invokeManaged<Timesheet>("get_timesheet", { weekStart }),
   getInsights: (rangeStart: string, rangeEnd: string) =>
-    invoke<InsightsReport>("get_insights", { rangeStart, rangeEnd }),
+    invokeManaged<InsightsReport>("get_insights", { rangeStart, rangeEnd }),
   listSlicesForDay: (day: string) =>
-    invoke<TimeSlice[]>("list_slices_for_day", { day }),
+    invokeManaged<TimeSlice[]>("list_slices_for_day", { day }),
   createSlice: (input: {
     taskId: string;
     start: string;
     end: string;
     note?: string;
-  }) => invoke<TimeSlice>("create_slice", { input }),
+  }) => invokeManaged<TimeSlice>("create_slice", { input }),
   updateSlice: (input: {
     id: string;
     taskId?: string;
     start?: string;
     end?: string;
     note?: string;
-  }) => invoke<TimeSlice>("update_slice", { input }),
-  deleteSlice: (id: string) => invoke<void>("delete_slice", { id }),
+  }) => invokeManaged<TimeSlice>("update_slice", { input }),
+  deleteSlice: (id: string) => invokeManaged<void>("delete_slice", { id }),
   splitSlice: (input: { id: string; at: string }) =>
-    invoke<[TimeSlice, TimeSlice]>("split_slice", { input }),
+    invokeManaged<[TimeSlice, TimeSlice]>("split_slice", { input }),
   moveSlice: (id: string, taskId: string) =>
-    invoke<TimeSlice>("move_slice", { id, taskId }),
-  coalesceNearAdjacent: () => invoke<void>("coalesce_near_adjacent"),
-  getDbPath: () => invoke<string>("get_db_path"),
-  revealDatabase: () => invoke<void>("reveal_database"),
-  exportDatabase: (dest: string) => invoke<void>("export_database", { dest }),
+    invokeManaged<TimeSlice>("move_slice", { id, taskId }),
+  coalesceNearAdjacent: () => invokeManaged<void>("coalesce_near_adjacent"),
+  getDbPath: () => invokeManaged<string>("get_db_path"),
+  revealDatabase: () => invokeManaged<void>("reveal_database"),
+  exportDatabase: (dest: string) =>
+    invokeManaged<void>("export_database", { dest }),
   importDatabase: (source: string) =>
-    invoke<void>("import_database", { source }),
-  openSwitcher: () => invoke<void>("open_switcher"),
-  closeSwitcher: () => invoke<void>("close_switcher"),
+    invokeManaged<void>("import_database", { source }),
+  openSwitcher: () => invokeManaged<void>("open_switcher"),
+  closeSwitcher: () => invokeManaged<void>("close_switcher"),
   startSnooze: (until: string) =>
-    invoke<TrackerState>("start_snooze", { until }),
-  clearSnooze: () => invoke<TrackerState>("clear_snooze"),
-  openSnoozePicker: () => invoke<void>("open_snooze_picker"),
-  closeSnoozePicker: () => invoke<void>("close_snooze_picker"),
-  openMainWindow: () => invoke<void>("open_main_window"),
+    invokeManaged<TrackerState>("start_snooze", { until }),
+  clearSnooze: () => invokeManaged<TrackerState>("clear_snooze"),
+  openSnoozePicker: () => invokeManaged<void>("open_snooze_picker"),
+  closeSnoozePicker: () => invokeManaged<void>("close_snooze_picker"),
+  openMainWindow: () => invokeManaged<void>("open_main_window"),
   setTrackerVisible: (visible: boolean) =>
-    invoke<void>("set_tracker_visible", { visible }),
-  resetTrackerPosition: () => invoke<void>("reset_tracker_position"),
+    invokeManaged<void>("set_tracker_visible", { visible }),
+  resetTrackerPosition: () => invokeManaged<void>("reset_tracker_position"),
   setTrackerAlwaysOnTop: (alwaysOnTop: boolean) =>
-    invoke<Settings>("set_tracker_always_on_top", { alwaysOnTop }),
-  currentWeekStart: () => invoke<string>("current_week_start"),
+    invokeManaged<Settings>("set_tracker_always_on_top", { alwaysOnTop }),
+  currentWeekStart: () => invokeManaged<string>("current_week_start"),
   shiftWeek: (weekStart: string, deltaWeeks: number) =>
-    invoke<string>("shift_week", { weekStart, deltaWeeks }),
+    invokeManaged<string>("shift_week", { weekStart, deltaWeeks }),
 };

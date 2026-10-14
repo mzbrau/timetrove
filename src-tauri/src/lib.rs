@@ -203,7 +203,7 @@ pub fn run() {
             commands::resolve_gap_discard,
             commands::get_settings,
             commands::update_settings,
-            commands::test_jira_connection,
+            commands::start_jira_connection_test,
             commands::fetch_jira_issue,
             commands::refresh_jira_issue,
             commands::list_task_jira_history,

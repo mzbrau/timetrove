@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../shared/api";
-import { withStartupRetry } from "../../shared/startupRetry";
 import { useTrackerState } from "../../shared/useTrackerState";
 import type { Task } from "../../shared/types";
 import "./switcher.css";
@@ -24,7 +23,8 @@ export function SwitcherApp() {
     state?.phase.kind === "tracking" ? state.phase.sliceId : null;
 
   const load = () => {
-    withStartupRetry(() => api.listTasks(false))
+    api
+      .listTasks(false)
       .then((list) => {
         setTasks(list);
         setError(null);
