@@ -12,8 +12,8 @@ use chrome::{refresh_tray_tooltip, setup_tray};
 use db::open_db;
 use engine::{
     apply_tracker_always_on_top, ensure_tracker_default_position, hide_gap_window,
-    hide_snooze_picker, hide_switcher, set_tracker_visible_persisted, show_main, show_switcher,
-    Engine,
+    hide_snooze_picker, hide_switcher, reassert_tracker_topmost_if_enabled,
+    set_tracker_visible_persisted, show_main, show_switcher, Engine,
 };
 use std::time::Duration;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
@@ -94,13 +94,20 @@ pub fn run() {
         }
 
         // Hide tracker instead of destroying; persist closed state for tray restore.
+        // Reassert topmost on focus/move so the Windows taskbar cannot cover the bar.
         if let Some(tracker) = app.get_webview_window("tracker") {
             let eng_close = engine.clone();
             let app_close = app.handle().clone();
             tracker.on_window_event(move |event| {
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    set_tracker_visible_persisted(&app_close, &eng_close, false);
+                match event {
+                    WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        set_tracker_visible_persisted(&app_close, &eng_close, false);
+                    }
+                    WindowEvent::Focused(_) | WindowEvent::Moved(_) => {
+                        reassert_tracker_topmost_if_enabled(&app_close, &eng_close);
+                    }
+                    _ => {}
                 }
             });
         }

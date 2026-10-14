@@ -816,7 +816,7 @@ pub fn set_tracker_visible(app: &AppHandle, visible: bool) {
             // Re-assert topmost after show — shell can drop it when the bar was hidden.
             if let Some(engine) = app.try_state::<Arc<Engine>>() {
                 if let Ok(settings) = engine.db().get_settings() {
-                    let _ = w.set_always_on_top(settings.tracker_always_on_top);
+                    apply_tracker_always_on_top(app, settings.tracker_always_on_top);
                 }
             }
         } else {
@@ -837,6 +837,43 @@ pub fn set_tracker_visible_persisted(app: &AppHandle, engine: &Engine, visible: 
 pub fn apply_tracker_always_on_top(app: &AppHandle, always_on_top: bool) {
     if let Some(w) = app.get_webview_window("tracker") {
         let _ = w.set_always_on_top(always_on_top);
+        // Windows taskbar is itself topmost; reordering the topmost band does not
+        // clear WS_EX_TOPMOST, so Tauri's set_always_on_top(true) no-ops when the
+        // flag is already set. Force HWND_TOPMOST to stay above the taskbar.
+        #[cfg(windows)]
+        if always_on_top {
+            reassert_tracker_hwnd_topmost(&w);
+        }
+    }
+}
+
+/// Re-assert HWND_TOPMOST when the always-on-top setting is enabled (focus/move).
+pub fn reassert_tracker_topmost_if_enabled(app: &AppHandle, engine: &Engine) {
+    if let Ok(settings) = engine.db().get_settings() {
+        if settings.tracker_always_on_top {
+            apply_tracker_always_on_top(app, true);
+        }
+    }
+}
+
+/// Force the tracker to the top of the topmost band (above Shell_TrayWnd).
+#[cfg(windows)]
+fn reassert_tracker_hwnd_topmost(window: &WebviewWindow) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+    if let Ok(hwnd) = window.hwnd() {
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd.0 as _,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
     }
 }
 
