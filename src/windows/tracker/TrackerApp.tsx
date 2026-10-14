@@ -42,6 +42,9 @@ export function TrackerApp() {
   const [tick, setTick] = useState(0);
   const receivedAtRef = useRef(Date.now());
   const prevStateRef = useRef(state);
+  const lastMainClickRef = useRef<{ t: number; x: number; y: number } | null>(
+    null,
+  );
 
   useEffect(() => {
     api
@@ -90,7 +93,29 @@ export function TrackerApp() {
 
   const onMouseDown = async (e: React.MouseEvent) => {
     if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest("button")) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("button")) return;
+
+    // startDragging() swallows the click sequence, so detect double-click here
+    // before beginning a drag on the task/dot area.
+    if (target.closest(".tracker-main")) {
+      const now = Date.now();
+      const prev = lastMainClickRef.current;
+      const near =
+        prev &&
+        now - prev.t < 350 &&
+        Math.abs(e.clientX - prev.x) < 8 &&
+        Math.abs(e.clientY - prev.y) < 8;
+      if (near) {
+        lastMainClickRef.current = null;
+        void api.openMainWindow();
+        return;
+      }
+      lastMainClickRef.current = { t: now, x: e.clientX, y: e.clientY };
+    } else {
+      lastMainClickRef.current = null;
+    }
+
     await getCurrentWebviewWindow().startDragging();
   };
 
@@ -227,7 +252,7 @@ export function TrackerApp() {
         void onContextMenu(e);
       }}
     >
-      <div className="tracker-main" onDoubleClick={() => api.openMainWindow()}>
+      <div className="tracker-main">
         {state.tracking && state.currentTask ? (
           <>
             <span
