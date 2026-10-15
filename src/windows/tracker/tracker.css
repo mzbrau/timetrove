@@ -135,6 +135,30 @@ body,
   background: currentColor;
 }
 
+.tracker-jira {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 82, 204, 0.85);
+  color: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.tracker-jira:hover {
+  background: rgba(0, 82, 204, 1);
+}
+
+.tracker-jira-icon {
+  flex-shrink: 0;
+  opacity: 0.95;
+}
+
 .total {
   border: none;
   border-radius: 999px;

@@ -296,6 +296,7 @@ pub fn fetch_jira_issue(
 #[tauri::command]
 pub fn refresh_jira_issue(
     engine: State<'_, Arc<Engine>>,
+    app: AppHandle,
     task_id: String,
 ) -> Result<Option<JiraIssueDetails>, String> {
     let task = engine
@@ -310,6 +311,7 @@ pub fn refresh_jira_issue(
         Ok(details) => {
             engine.db().update_jira_issue_cache(&task_id, &details)?;
             let _ = engine.db().set_jira_last_error(None);
+            engine.emit_state(&app);
             Ok(Some(details))
         }
         Err(e) => {
@@ -317,6 +319,30 @@ pub fn refresh_jira_issue(
             Err(e)
         }
     }
+}
+
+#[tauri::command]
+pub async fn list_assigned_jira_issues(
+    engine: State<'_, Arc<Engine>>,
+    force: Option<bool>,
+) -> Result<JiraAssignedIssuesResult, String> {
+    let db = engine.db().clone();
+    let force = force.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || crate::jira::list_assigned(&db, force))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("URL is required".into());
+    }
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+        return Err("Only http(s) URLs can be opened".into());
+    }
+    tauri_plugin_opener::open_url(trimmed, None::<&str>).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

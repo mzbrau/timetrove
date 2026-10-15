@@ -4,6 +4,7 @@ import type {
   CopilotUsageHistoryPoint,
   CopilotUsageSummary,
   InsightsReport,
+  JiraAssignedIssuesResult,
   JiraIssueDetails,
   Settings,
   Task,
@@ -50,6 +51,12 @@ export const api = {
     invokeManaged<JiraIssueDetails>("fetch_jira_issue", { issueKey }),
   refreshJiraIssue: (taskId: string) =>
     invokeManaged<JiraIssueDetails | null>("refresh_jira_issue", { taskId }),
+  listAssignedJiraIssues: (force = false) =>
+    invokeManaged<JiraAssignedIssuesResult>("list_assigned_jira_issues", {
+      force,
+    }),
+  openExternalUrl: (url: string) =>
+    invokeManaged<void>("open_external_url", { url }),
   listTaskJiraHistory: (taskId: string) =>
     invokeManaged<TaskJiraHistoryEntry[]>("list_task_jira_history", { taskId }),
   getCopilotUsage: () =>

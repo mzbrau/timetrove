@@ -117,3 +117,71 @@ body,
 .empty {
   color: var(--muted);
 }
+
+.hint-bar {
+  padding: var(--s1) var(--s4);
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.link-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s4);
+}
+
+.link-confirm p {
+  margin: 0;
+}
+
+.link-confirm .hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.link-confirm-actions {
+  display: flex;
+  gap: var(--s2);
+  justify-content: flex-end;
+}
+
+.link-confirm-actions button {
+  border: 1px solid var(--line);
+  background: var(--control-bg);
+  color: var(--ink);
+  padding: var(--s2) var(--s3);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.link-confirm-actions button.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+
+.switcher li button .jira-key {
+  font-size: 0.8rem;
+  font-weight: 600;
+  flex-shrink: 0;
+  min-width: 4.5rem;
+}
+
+.switcher li button .jira-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.switcher li button .jira-status {
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.switcher .muted {
+  color: var(--muted);
+}
