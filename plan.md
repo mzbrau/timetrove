@@ -17,7 +17,7 @@ Inspired by [Grindstone](https://www.epiforge.com/grindstone/) (work items + tim
 
 ### Non-goals (v1)
 
-- External timesheet / ERP submission (beyond optional Jira Cloud worklogs)
+- External timesheet / ERP submission (beyond optional Jira Cloud worklogs and Copilot usage reads)
 - Multi-user, sync, or multiple machines
 - In-app custom property engine (add fields in code later if needed)
 - Decimal-hour CSV / reporting formats
@@ -92,6 +92,10 @@ When the user discards a gap:
 ### Optional Jira Cloud worklog sync
 
 Disabled by default. Settings: site URL, email, API token. When enabled, tasks may link one active issue key (validated via Add against Jira); TimeTrove posts unreported time as Jira worklogs hourly and on stop/switch. Relinking archives the prior key into previous tickets and baselines so time is not double-posted. Does not delete/edit remote worklogs if local history is shortened.
+
+### Optional GitHub Copilot usage tracking
+
+Disabled by default. Settings: GitHub host (`github.com` or Enterprise Cloud host), optional username, API token, poll interval (default 30 minutes), optional monthly limit override. Polls the same per-user quota API VS Code uses (`GET /copilot_internal/user`, with `/copilot_internal/v2/token` fallback). When enabled: feature-gated Copilot main-window tab (KPIs, pools, history charts) and a usage-% bubble on the tracker bar (GitHub icon + tooltip). Limit prefers API entitlement; override applies only when the API has no usable entitlement.
 
 ---
 

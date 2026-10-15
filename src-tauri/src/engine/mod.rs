@@ -3,7 +3,13 @@ use crate::domain::*;
 use chrono::{Duration, Local, Utc};
 use parking_lot::Mutex;
 use std::sync::Arc;
+#[cfg(windows)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+
+/// Windows: poll reasserts HWND_TOPMOST while the tracker is visible and AOT is on.
+#[cfg(windows)]
+static TRACKER_TOPMOST_GUARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 pub struct Engine {
     db: Arc<Db>,
@@ -202,6 +208,11 @@ impl Engine {
         } else {
             String::new()
         };
+        let copilot_usage = if settings.copilot_enabled {
+            crate::copilot::load_cached_summary(&self.db).unwrap_or(None)
+        } else {
+            None
+        };
         Ok(TrackerState {
             phase,
             current_task,
@@ -216,6 +227,7 @@ impl Engine {
             tracking,
             snooze_until,
             current_slice_note,
+            copilot_usage,
         })
     }
 
@@ -822,6 +834,12 @@ pub fn set_tracker_visible(app: &AppHandle, visible: bool) {
         } else {
             let _ = w.hide();
         }
+        let aot = app
+            .try_state::<Arc<Engine>>()
+            .and_then(|e| e.db().get_settings().ok())
+            .map(|s| s.tracker_always_on_top)
+            .unwrap_or(false);
+        sync_tracker_topmost_guard(visible, aot);
     }
 }
 
@@ -844,6 +862,8 @@ pub fn apply_tracker_always_on_top(app: &AppHandle, always_on_top: bool) {
         if always_on_top {
             reassert_tracker_hwnd_topmost(&w);
         }
+        let visible = w.is_visible().unwrap_or(false);
+        sync_tracker_topmost_guard(visible, always_on_top);
     }
 }
 
@@ -853,6 +873,41 @@ pub fn reassert_tracker_topmost_if_enabled(app: &AppHandle, engine: &Engine) {
         if settings.tracker_always_on_top {
             apply_tracker_always_on_top(app, true);
         }
+    }
+}
+
+/// Update whether the Windows topmost poll should keep reasserting HWND_TOPMOST.
+pub fn sync_tracker_topmost_guard(visible: bool, always_on_top: bool) {
+    #[cfg(windows)]
+    TRACKER_TOPMOST_GUARD_ACTIVE.store(visible && always_on_top, Ordering::Release);
+    #[cfg(not(windows))]
+    {
+        let _ = (visible, always_on_top);
+    }
+}
+
+/// Spawn a Windows-only ~150ms loop that reasserts topmost while the guard is active.
+pub fn spawn_tracker_topmost_guard(app: AppHandle) {
+    #[cfg(windows)]
+    {
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            if !TRACKER_TOPMOST_GUARD_ACTIVE.load(Ordering::Acquire) {
+                continue;
+            }
+            let app_for_work = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(w) = app_for_work.get_webview_window("tracker") {
+                    if w.is_visible().unwrap_or(false) {
+                        reassert_tracker_hwnd_topmost(&w);
+                    }
+                }
+            });
+        });
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
     }
 }
 
@@ -878,12 +933,21 @@ fn reassert_tracker_hwnd_topmost(window: &WebviewWindow) {
 }
 
 const TRACKER_WIDTH: f64 = 310.0;
+const TRACKER_WIDTH_WITH_COPILOT: f64 = 390.0;
 const TRACKER_HEIGHT: f64 = 40.0;
+
+pub fn tracker_width_for(db: &crate::db::Db) -> f64 {
+    match db.get_settings() {
+        Ok(s) if s.copilot_enabled => TRACKER_WIDTH_WITH_COPILOT,
+        _ => TRACKER_WIDTH,
+    }
+}
+
 /// Approximate logical width of the system tray + clock on Windows.
 #[cfg(target_os = "windows")]
 const WINDOWS_TRAY_RESERVE: f64 = 200.0;
 
-pub fn position_tracker(window: &WebviewWindow) {
+pub fn position_tracker(window: &WebviewWindow, width: f64) {
     if let Ok(Some(monitor)) = window.current_monitor() {
         let size = monitor.size();
         let scale = monitor.scale_factor();
@@ -894,23 +958,31 @@ pub fn position_tracker(window: &WebviewWindow) {
         #[cfg(target_os = "windows")]
         let (x, y) = {
             let mon_h = size.height as f64 / scale;
-            windows_tracker_dock(mon_x, mon_y, mon_w, mon_h, monitor.work_area(), scale)
+            windows_tracker_dock(mon_x, mon_y, mon_w, mon_h, monitor.work_area(), scale, width)
         };
 
         #[cfg(not(target_os = "windows"))]
         let (x, y) = {
             let margin = 12.0;
-            (
-                mon_x + mon_w - TRACKER_WIDTH - margin,
-                mon_y + margin,
-            )
+            (mon_x + mon_w - width - margin, mon_y + margin)
         };
 
         let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
-            width: TRACKER_WIDTH,
+            width,
             height: TRACKER_HEIGHT,
         }));
         let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
+    }
+}
+
+/// Resize tracker chrome for current settings without re-docking (preserves user drag).
+pub fn apply_tracker_size(app: &AppHandle, engine: &Engine) {
+    if let Some(w) = app.get_webview_window("tracker") {
+        let width = tracker_width_for(engine.db());
+        let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize {
+            width,
+            height: TRACKER_HEIGHT,
+        }));
     }
 }
 
@@ -923,6 +995,7 @@ fn windows_tracker_dock(
     mon_h: f64,
     work: &tauri::PhysicalRect<i32, u32>,
     scale: f64,
+    tracker_width: f64,
 ) -> (f64, f64) {
     const MARGIN: f64 = 4.0;
     let work_x = work.position.x as f64 / scale;
@@ -933,7 +1006,7 @@ fn windows_tracker_dock(
     let work_right = work_x + work_w;
     let mon_bottom = mon_y + mon_h;
     let mon_right = mon_x + mon_w;
-    let tray_x = mon_right - TRACKER_WIDTH - WINDOWS_TRAY_RESERVE;
+    let tray_x = mon_right - tracker_width - WINDOWS_TRAY_RESERVE;
 
     if work_bottom < mon_bottom - 1.0 {
         // Bottom taskbar: sit above it in the work area, left of tray.
@@ -947,14 +1020,11 @@ fn windows_tracker_dock(
     } else if work_right < mon_right - 1.0 {
         // Right taskbar
         (
-            work_right - TRACKER_WIDTH - MARGIN,
+            work_right - tracker_width - MARGIN,
             work_bottom - TRACKER_HEIGHT - MARGIN,
         )
     } else {
-        (
-            tray_x,
-            work_bottom - TRACKER_HEIGHT - MARGIN,
-        )
+        (tray_x, work_bottom - TRACKER_HEIGHT - MARGIN)
     }
 }
 
@@ -968,7 +1038,7 @@ pub fn ensure_tracker_default_position(app: &AppHandle, engine: &Engine, force: 
         return;
     }
     if let Some(w) = app.get_webview_window("tracker") {
-        position_tracker(&w);
+        position_tracker(&w, tracker_width_for(engine.db()));
         let _ = engine.db().set_tracker_default_position_applied(true);
     }
 }

@@ -1,5 +1,6 @@
 mod chrome;
 mod commands;
+mod copilot;
 mod db;
 mod domain;
 mod engine;
@@ -11,9 +12,10 @@ mod test_support;
 use chrome::{refresh_tray_tooltip, setup_tray};
 use db::open_db;
 use engine::{
-    apply_tracker_always_on_top, ensure_tracker_default_position, hide_gap_window,
-    hide_snooze_picker, hide_switcher, reassert_tracker_topmost_if_enabled,
-    set_tracker_visible_persisted, show_main, show_switcher, Engine,
+    apply_tracker_always_on_top, apply_tracker_size, ensure_tracker_default_position,
+    hide_gap_window, hide_snooze_picker, hide_switcher, reassert_tracker_topmost_if_enabled,
+    set_tracker_visible_persisted, show_main, show_switcher, spawn_tracker_topmost_guard,
+    Engine,
 };
 use std::time::Duration;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
@@ -55,6 +57,8 @@ pub fn run() {
         let engine = Engine::new(database);
         // Register before any further work so webview invokes can resolve State.
         app.manage(engine.clone());
+        // Windows: keep HWND_TOPMOST while tracker is visible + AOT (other apps reorder band).
+        spawn_tracker_topmost_guard(app.handle().clone());
 
         // Legacy near-adjacent same-task cleanup (idempotent; not done on day reads).
         engine.db().coalesce_near_adjacent()?;
@@ -138,15 +142,24 @@ pub fn run() {
             let _ = app.autolaunch().enable();
         }
 
-        // Idle + midnight + Jira poller
+        // Idle + midnight + Jira + Copilot poller
         let handle = app.handle().clone();
         let eng = engine.clone();
         std::thread::spawn(move || {
             let mut last_midnight_check = chrono::Local::now().date_naive();
             let mut last_jira_sync = std::time::Instant::now();
+            let mut last_copilot_sync = std::time::Instant::now();
             // Startup gap check shortly after launch
             std::thread::sleep(Duration::from_secs(1));
             eng.on_resume_or_startup_gap(&handle);
+            // First Copilot poll soon after launch when enabled.
+            {
+                let eng_c = eng.clone();
+                let handle_c = handle.clone();
+                copilot::spawn_poll(eng.db().clone(), move || {
+                    eng_c.emit_state(&handle_c);
+                });
+            }
             loop {
                 std::thread::sleep(Duration::from_secs(5));
                 eng.checkpoint_if_due();
@@ -170,6 +183,16 @@ pub fn run() {
                     last_jira_sync = std::time::Instant::now();
                     jira::spawn_flush_all(eng.db().clone());
                 }
+
+                let copilot_interval = Duration::from_secs(copilot::poll_interval_secs(eng.db()));
+                if last_copilot_sync.elapsed() >= copilot_interval {
+                    last_copilot_sync = std::time::Instant::now();
+                    let eng_c = eng.clone();
+                    let handle_c = handle.clone();
+                    copilot::spawn_poll(eng.db().clone(), move || {
+                        eng_c.emit_state(&handle_c);
+                    });
+                }
             }
         });
 
@@ -187,6 +210,7 @@ pub fn run() {
         // Apply tracker chrome after manage(); windows start hidden in tauri.conf.
         apply_tracker_always_on_top(app.handle(), settings.tracker_always_on_top);
         ensure_tracker_default_position(app.handle(), &engine, false);
+        apply_tracker_size(app.handle(), &engine);
         set_tracker_visible_persisted(app.handle(), &engine, settings.tracker_visible);
         show_main(app.handle());
 
@@ -214,6 +238,10 @@ pub fn run() {
             commands::fetch_jira_issue,
             commands::refresh_jira_issue,
             commands::list_task_jira_history,
+            commands::get_copilot_usage,
+            commands::get_copilot_usage_history,
+            commands::refresh_copilot_usage,
+            commands::start_copilot_connection_test,
             commands::get_timesheet,
             commands::get_insights,
             commands::list_slices_for_day,

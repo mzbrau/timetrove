@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { listen } from "@tauri-apps/api/event";
 import { formatHms } from "../../shared/format";
 import { useTrackerState } from "../../shared/useTrackerState";
 import { TasksPanel } from "./TasksPanel";
@@ -7,11 +8,19 @@ import { TimesheetPanel } from "./TimesheetPanel";
 import { EntriesPanel } from "./EntriesPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { InsightsPanel } from "./InsightsPanel";
+import { CopilotPanel } from "./CopilotPanel";
 import { ConfirmBar } from "./ConfirmBar";
 import { api } from "../../shared/api";
+import type { Settings } from "../../shared/types";
 import "./main.css";
 
-type Tab = "tasks" | "timesheet" | "insights" | "entries" | "settings";
+type Tab =
+  | "tasks"
+  | "timesheet"
+  | "insights"
+  | "entries"
+  | "copilot"
+  | "settings";
 
 export function MainApp() {
   const { state, error, setError } = useTrackerState();
@@ -22,6 +31,7 @@ export function MainApp() {
   const [saveRequestId, setSaveRequestId] = useState(0);
   const [tick, setTick] = useState(0);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [copilotEnabled, setCopilotEnabled] = useState(false);
   const receivedAtRef = useRef(Date.now());
   const prevStateRef = useRef(state);
 
@@ -30,6 +40,28 @@ export function MainApp() {
       .then(setAppVersion)
       .catch(() => setAppVersion(null));
   }, []);
+
+  useEffect(() => {
+    void api
+      .getSettings()
+      .then((s) => setCopilotEnabled(s.copilotEnabled))
+      .catch(() => {});
+    let unlisten: (() => void) | undefined;
+    listen<Settings>("settings-changed", (e) => {
+      setCopilotEnabled(e.payload.copilotEnabled);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!copilotEnabled && tab === "copilot") {
+      setTab("tasks");
+    }
+  }, [copilotEnabled, tab]);
 
   const bannerError = error || state?.dbError || null;
   const showBanner = Boolean(bannerError && bannerError !== dismissedError);
@@ -146,8 +178,9 @@ export function MainApp() {
             ["timesheet", "Timesheet"],
             ["insights", "Insights"],
             ["entries", "Time entries"],
+            ...(copilotEnabled ? [["copilot", "Copilot"] as const] : []),
             ["settings", "Settings"],
-          ] as const
+          ] as Array<readonly [Tab, string]>
         ).map(([id, label]) => (
           <button
             key={id}
@@ -197,6 +230,7 @@ export function MainApp() {
         {tab === "timesheet" && <TimesheetPanel />}
         {tab === "insights" && <InsightsPanel />}
         {tab === "entries" && <EntriesPanel state={state} />}
+        {tab === "copilot" && copilotEnabled && <CopilotPanel />}
         {tab === "settings" && <SettingsPanel />}
       </main>
 

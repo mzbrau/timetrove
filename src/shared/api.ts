@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { withStartupRetry } from "./startupRetry";
 import type {
+  CopilotUsageHistoryPoint,
+  CopilotUsageSummary,
   InsightsReport,
   JiraIssueDetails,
   Settings,
@@ -50,6 +52,16 @@ export const api = {
     invokeManaged<JiraIssueDetails | null>("refresh_jira_issue", { taskId }),
   listTaskJiraHistory: (taskId: string) =>
     invokeManaged<TaskJiraHistoryEntry[]>("list_task_jira_history", { taskId }),
+  getCopilotUsage: () =>
+    invokeManaged<CopilotUsageSummary | null>("get_copilot_usage"),
+  getCopilotUsageHistory: (limit?: number) =>
+    invokeManaged<CopilotUsageHistoryPoint[]>("get_copilot_usage_history", {
+      limit: limit ?? null,
+    }),
+  refreshCopilotUsage: () =>
+    invokeManaged<CopilotUsageSummary | null>("refresh_copilot_usage"),
+  startCopilotConnectionTest: () =>
+    invokeManaged<void>("start_copilot_connection_test"),
   getTaskBookingSummary: (taskId: string) =>
     invokeManaged<TaskBookingSummary>("get_task_booking_summary", { taskId }),
   startTask: (taskId: string) =>

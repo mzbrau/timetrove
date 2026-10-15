@@ -1,7 +1,7 @@
 use crate::domain::*;
 use crate::engine::{
-    apply_tracker_always_on_top, ensure_tracker_default_position, hide_gap_window,
-    hide_snooze_picker, hide_switcher, set_tracker_visible_persisted, show_main,
+    apply_tracker_always_on_top, apply_tracker_size, ensure_tracker_default_position,
+    hide_gap_window, hide_snooze_picker, hide_switcher, set_tracker_visible_persisted, show_main,
     show_snooze_picker, show_switcher, Engine,
 };
 use chrono::{DateTime, Duration, Utc};
@@ -339,10 +339,17 @@ pub fn update_settings(
     if settings.daily_goal_mins == 0 {
         return Err("Daily goal must be at least 1 minute".into());
     }
+    if settings.copilot_enabled && settings.copilot_poll_interval_mins < 5 {
+        return Err("Copilot poll interval must be at least 5 minutes".into());
+    }
     // Visibility is controlled by tray / tracker Close — don't clobber from Settings UI.
     let mut settings = settings;
     if let Ok(current) = engine.db().get_settings() {
         settings.tracker_visible = current.tracker_visible;
+    }
+    settings.copilot_poll_interval_mins = settings.copilot_poll_interval_mins.clamp(5, 120);
+    if settings.copilot_github_host.trim().is_empty() {
+        settings.copilot_github_host = "github.com".into();
     }
     engine.db().update_settings(&settings)?;
     if settings.autostart {
@@ -351,9 +358,141 @@ pub fn update_settings(
         let _ = app.autolaunch().disable();
     }
     apply_tracker_always_on_top(&app, settings.tracker_always_on_top);
+    apply_tracker_size(&app, &engine);
     engine.emit_state(&app);
     let _ = app.emit("settings-changed", &settings);
+    // Kick a Copilot poll when enabling / saving credentials.
+    if settings.copilot_enabled && !settings.copilot_api_token.trim().is_empty() {
+        let eng = engine.inner().clone();
+        let handle = app.clone();
+        crate::copilot::spawn_poll(engine.db().clone(), move || {
+            eng.emit_state(&handle);
+        });
+    }
     Ok(settings)
+}
+
+static COPILOT_CONNECTION_TEST_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CopilotConnectionTestEvent {
+    phase: String,
+    message: String,
+}
+
+fn emit_copilot_test(app: &AppHandle, phase: &str, message: impl Into<String>) {
+    let _ = app.emit(
+        "copilot-connection-test",
+        &CopilotConnectionTestEvent {
+            phase: phase.into(),
+            message: message.into(),
+        },
+    );
+}
+
+#[tauri::command]
+pub fn get_copilot_usage(
+    engine: State<'_, Arc<Engine>>,
+) -> Result<Option<CopilotUsageSummary>, String> {
+    crate::copilot::load_cached_summary(engine.db())
+}
+
+#[tauri::command]
+pub fn get_copilot_usage_history(
+    engine: State<'_, Arc<Engine>>,
+    limit: Option<u32>,
+) -> Result<Vec<CopilotUsageHistoryPoint>, String> {
+    engine
+        .db()
+        .list_copilot_usage_history(limit.unwrap_or(500))
+}
+
+#[tauri::command]
+pub fn refresh_copilot_usage(
+    engine: State<'_, Arc<Engine>>,
+    app: AppHandle,
+) -> Result<Option<CopilotUsageSummary>, String> {
+    let settings = engine.db().get_settings()?;
+    if !settings.copilot_enabled {
+        return Err("Enable Copilot usage tracking first".into());
+    }
+    let result = crate::copilot::poll_once(engine.db());
+    engine.emit_state(&app);
+    result
+}
+
+/// Starts a Copilot connection test on a background thread; emits `copilot-connection-test`.
+#[tauri::command]
+pub fn start_copilot_connection_test(
+    engine: State<'_, Arc<Engine>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    if COPILOT_CONNECTION_TEST_IN_PROGRESS
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("Copilot connection test already in progress".into());
+    }
+
+    let settings = match engine.db().get_settings() {
+        Ok(s) => s,
+        Err(e) => {
+            COPILOT_CONNECTION_TEST_IN_PROGRESS.store(false, Ordering::SeqCst);
+            return Err(e);
+        }
+    };
+    if !settings.copilot_enabled {
+        COPILOT_CONNECTION_TEST_IN_PROGRESS.store(false, Ordering::SeqCst);
+        return Err("Enable Copilot usage tracking first".into());
+    }
+
+    let creds = crate::copilot::CopilotCredentials {
+        github_host: settings.copilot_github_host,
+        api_token: settings.copilot_api_token,
+        username: settings.copilot_username,
+        monthly_limit_override: settings.copilot_monthly_limit_override,
+    };
+    let db = engine.db().clone();
+    let eng = engine.inner().clone();
+
+    std::thread::spawn(move || {
+        let finish = |phase: &str, message: String| {
+            emit_copilot_test(&app, phase, message);
+            COPILOT_CONNECTION_TEST_IN_PROGRESS.store(false, Ordering::SeqCst);
+        };
+
+        emit_copilot_test(
+            &app,
+            "validating",
+            "Validating GitHub host and token…",
+        );
+        emit_copilot_test(&app, "connecting", "Connecting to GitHub…");
+
+        match crate::copilot::test_connection(&creds) {
+            Ok(msg) => {
+                emit_copilot_test(&app, "verifying", "Fetching Copilot quota…");
+                match crate::copilot::poll_once(&db) {
+                    Ok(_) => {
+                        eng.emit_state(&app);
+                        finish("succeeded", msg);
+                    }
+                    Err(e) => {
+                        let _ = db.set_copilot_last_error(Some(&e));
+                        eng.emit_state(&app);
+                        finish("failed", e);
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = db.set_copilot_last_error(Some(&e));
+                eng.emit_state(&app);
+                finish("failed", e);
+            }
+        }
+    });
+
+    Ok(())
 }
 
 #[tauri::command]

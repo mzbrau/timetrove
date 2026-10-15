@@ -1,0 +1,527 @@
+use crate::domain::{CopilotQuotaPool, CopilotUsageSummary};
+use serde_json::Value;
+use std::time::Duration;
+
+#[derive(Debug, Clone)]
+pub struct CopilotCredentials {
+    pub github_host: String,
+    pub api_token: String,
+    pub username: String,
+    pub monthly_limit_override: Option<f64>,
+}
+
+/// Resolve REST API base URL for github.com or Enterprise Cloud (`*.ghe.com`).
+pub fn api_base_url(host: &str) -> Result<String, String> {
+    let trimmed = host.trim().trim_end_matches('/');
+    let host = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .unwrap_or(trimmed)
+        .trim_end_matches('/');
+    let host = host.strip_prefix("api.").unwrap_or(host);
+    if host.is_empty() {
+        return Err("GitHub host is required".into());
+    }
+    if host.contains('/') || host.contains(' ') {
+        return Err("GitHub host should be a hostname like github.com or company.ghe.com".into());
+    }
+    if host.eq_ignore_ascii_case("github.com") {
+        Ok("https://api.github.com".into())
+    } else {
+        Ok(format!("https://api.{host}"))
+    }
+}
+
+fn build_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(15))
+        .timeout(Duration::from_secs(30))
+        .build()
+}
+
+fn auth_header(token: &str) -> String {
+    format!("Bearer {}", token.trim())
+}
+
+fn map_ureq_error(err: ureq::Error) -> String {
+    match err {
+        ureq::Error::Status(code, resp) => {
+            let body = resp.into_string().unwrap_or_default();
+            let snippet: String = body.chars().take(200).collect();
+            if snippet.is_empty() {
+                format!("GitHub returned HTTP {code}")
+            } else {
+                format!("GitHub returned HTTP {code}: {snippet}")
+            }
+        }
+        ureq::Error::Transport(t) => format!("Network error talking to GitHub: {t}"),
+    }
+}
+
+fn get_json(agent: &ureq::Agent, url: &str, token: &str) -> Result<Value, String> {
+    let resp = agent
+        .get(url)
+        .set("Authorization", &auth_header(token))
+        .set("Accept", "application/vnd.github+json")
+        .set("X-GitHub-Api-Version", "2022-11-28")
+        .set("User-Agent", "TimeTrove")
+        .call()
+        .map_err(map_ureq_error)?;
+    if !(200..300).contains(&resp.status()) {
+        return Err(format!("GitHub returned HTTP {}", resp.status()));
+    }
+    resp.into_json().map_err(|e| e.to_string())
+}
+
+pub fn fetch_authenticated_login(creds: &CopilotCredentials) -> Result<String, String> {
+    if creds.api_token.trim().is_empty() {
+        return Err("GitHub API token is required".into());
+    }
+    let base = api_base_url(&creds.github_host)?;
+    let agent = build_agent();
+    let body = get_json(&agent, &format!("{base}/user"), &creds.api_token)?;
+    body.get("login")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "GitHub /user response missing login".into())
+}
+
+fn pool_from_snapshot(id: &str, snap: &Value) -> Option<CopilotQuotaPool> {
+    if !snap.is_object() {
+        return None;
+    }
+    let entitlement = snap
+        .get("entitlement")
+        .and_then(|v| v.as_f64())
+        .or_else(|| snap.get("entitlement").and_then(|v| v.as_i64()).map(|n| n as f64))
+        .unwrap_or(0.0);
+    let remaining = snap
+        .get("remaining")
+        .and_then(|v| v.as_f64())
+        .or_else(|| snap.get("remaining").and_then(|v| v.as_i64()).map(|n| n as f64))
+        .or_else(|| {
+            snap.get("quota_remaining")
+                .and_then(|v| v.as_f64())
+        })
+        .unwrap_or(0.0);
+    let unlimited = snap
+        .get("unlimited")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let percent_remaining = snap
+        .get("percent_remaining")
+        .and_then(|v| v.as_f64())
+        .unwrap_or_else(|| {
+            if unlimited || entitlement <= 0.0 {
+                100.0
+            } else {
+                ((remaining / entitlement) * 100.0).clamp(0.0, 100.0)
+            }
+        });
+    let used = if unlimited {
+        0.0
+    } else {
+        (entitlement - remaining).max(0.0)
+    };
+    let percent_used = if unlimited {
+        0.0
+    } else if entitlement > 0.0 {
+        ((used / entitlement) * 100.0).clamp(0.0, 100.0)
+    } else {
+        (100.0 - percent_remaining).clamp(0.0, 100.0)
+    };
+    Some(CopilotQuotaPool {
+        id: id.to_string(),
+        entitlement,
+        remaining,
+        used,
+        percent_remaining,
+        percent_used,
+        unlimited,
+        overage_count: snap
+            .get("overage_count")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0),
+        overage_permitted: snap
+            .get("overage_permitted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+    })
+}
+
+fn unit_from_body(body: &Value) -> String {
+    let sku = body
+        .get("access_type_sku")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if sku.to_ascii_lowercase().contains("credit") {
+        "credits".into()
+    } else {
+        "requests".into()
+    }
+}
+
+fn reset_date_from_body(body: &Value) -> Option<String> {
+    body.get("quota_reset_date_utc")
+        .and_then(|v| v.as_str())
+        .or_else(|| body.get("quota_reset_date").and_then(|v| v.as_str()))
+        .map(|s| s.to_string())
+}
+
+/// Apply optional user override when API entitlement is unusable.
+pub fn apply_limit_override(
+    mut summary: CopilotUsageSummary,
+    override_limit: Option<f64>,
+) -> CopilotUsageSummary {
+    let usable_api =
+        !summary.unlimited && summary.entitlement.is_finite() && summary.entitlement > 0.0;
+    if usable_api {
+        summary.limit_source = "api".into();
+        return summary;
+    }
+    if let Some(limit) = override_limit.filter(|n| n.is_finite() && *n > 0.0) {
+        let used = if summary.used.is_finite() {
+            summary.used.max(0.0)
+        } else {
+            0.0
+        };
+        summary.entitlement = limit;
+        summary.remaining = (limit - used).max(0.0);
+        summary.percent_used = ((used / limit) * 100.0).clamp(0.0, 100.0);
+        summary.unlimited = false;
+        summary.limit_source = "override".into();
+    } else if summary.unlimited {
+        summary.limit_source = "unlimited".into();
+        summary.percent_used = 0.0;
+    } else {
+        summary.limit_source = "unknown".into();
+    }
+    summary
+}
+
+fn summary_from_user_body(
+    body: &Value,
+    username: &str,
+    override_limit: Option<f64>,
+) -> Result<CopilotUsageSummary, String> {
+    let plan = body
+        .get("copilot_plan")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let snapshots = body
+        .get("quota_snapshots")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| "Copilot response missing quota_snapshots".to_string())?;
+
+    let mut pools = Vec::new();
+    for (id, snap) in snapshots {
+        if let Some(pool) = pool_from_snapshot(id, snap) {
+            pools.push(pool);
+        }
+    }
+    if pools.is_empty() {
+        return Err("Copilot response had no quota pools".into());
+    }
+
+    let premium = pools
+        .iter()
+        .find(|p| p.id == "premium_interactions")
+        .cloned()
+        .or_else(|| pools.first().cloned())
+        .ok_or_else(|| "No premium quota pool".to_string())?;
+
+    let summary = CopilotUsageSummary {
+        plan,
+        username: username.to_string(),
+        unit: unit_from_body(body),
+        entitlement: premium.entitlement,
+        used: premium.used,
+        remaining: premium.remaining,
+        percent_used: premium.percent_used,
+        unlimited: premium.unlimited,
+        overage_count: premium.overage_count,
+        overage_permitted: premium.overage_permitted,
+        reset_date: reset_date_from_body(body),
+        pools,
+        limit_source: "api".into(),
+        fetched_at: None,
+        last_synced_at: None,
+        last_error: None,
+    };
+    Ok(apply_limit_override(summary, override_limit))
+}
+
+/// Individual-plan fallback: `/copilot_internal/v2/token` limited_user_quotas.
+fn summary_from_v2_token(
+    body: &Value,
+    username: &str,
+    override_limit: Option<f64>,
+) -> Result<CopilotUsageSummary, String> {
+    let quotas = body
+        .get("limited_user_quotas")
+        .or_else(|| body.get("limited_user_quota"))
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| "v2/token response missing limited_user_quotas".to_string())?;
+
+    // Prefer premium interaction storage shape used by VS Code extensions.
+    let premium = quotas
+        .get("copilot_premium_interaction")
+        .or_else(|| quotas.get("premium_interactions"))
+        .cloned();
+
+    let (entitlement, remaining, used) = if let Some(p) = premium {
+        if let Some(storage) = p.get("storage") {
+            let remaining = storage
+                .get("remaining")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let entitlement = storage
+                .get("entitlement")
+                .or_else(|| storage.get("quota"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let used = (entitlement - remaining).max(0.0);
+            (entitlement, remaining, used)
+        } else {
+            let remaining = p.get("remaining").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let entitlement = p
+                .get("entitlement")
+                .or_else(|| p.get("quota"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let used = (entitlement - remaining).max(0.0);
+            (entitlement, remaining, used)
+        }
+    } else {
+        return Err("v2/token response missing premium quota".into());
+    };
+
+    let percent_used = if entitlement > 0.0 {
+        ((used / entitlement) * 100.0).clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+    let pool = CopilotQuotaPool {
+        id: "premium_interactions".into(),
+        entitlement,
+        remaining,
+        used,
+        percent_remaining: (100.0 - percent_used).clamp(0.0, 100.0),
+        percent_used,
+        unlimited: false,
+        overage_count: 0.0,
+        overage_permitted: false,
+    };
+    let summary = CopilotUsageSummary {
+        plan: body
+            .get("copilot_plan")
+            .and_then(|v| v.as_str())
+            .unwrap_or("individual")
+            .to_string(),
+        username: username.to_string(),
+        unit: "requests".into(),
+        entitlement,
+        used,
+        remaining,
+        percent_used,
+        unlimited: false,
+        overage_count: 0.0,
+        overage_permitted: false,
+        reset_date: reset_date_from_body(body),
+        pools: vec![pool],
+        limit_source: "api".into(),
+        fetched_at: None,
+        last_synced_at: None,
+        last_error: None,
+    };
+    Ok(apply_limit_override(summary, override_limit))
+}
+
+pub fn fetch_usage(
+    creds: &CopilotCredentials,
+) -> Result<(CopilotUsageSummary, String), String> {
+    if creds.api_token.trim().is_empty() {
+        return Err("GitHub API token is required".into());
+    }
+    let base = api_base_url(&creds.github_host)?;
+    let agent = build_agent();
+
+    let username = if creds.username.trim().is_empty() {
+        fetch_authenticated_login(creds)?
+    } else {
+        creds.username.trim().to_string()
+    };
+
+    let user_url = format!("{base}/copilot_internal/user");
+    match get_json(&agent, &user_url, &creds.api_token) {
+        Ok(body) => {
+            let raw = body.to_string();
+            let summary =
+                summary_from_user_body(&body, &username, creds.monthly_limit_override)?;
+            Ok((summary, raw))
+        }
+        Err(user_err) => {
+            let token_url = format!("{base}/copilot_internal/v2/token");
+            match get_json(&agent, &token_url, &creds.api_token) {
+                Ok(body) => {
+                    let raw = body.to_string();
+                    let summary =
+                        summary_from_v2_token(&body, &username, creds.monthly_limit_override)?;
+                    Ok((summary, raw))
+                }
+                Err(token_err) => Err(format!(
+                    "Could not read Copilot quota. /copilot_internal/user: {user_err}. \
+                     /copilot_internal/v2/token: {token_err}. \
+                     Prefer a fine-grained PAT with Copilot Requests, or a GitHub OAuth/`gh` token."
+                )),
+            }
+        }
+    }
+}
+
+pub fn test_connection(creds: &CopilotCredentials) -> Result<String, String> {
+    let login = fetch_authenticated_login(creds)?;
+    let (summary, _) = fetch_usage(&CopilotCredentials {
+        username: login.clone(),
+        ..creds.clone()
+    })?;
+    let unit = &summary.unit;
+    if summary.unlimited {
+        Ok(format!(
+            "Connected as {login} ({plan}) — unlimited {unit}",
+            plan = if summary.plan.is_empty() {
+                "copilot"
+            } else {
+                &summary.plan
+            }
+        ))
+    } else {
+        Ok(format!(
+            "Connected as {login} — {:.0}/{:.0} {unit} used ({:.0}%)",
+            summary.used, summary.entitlement, summary.percent_used
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_base_github_com() {
+        assert_eq!(api_base_url("github.com").unwrap(), "https://api.github.com");
+        assert_eq!(
+            api_base_url("https://github.com/").unwrap(),
+            "https://api.github.com"
+        );
+        assert_eq!(
+            api_base_url("api.github.com").unwrap(),
+            "https://api.github.com"
+        );
+    }
+
+    #[test]
+    fn api_base_ghe() {
+        assert_eq!(
+            api_base_url("octocorp.ghe.com").unwrap(),
+            "https://api.octocorp.ghe.com"
+        );
+        assert_eq!(
+            api_base_url("https://octocorp.ghe.com").unwrap(),
+            "https://api.octocorp.ghe.com"
+        );
+    }
+
+    #[test]
+    fn api_base_rejects_path() {
+        assert!(api_base_url("github.com/foo").is_err());
+        assert!(api_base_url("").is_err());
+    }
+
+    #[test]
+    fn override_when_unlimited() {
+        let summary = CopilotUsageSummary {
+            plan: "business".into(),
+            username: "me".into(),
+            unit: "requests".into(),
+            entitlement: 0.0,
+            used: 12.0,
+            remaining: 0.0,
+            percent_used: 0.0,
+            unlimited: true,
+            overage_count: 0.0,
+            overage_permitted: false,
+            reset_date: None,
+            pools: vec![],
+            limit_source: "api".into(),
+            fetched_at: None,
+            last_synced_at: None,
+            last_error: None,
+        };
+        let out = apply_limit_override(summary, Some(300.0));
+        assert_eq!(out.limit_source, "override");
+        assert_eq!(out.entitlement, 300.0);
+        assert!((out.percent_used - 4.0).abs() < 0.01);
+        assert!(!out.unlimited);
+    }
+
+    #[test]
+    fn api_entitlement_wins_over_override() {
+        let summary = CopilotUsageSummary {
+            plan: "business".into(),
+            username: "me".into(),
+            unit: "requests".into(),
+            entitlement: 300.0,
+            used: 90.0,
+            remaining: 210.0,
+            percent_used: 30.0,
+            unlimited: false,
+            overage_count: 0.0,
+            overage_permitted: true,
+            reset_date: None,
+            pools: vec![],
+            limit_source: "api".into(),
+            fetched_at: None,
+            last_synced_at: None,
+            last_error: None,
+        };
+        let out = apply_limit_override(summary, Some(100.0));
+        assert_eq!(out.limit_source, "api");
+        assert_eq!(out.entitlement, 300.0);
+        assert!((out.percent_used - 30.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn parse_quota_snapshots() {
+        let body = serde_json::json!({
+            "copilot_plan": "business",
+            "quota_reset_date_utc": "2026-11-01T00:00:00.000Z",
+            "quota_snapshots": {
+                "premium_interactions": {
+                    "entitlement": 300,
+                    "remaining": 93,
+                    "percent_remaining": 31.0,
+                    "unlimited": false,
+                    "overage_count": 0,
+                    "overage_permitted": true
+                },
+                "chat": {
+                    "entitlement": 0,
+                    "remaining": 0,
+                    "percent_remaining": 100.0,
+                    "unlimited": true,
+                    "overage_count": 0,
+                    "overage_permitted": false
+                }
+            }
+        });
+        let summary = summary_from_user_body(&body, "octocat", None).unwrap();
+        assert_eq!(summary.plan, "business");
+        assert_eq!(summary.entitlement, 300.0);
+        assert_eq!(summary.remaining, 93.0);
+        assert!((summary.used - 207.0).abs() < 0.01);
+        assert_eq!(summary.pools.len(), 2);
+        assert_eq!(summary.limit_source, "api");
+    }
+}

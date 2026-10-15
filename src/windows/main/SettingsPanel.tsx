@@ -2,7 +2,11 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { api } from "../../shared/api";
 import { applyTheme } from "../../shared/theme";
-import type { JiraConnectionTestEvent, Settings } from "../../shared/types";
+import type {
+  CopilotConnectionTestEvent,
+  JiraConnectionTestEvent,
+  Settings,
+} from "../../shared/types";
 
 export function SettingsPanel() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -12,6 +16,11 @@ export function SettingsPanel() {
   const [jiraTesting, setJiraTesting] = useState(false);
   const [jiraTestPhase, setJiraTestPhase] = useState<string | null>(null);
   const [jiraTestStatus, setJiraTestStatus] = useState<string | null>(null);
+  const [copilotTesting, setCopilotTesting] = useState(false);
+  const [copilotTestPhase, setCopilotTestPhase] = useState<string | null>(null);
+  const [copilotTestStatus, setCopilotTestStatus] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     Promise.all([api.getSettings(), api.getDbPath()])
@@ -318,6 +327,206 @@ export function SettingsPanel() {
                   : null}
                 {settings.jiraLastSyncedAt
                   ? `Last synced: ${new Date(settings.jiraLastSyncedAt).toLocaleString()}`
+                  : null}
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
+      <hr
+        style={{ border: 0, borderTop: "1px solid var(--line)", width: "100%" }}
+      />
+
+      <div>
+        <strong>GitHub Copilot usage</strong>
+        <p className="hint">
+          Track your Copilot premium request / credit allowance against the
+          Enterprise Cloud quota API (same source VS Code uses). Disabled by
+          default.
+        </p>
+        <label style={{ gridTemplateColumns: "auto 1fr", alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={settings.copilotEnabled}
+            onChange={(e) =>
+              setSettings({ ...settings, copilotEnabled: e.target.checked })
+            }
+          />
+          Enable Copilot usage tracking
+        </label>
+        {settings.copilotEnabled && (
+          <>
+            <label>
+              GitHub host
+              <input
+                value={settings.copilotGithubHost}
+                placeholder="github.com"
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    copilotGithubHost: e.target.value,
+                  })
+                }
+              />
+              <span className="hint">
+                Use github.com or your Enterprise Cloud host (e.g.
+                company.ghe.com).
+              </span>
+            </label>
+            <label>
+              Username (optional)
+              <input
+                value={settings.copilotUsername}
+                placeholder="Auto-detected from token"
+                autoComplete="username"
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    copilotUsername: e.target.value,
+                  })
+                }
+              />
+            </label>
+            <label>
+              API token
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={settings.copilotApiToken}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    copilotApiToken: e.target.value,
+                  })
+                }
+              />
+              <span className="hint">
+                Prefer a fine-grained PAT with Copilot Requests (user-owned), or
+                an OAuth/`gh` token. Classic ghp_ tokens often fail on this API.
+                Stored only in your local database.
+              </span>
+            </label>
+            <label>
+              Poll interval (minutes)
+              <input
+                type="number"
+                min={5}
+                max={120}
+                value={settings.copilotPollIntervalMins}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    copilotPollIntervalMins: Math.max(
+                      5,
+                      Number(e.target.value) || 30,
+                    ),
+                  })
+                }
+              />
+            </label>
+            <label>
+              Monthly limit override (optional)
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={settings.copilotMonthlyLimitOverride ?? ""}
+                placeholder="Use API entitlement"
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
+                  setSettings({
+                    ...settings,
+                    copilotMonthlyLimitOverride: raw
+                      ? Number(raw) || null
+                      : null,
+                  });
+                }}
+              />
+              <span className="hint">
+                Used only when the API has no usable entitlement (or reports
+                unlimited). Leave empty to trust the API.
+              </span>
+            </label>
+            <div className="row-actions">
+              <button
+                type="button"
+                disabled={copilotTesting}
+                onClick={async () => {
+                  setError(null);
+                  setMessage(null);
+                  setCopilotTesting(true);
+                  setCopilotTestPhase("saving");
+                  setCopilotTestStatus("Saving settings…");
+
+                  let unlisten: (() => void) | undefined;
+                  try {
+                    const saved = await api.updateSettings(settings);
+                    setSettings(saved);
+
+                    unlisten = await listen<CopilotConnectionTestEvent>(
+                      "copilot-connection-test",
+                      (e) => {
+                        const { phase, message: status } = e.payload;
+                        setCopilotTestPhase(phase);
+                        setCopilotTestStatus(status);
+                        if (phase === "succeeded" || phase === "failed") {
+                          void api
+                            .getSettings()
+                            .then(setSettings)
+                            .catch(() => {});
+                          setCopilotTesting(false);
+                          if (phase === "succeeded") {
+                            setMessage(status);
+                            setError(null);
+                          } else {
+                            setError(status);
+                            setMessage(null);
+                          }
+                          unlisten?.();
+                          unlisten = undefined;
+                        }
+                      },
+                    );
+
+                    await api.startCopilotConnectionTest();
+                  } catch (e) {
+                    unlisten?.();
+                    setCopilotTesting(false);
+                    setCopilotTestPhase("failed");
+                    setCopilotTestStatus(String(e));
+                    setError(String(e));
+                    const refreshed = await api.getSettings().catch(() => null);
+                    if (refreshed) setSettings(refreshed);
+                  }
+                }}
+              >
+                {copilotTesting ? "Testing…" : "Test connection"}
+              </button>
+            </div>
+            {copilotTestStatus && (
+              <p
+                className={
+                  copilotTestPhase === "failed"
+                    ? "err"
+                    : copilotTestPhase === "succeeded"
+                      ? "hint"
+                      : "muted"
+                }
+              >
+                {copilotTestStatus}
+              </p>
+            )}
+            {(settings.copilotLastError || settings.copilotLastSyncedAt) && (
+              <p className="hint">
+                {settings.copilotLastError
+                  ? `Last error: ${settings.copilotLastError}`
+                  : null}
+                {settings.copilotLastError && settings.copilotLastSyncedAt
+                  ? " · "
+                  : null}
+                {settings.copilotLastSyncedAt
+                  ? `Last synced: ${new Date(settings.copilotLastSyncedAt).toLocaleString()}`
                   : null}
               </p>
             )}
