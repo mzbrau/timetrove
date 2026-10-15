@@ -34,6 +34,28 @@ export interface JiraIssueDetails {
   totalSpentSeconds: number | null;
 }
 
+export interface JiraDashboardIssue {
+  issueKey: string;
+  summary: string;
+  status: string;
+  assignee: string;
+  estimateSeconds: number | null;
+  totalSpentSeconds: number | null;
+  browseUrl: string;
+  taskId: string | null;
+  taskName: string | null;
+  /** TimeTrove booked ms for this key; null when unlinked. */
+  timetroveBookedMs: number | null;
+}
+
+export interface JiraAssignedIssuesResult {
+  issues: JiraDashboardIssue[];
+  fetchedAt: string | null;
+  truncated: boolean;
+  fromCache: boolean;
+  error: string | null;
+}
+
 export interface TaskJiraHistoryEntry {
   id: string;
   taskId: string;

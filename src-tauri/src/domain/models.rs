@@ -60,6 +60,36 @@ pub struct JiraIssueDetails {
     pub total_spent_seconds: Option<i64>,
 }
 
+/// Assigned open issue enriched with optional TimeTrove task link.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraDashboardIssue {
+    pub issue_key: String,
+    pub summary: String,
+    pub status: String,
+    pub assignee: String,
+    pub estimate_seconds: Option<i64>,
+    pub total_spent_seconds: Option<i64>,
+    /// `{site}/browse/{KEY}` when site URL is configured.
+    pub browse_url: String,
+    pub task_id: Option<String>,
+    pub task_name: Option<String>,
+    /// TimeTrove booked ms for this key (`reported − baseline`); null when unlinked.
+    pub timetrove_booked_ms: Option<i64>,
+}
+
+/// Result of listing assigned open Jira issues (cached).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JiraAssignedIssuesResult {
+    pub issues: Vec<JiraDashboardIssue>,
+    pub fetched_at: Option<DateTime<Utc>>,
+    pub truncated: bool,
+    pub from_cache: bool,
+    /// Soft error / nudge (e.g. disabled or incomplete credentials).
+    pub error: Option<String>,
+}
+
 /// Prior Jira issue linked to a task (one active key; history for display only).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

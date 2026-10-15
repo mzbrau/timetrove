@@ -1,6 +1,8 @@
+mod assigned;
 mod client;
 mod sync;
 
+pub use assigned::list_assigned;
 pub use client::{fetch_issue, test_connection, JiraCredentials};
 pub use sync::{flush_before_relink, spawn_flush_all, spawn_flush_task};
 

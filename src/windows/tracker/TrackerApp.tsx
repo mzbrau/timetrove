@@ -5,6 +5,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../shared/api";
 import { formatHms } from "../../shared/format";
+import { jiraBrowseUrl } from "../../shared/jira";
 import type { Settings } from "../../shared/types";
 import { useTrackerState } from "../../shared/useTrackerState";
 import "./tracker.css";
@@ -39,6 +40,12 @@ export function TrackerApp() {
   const { state } = useTrackerState();
   const alwaysOnTopRef = useRef(true);
   const [showSeconds, setShowSeconds] = useState(false);
+  const [jiraEnabled, setJiraEnabled] = useState(false);
+  const [jiraSiteUrl, setJiraSiteUrl] = useState("");
+  const [jiraSummaryOverride, setJiraSummaryOverride] = useState<string | null>(
+    null,
+  );
+  const refreshedJiraKeyRef = useRef<string | null>(null);
   const [tick, setTick] = useState(0);
   const receivedAtRef = useRef(Date.now());
   const prevStateRef = useRef(state);
@@ -52,6 +59,8 @@ export function TrackerApp() {
       .then((s) => {
         alwaysOnTopRef.current = s.trackerAlwaysOnTop;
         setShowSeconds(s.trackerShowSeconds);
+        setJiraEnabled(s.jiraEnabled);
+        setJiraSiteUrl(s.jiraSiteUrl);
       })
       .catch(() => {});
   }, []);
@@ -61,6 +70,8 @@ export function TrackerApp() {
     listen<Settings>("settings-changed", (e) => {
       alwaysOnTopRef.current = e.payload.trackerAlwaysOnTop;
       setShowSeconds(e.payload.trackerShowSeconds);
+      setJiraEnabled(e.payload.jiraEnabled);
+      setJiraSiteUrl(e.payload.jiraSiteUrl);
     }).then((fn) => {
       unlisten = fn;
     });
@@ -68,6 +79,33 @@ export function TrackerApp() {
       unlisten?.();
     };
   }, []);
+
+  const jiraKey =
+    state?.tracking && state.currentTask?.jiraIssueKey
+      ? state.currentTask.jiraIssueKey
+      : "";
+  const jiraSummary =
+    jiraSummaryOverride ??
+    (state?.currentTask?.jiraIssueSummary?.trim() || "");
+
+  useEffect(() => {
+    setJiraSummaryOverride(null);
+    refreshedJiraKeyRef.current = null;
+  }, [jiraKey]);
+
+  useEffect(() => {
+    if (!jiraEnabled || !jiraKey || !state?.currentTask) return;
+    if (jiraSummary) return;
+    if (refreshedJiraKeyRef.current === jiraKey) return;
+    refreshedJiraKeyRef.current = jiraKey;
+    const taskId = state.currentTask.id;
+    void api
+      .refreshJiraIssue(taskId)
+      .then((details) => {
+        if (details?.summary) setJiraSummaryOverride(details.summary);
+      })
+      .catch(() => {});
+  }, [jiraEnabled, jiraKey, jiraSummary, state?.currentTask]);
 
   if (state !== prevStateRef.current) {
     prevStateRef.current = state;
@@ -288,6 +326,37 @@ export function TrackerApp() {
             }}
           >
             <span className="tracker-stop-icon" aria-hidden />
+          </button>
+        )}
+        {jiraEnabled && jiraKey && (
+          <button
+            type="button"
+            className="tracker-jira"
+            title={
+              jiraSiteUrl.trim()
+                ? jiraSummary
+                  ? `${jiraKey} — ${jiraSummary}`
+                  : jiraKey
+                : `${jiraKey} (set Jira site URL in Settings to open)`
+            }
+            onClick={() => {
+              const url = jiraBrowseUrl(jiraSiteUrl, jiraKey);
+              if (!url) return;
+              void api.openExternalUrl(url);
+            }}
+          >
+            <svg
+              className="tracker-jira-icon"
+              viewBox="0 0 24 24"
+              width="12"
+              height="12"
+              aria-hidden
+            >
+              <path
+                fill="currentColor"
+                d="M11.53 2c0 2.4 1.97 4.35 4.35 4.35h1.52v1.5c0 2.4 1.94 4.34 4.35 4.34V2.84A.84.84 0 0 0 20.91 2H11.53zM6.22 7.3c0 2.4 1.97 4.35 4.35 4.35h1.52v1.5c0 2.4 1.94 4.34 4.35 4.34V8.14a.84.84 0 0 0-.84-.84H6.22zm-5.3 5.3c0 2.4 1.97 4.35 4.35 4.35h1.52v1.5c0 2.4 1.94 4.34 4.35 4.34v-9.35a.84.84 0 0 0-.84-.84H.92z"
+              />
+            </svg>
           </button>
         )}
         <button

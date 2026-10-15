@@ -127,6 +127,159 @@ pub fn add_worklog(
     Ok(())
 }
 
+pub const ASSIGNED_ISSUES_MAX: u32 = 50;
+
+pub const ASSIGNED_ISSUES_JQL: &str =
+    "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC";
+
+/// Build a Jira Cloud browse URL for an issue key.
+pub fn browse_url(site_url: &str, issue_key: &str) -> Result<String, String> {
+    let base = normalize_site_url(site_url)?;
+    let key = issue_key.trim().to_uppercase();
+    if key.is_empty() {
+        return Err("Jira issue key is required".into());
+    }
+    Ok(format!("{base}/browse/{key}"))
+}
+
+/// Search open issues assigned to the current user (capped).
+pub fn search_my_open_issues(
+    creds: &JiraCredentials,
+    max_results: u32,
+) -> Result<(Vec<JiraIssueDetails>, bool), String> {
+    let base = validate_creds(creds)?;
+    let agent = build_agent(creds)?;
+    let max = max_results.max(1);
+    let auth = basic_auth_header(creds.email.trim(), creds.api_token.trim());
+    let fields = [
+        "summary",
+        "status",
+        "assignee",
+        "timetracking",
+        "timeoriginalestimate",
+        "aggregatetimespent",
+    ];
+    // Prefer the current Cloud search/jql endpoint; fall back to classic /search.
+    let body = match post_search_jql(&agent, &base, &auth, max, &fields) {
+        Ok(body) => body,
+        Err(e) => {
+            // Classic GET still works on some tenants.
+            match get_search_classic(&agent, &base, &auth, max, &fields) {
+                Ok(body) => body,
+                Err(e2) => {
+                    return Err(format!("{e}; classic search also failed: {e2}"));
+                }
+            }
+        }
+    };
+    parse_search_json(&body, max)
+}
+
+fn post_search_jql(
+    agent: &ureq::Agent,
+    base: &str,
+    auth: &str,
+    max: u32,
+    fields: &[&str],
+) -> Result<serde_json::Value, String> {
+    let url = format!("{base}/rest/api/3/search/jql");
+    let payload = serde_json::json!({
+        "jql": ASSIGNED_ISSUES_JQL,
+        "maxResults": max,
+        "fields": fields,
+    });
+    let resp = agent
+        .post(&url)
+        .set("Authorization", auth)
+        .set("Accept", "application/json")
+        .set("Content-Type", "application/json")
+        .send_json(&payload)
+        .map_err(map_ureq_error)?;
+    if !(200..300).contains(&resp.status()) {
+        let status = resp.status();
+        let detail = resp.into_string().unwrap_or_default();
+        let snippet: String = detail.chars().take(200).collect();
+        return Err(format!("Jira search/jql failed (HTTP {status}): {snippet}"));
+    }
+    resp.into_json().map_err(|e| e.to_string())
+}
+
+fn get_search_classic(
+    agent: &ureq::Agent,
+    base: &str,
+    auth: &str,
+    max: u32,
+    fields: &[&str],
+) -> Result<serde_json::Value, String> {
+    let fields_csv = fields.join(",");
+    let url = format!(
+        "{base}/rest/api/3/search?jql={}&maxResults={max}&fields={fields_csv}",
+        urlencoding_jira_jql(ASSIGNED_ISSUES_JQL)
+    );
+    let resp = agent
+        .get(&url)
+        .set("Authorization", auth)
+        .set("Accept", "application/json")
+        .call()
+        .map_err(map_ureq_error)?;
+    if !(200..300).contains(&resp.status()) {
+        let status = resp.status();
+        let detail = resp.into_string().unwrap_or_default();
+        let snippet: String = detail.chars().take(200).collect();
+        return Err(format!("Jira search failed (HTTP {status}): {snippet}"));
+    }
+    resp.into_json().map_err(|e| e.to_string())
+}
+
+/// Minimal query escaping for JQL in a URL (spaces + reserved).
+fn urlencoding_jira_jql(jql: &str) -> String {
+    let mut out = String::with_capacity(jql.len() * 2);
+    for b in jql.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            b' ' => out.push('+'),
+            _ => {
+                out.push('%');
+                out.push(HEX[(b >> 4) as usize] as char);
+                out.push(HEX[(b & 0xf) as usize] as char);
+            }
+        }
+    }
+    out
+}
+
+const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+/// Parse a Jira search response into issue details + truncated flag.
+pub fn parse_search_json(
+    body: &serde_json::Value,
+    max_results: u32,
+) -> Result<(Vec<JiraIssueDetails>, bool), String> {
+    let issues_val = body
+        .get("issues")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "Jira search response missing issues".to_string())?;
+    let mut issues = Vec::with_capacity(issues_val.len());
+    for issue in issues_val {
+        let key = issue
+            .get("key")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_uppercase();
+        if key.is_empty() {
+            continue;
+        }
+        issues.push(parse_issue_json(&key, issue)?);
+    }
+    let truncated = match body.get("total").and_then(|v| v.as_u64()) {
+        Some(total) => total > issues.len() as u64,
+        None => issues.len() as u32 >= max_results,
+    };
+    Ok((issues, truncated))
+}
+
 /// Fetch issue summary, status, assignee, estimate, and aggregate time spent.
 pub fn fetch_issue(creds: &JiraCredentials, issue_key: &str) -> Result<JiraIssueDetails, String> {
     let key = issue_key.trim().to_uppercase();
@@ -323,5 +476,65 @@ mod tests {
         // ureq only accepts http / socks* schemes when a scheme is present.
         let err = build_agent(&sample_creds("ftp://proxy.example:8080")).unwrap_err();
         assert!(err.contains("Invalid Jira proxy URL"));
+    }
+
+    #[test]
+    fn browse_url_normalizes_site_and_key() {
+        assert_eq!(
+            browse_url("https://example.atlassian.net/", "thing-9").unwrap(),
+            "https://example.atlassian.net/browse/THING-9"
+        );
+        assert!(browse_url("http://example.atlassian.net", "A-1").is_err());
+        assert!(browse_url("https://example.atlassian.net", "").is_err());
+    }
+
+    #[test]
+    fn parse_search_json_maps_issues_and_truncated() {
+        let body = serde_json::json!({
+            "total": 3,
+            "issues": [
+                {
+                    "key": "A-1",
+                    "fields": {
+                        "summary": "One",
+                        "status": { "name": "To Do" },
+                        "assignee": { "displayName": "Ada" },
+                        "timeoriginalestimate": 3600,
+                        "aggregatetimespent": 600
+                    }
+                },
+                {
+                    "key": "B-2",
+                    "fields": {
+                        "summary": "Two",
+                        "status": { "name": "In Progress" },
+                        "assignee": null
+                    }
+                }
+            ]
+        });
+        let (issues, truncated) = parse_search_json(&body, 50).unwrap();
+        assert_eq!(issues.len(), 2);
+        assert!(truncated);
+        assert_eq!(issues[0].issue_key, "A-1");
+        assert_eq!(issues[1].assignee, "Unassigned");
+    }
+
+    #[test]
+    fn parse_search_json_not_truncated_when_total_matches() {
+        let body = serde_json::json!({
+            "total": 1,
+            "issues": [{
+                "key": "A-1",
+                "fields": {
+                    "summary": "One",
+                    "status": { "name": "To Do" },
+                    "assignee": null
+                }
+            }]
+        });
+        let (issues, truncated) = parse_search_json(&body, 50).unwrap();
+        assert_eq!(issues.len(), 1);
+        assert!(!truncated);
     }
 }

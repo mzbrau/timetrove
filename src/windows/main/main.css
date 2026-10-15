@@ -1249,3 +1249,183 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
+
+/* —— Jira dashboard —— */
+.jira-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.jira-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.jira-toolbar-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.jira-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: jira-spin 0.7s linear infinite;
+}
+
+@keyframes jira-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jira-spinner {
+    animation: none;
+    border-top-color: var(--accent);
+    opacity: 0.7;
+  }
+}
+
+.jira-empty {
+  padding: var(--s5);
+  color: var(--muted);
+}
+
+.jira-cap-note {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.jira-charts {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: var(--s4);
+}
+
+@media (max-width: 900px) {
+  .jira-charts {
+    grid-template-columns: 1fr;
+  }
+}
+
+.jira-chart-card {
+  padding: var(--s3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.jira-chart-card h3 {
+  margin: 0 0 var(--s3);
+  font-size: 0.95rem;
+}
+
+.jira-pie-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.jira-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 120px;
+}
+
+.jira-legend li {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 0.85rem;
+}
+
+.jira-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.jira-legend-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.jira-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.jira-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.jira-table th,
+.jira-table td {
+  text-align: left;
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.jira-table th {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.jira-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.jira-open-btn {
+  border: 1px solid var(--line);
+  background: var(--control-bg);
+  color: var(--ink);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.jira-open-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.jira-open-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+button.linkish {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+}
+
+button.linkish:disabled {
+  color: var(--muted);
+  cursor: default;
+}

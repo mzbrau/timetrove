@@ -9,6 +9,7 @@ import { EntriesPanel } from "./EntriesPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { InsightsPanel } from "./InsightsPanel";
 import { CopilotPanel } from "./CopilotPanel";
+import { JiraPanel } from "./JiraPanel";
 import { ConfirmBar } from "./ConfirmBar";
 import { api } from "../../shared/api";
 import type { Settings } from "../../shared/types";
@@ -19,6 +20,7 @@ type Tab =
   | "timesheet"
   | "insights"
   | "entries"
+  | "jira"
   | "copilot"
   | "settings";
 
@@ -32,6 +34,7 @@ export function MainApp() {
   const [tick, setTick] = useState(0);
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [copilotEnabled, setCopilotEnabled] = useState(false);
+  const [jiraEnabled, setJiraEnabled] = useState(false);
   const receivedAtRef = useRef(Date.now());
   const prevStateRef = useRef(state);
 
@@ -44,11 +47,15 @@ export function MainApp() {
   useEffect(() => {
     void api
       .getSettings()
-      .then((s) => setCopilotEnabled(s.copilotEnabled))
+      .then((s) => {
+        setCopilotEnabled(s.copilotEnabled);
+        setJiraEnabled(s.jiraEnabled);
+      })
       .catch(() => {});
     let unlisten: (() => void) | undefined;
     listen<Settings>("settings-changed", (e) => {
       setCopilotEnabled(e.payload.copilotEnabled);
+      setJiraEnabled(e.payload.jiraEnabled);
     }).then((fn) => {
       unlisten = fn;
     });
@@ -61,7 +68,10 @@ export function MainApp() {
     if (!copilotEnabled && tab === "copilot") {
       setTab("tasks");
     }
-  }, [copilotEnabled, tab]);
+    if (!jiraEnabled && tab === "jira") {
+      setTab("tasks");
+    }
+  }, [copilotEnabled, jiraEnabled, tab]);
 
   const bannerError = error || state?.dbError || null;
   const showBanner = Boolean(bannerError && bannerError !== dismissedError);
@@ -178,6 +188,7 @@ export function MainApp() {
             ["timesheet", "Timesheet"],
             ["insights", "Insights"],
             ["entries", "Time entries"],
+            ...(jiraEnabled ? [["jira", "Jira"] as const] : []),
             ...(copilotEnabled ? [["copilot", "Copilot"] as const] : []),
             ["settings", "Settings"],
           ] as Array<readonly [Tab, string]>
@@ -230,6 +241,7 @@ export function MainApp() {
         {tab === "timesheet" && <TimesheetPanel />}
         {tab === "insights" && <InsightsPanel />}
         {tab === "entries" && <EntriesPanel state={state} />}
+        {tab === "jira" && jiraEnabled && <JiraPanel active={tab === "jira"} />}
         {tab === "copilot" && copilotEnabled && (
           <CopilotPanel usage={state?.copilotUsage ?? null} />
         )}

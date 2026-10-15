@@ -237,6 +237,8 @@ pub fn run() {
             commands::start_jira_connection_test,
             commands::fetch_jira_issue,
             commands::refresh_jira_issue,
+            commands::list_assigned_jira_issues,
+            commands::open_external_url,
             commands::list_task_jira_history,
             commands::get_copilot_usage,
             commands::get_copilot_usage_history,
