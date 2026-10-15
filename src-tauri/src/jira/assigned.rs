@@ -259,6 +259,16 @@ mod tests {
     use crate::domain::models::{CreateTaskInput, JiraIssueDetails, UpdateTaskInput};
     use crate::test_support::test_db;
     use chrono::TimeZone;
+    use std::sync::{Mutex, MutexGuard};
+
+    /// Serialize tests that mutate the process-wide CACHE (Rust runs tests in parallel).
+    static CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock_cache_tests() -> MutexGuard<'static, ()> {
+        CACHE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     fn link_task(db: &Db, name: &str, key: &str) -> Task {
         let t = db
@@ -385,6 +395,7 @@ mod tests {
 
     #[test]
     fn list_assigned_uses_fresh_cache_for_matching_identity() {
+        let _guard = lock_cache_tests();
         clear_cache_for_tests();
         let (_dir, db) = test_db();
         let mut settings = db.get_settings().unwrap();
@@ -419,6 +430,7 @@ mod tests {
 
     #[test]
     fn list_assigned_refuses_stale_cache_for_other_account() {
+        let _guard = lock_cache_tests();
         clear_cache_for_tests();
         let (_dir, db) = test_db();
         let mut settings = db.get_settings().unwrap();
@@ -453,6 +465,7 @@ mod tests {
 
     #[test]
     fn list_assigned_disabled_nudge() {
+        let _guard = lock_cache_tests();
         clear_cache_for_tests();
         let (_dir, db) = test_db();
         let result = list_assigned(&db, true).unwrap();
