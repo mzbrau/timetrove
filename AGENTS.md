@@ -8,7 +8,7 @@ Inspired by Grindstone (work items + time slices + idle correction). Product req
 
 Do not add these unless the user explicitly expands scope:
 
-- External timesheet / ERP submission (beyond optional Jira Cloud worklogs)
+- External timesheet / ERP submission (beyond optional Jira Cloud worklogs and Copilot usage reads)
 - Multi-user, cloud sync, or multi-machine
 - In-app custom property engine
 - Decimal-hour CSV / reporting formats
@@ -43,8 +43,8 @@ One Vite entry ([`src/main.tsx`](src/main.tsx)); `getCurrentWebviewWindow().labe
 
 | Label | Role | UI |
 |-------|------|-----|
-| `main` | Tasks, timesheet, insights, entries, settings, day timeline | [`src/windows/main/`](src/windows/main/) |
-| `tracker` | Always-visible compact bar (color, task, daily total; default `HH:MM`) | [`src/windows/tracker/`](src/windows/tracker/) |
+| `main` | Tasks, timesheet, insights, entries, Copilot (when enabled), settings, day timeline | [`src/windows/main/`](src/windows/main/) |
+| `tracker` | Always-visible compact bar (color, task, daily total; optional Copilot % bubble; default `HH:MM`) | [`src/windows/tracker/`](src/windows/tracker/) |
 | `switcher` | Global-shortcut task search / create | [`src/windows/switcher/`](src/windows/switcher/) |
 | `gap` | Idle / sleep / startup attribution prompt | [`src/windows/gap/`](src/windows/gap/) |
 
@@ -59,9 +59,10 @@ Default task-switch shortcut: `Cmd/Ctrl+Shift+T`.
 | [`db/`](src-tauri/src/db/) | SQLite migrate + repo |
 | [`domain/`](src-tauri/src/domain/) | Models, time math, insights aggregation, formatting, task colors |
 | [`jira/`](src-tauri/src/jira/) | Optional Jira Cloud worklog client + watermark sync (hourly + stop/switch flush) |
+| [`copilot/`](src-tauri/src/copilot/) | Optional GitHub Copilot usage poll (`/copilot_internal/user`) + local history |
 | [`chrome/`](src-tauri/src/chrome/) | System tray / OS chrome |
 
-Background loops (idle check, checkpoint, midnight split, Jira hourly sync, state emit) are wired from [`lib.rs`](src-tauri/src/lib.rs).
+Background loops (idle check, checkpoint, midnight split, Jira hourly sync, Copilot usage poll, state emit) are wired from [`lib.rs`](src-tauri/src/lib.rs).
 
 ### Frontend (`src/`)
 
@@ -154,7 +155,8 @@ See [`engine/mod.rs`](src-tauri/src/engine/mod.rs) (`checkpoint_if_due`, `reconc
 - Serde / TS types: camelCase; engine phase uses tagged `kind`
 - Near-adjacent same-task closed slices may be coalesced (`coalesce_near_adjacent`); don’t assume every day read re-runs it
 - Gap/switcher windows are special-cased for visibility restore; main close typically hides rather than destroys
-- Do not invent multi-user or general cloud sync; Jira Cloud worklog sync is the only optional outbound integration
+- Do not invent multi-user or general cloud sync; optional integrations are Jira Cloud worklog sync (outbound) and Copilot usage tracking (read-only quota poll)
+- Copilot usage (when enabled): Settings host/token/poll interval; main-window Copilot tab; tracker bar shows usage % bubble right of the clock; limit prefers API entitlement with optional manual override
 
 ## Verify
 

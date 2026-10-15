@@ -58,6 +58,48 @@ export type EnginePhase =
   | { kind: "tracking"; taskId: string; sliceId: string }
   | { kind: "needsAttribution"; gapStart: string; previousTaskId: string };
 
+export interface CopilotQuotaPool {
+  id: string;
+  entitlement: number;
+  remaining: number;
+  used: number;
+  percentRemaining: number;
+  percentUsed: number;
+  unlimited: boolean;
+  overageCount: number;
+  overagePermitted: boolean;
+}
+
+export interface CopilotUsageSummary {
+  plan: string;
+  username: string;
+  unit: string;
+  entitlement: number;
+  used: number;
+  remaining: number;
+  percentUsed: number;
+  unlimited: boolean;
+  overageCount: number;
+  overagePermitted: boolean;
+  resetDate: string | null;
+  pools: CopilotQuotaPool[];
+  limitSource: string;
+  fetchedAt: string | null;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+}
+
+export interface CopilotUsageHistoryPoint {
+  id: string;
+  fetchedAt: string;
+  plan: string;
+  entitlement: number;
+  used: number;
+  remaining: number;
+  percentUsed: number;
+  unit: string;
+}
+
 export interface TrackerState {
   phase: EnginePhase;
   currentTask: Task | null;
@@ -74,6 +116,8 @@ export interface TrackerState {
   snoozeUntil: string | null;
   /** Note on the running slice when tracking; empty otherwise. */
   currentSliceNote: string;
+  /** Present when Copilot usage tracking is enabled. */
+  copilotUsage: CopilotUsageSummary | null;
 }
 
 export interface Settings {
@@ -93,9 +137,24 @@ export interface Settings {
   jiraProxyUrl: string;
   jiraLastError: string | null;
   jiraLastSyncedAt: string | null;
+  copilotEnabled: boolean;
+  /** github.com or Enterprise Cloud host (e.g. company.ghe.com). */
+  copilotGithubHost: string;
+  copilotUsername: string;
+  copilotApiToken: string;
+  copilotPollIntervalMins: number;
+  /** Manual monthly allowance when API entitlement is missing/unlimited. */
+  copilotMonthlyLimitOverride: number | null;
+  copilotLastError: string | null;
+  copilotLastSyncedAt: string | null;
 }
 
 export interface JiraConnectionTestEvent {
+  phase: "validating" | "connecting" | "verifying" | "succeeded" | "failed" | string;
+  message: string;
+}
+
+export interface CopilotConnectionTestEvent {
   phase: "validating" | "connecting" | "verifying" | "succeeded" | "failed" | string;
   message: string;
 }

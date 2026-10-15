@@ -156,3 +156,39 @@ body,
   background: rgba(212, 160, 84, 0.95);
   color: #111;
 }
+
+.copilot-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  border-radius: 999px;
+  padding: var(--s1) var(--s2);
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.copilot-usage-icon {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.copilot-usage.ok {
+  background: rgba(61, 155, 143, 0.92);
+}
+
+.copilot-usage.warn {
+  background: rgba(212, 160, 84, 0.95);
+  color: #111;
+}
+
+.copilot-usage.danger {
+  background: rgba(196, 78, 82, 0.95);
+}
+
+.copilot-usage.unlimited {
+  background: rgba(120, 140, 160, 0.85);
+}

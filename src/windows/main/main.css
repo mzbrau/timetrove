@@ -1151,3 +1151,101 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Copilot usage panel */
+.copilot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.copilot-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.copilot-sync-meta {
+  margin: 0;
+  font-size: 12px;
+}
+
+.copilot-empty {
+  padding: var(--s4);
+  color: var(--muted);
+}
+
+.copilot-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--s3);
+}
+
+.copilot-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--s3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.copilot-kpi-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.copilot-kpi-value {
+  font-size: 1.25rem;
+}
+
+.copilot-section h3 {
+  margin: 0 0 var(--s2);
+  font-size: 0.95rem;
+}
+
+.copilot-pools {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--s3);
+}
+
+.copilot-pool {
+  padding: var(--s3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.copilot-pool-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+
+.copilot-pool-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.2);
+  overflow: hidden;
+  margin-bottom: var(--s2);
+}
+
+.copilot-pool-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.copilot-chart-card {
+  padding: var(--s3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}

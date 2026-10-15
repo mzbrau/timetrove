@@ -1168,6 +1168,37 @@ impl Db {
                     "jira_last_synced_at" => {
                         settings.jira_last_synced_at = if v.is_empty() { None } else { Some(v) };
                     }
+                    "copilot_enabled" => {
+                        settings.copilot_enabled = v == "true" || v == "1";
+                    }
+                    "copilot_github_host" => {
+                        settings.copilot_github_host = if v.trim().is_empty() {
+                            "github.com".into()
+                        } else {
+                            v
+                        };
+                    }
+                    "copilot_username" => settings.copilot_username = v,
+                    "copilot_api_token" => settings.copilot_api_token = v,
+                    "copilot_poll_interval_mins" => {
+                        if let Ok(n) = v.parse::<u32>() {
+                            settings.copilot_poll_interval_mins = n.clamp(5, 120);
+                        }
+                    }
+                    "copilot_monthly_limit_override" => {
+                        settings.copilot_monthly_limit_override = if v.trim().is_empty() {
+                            None
+                        } else {
+                            v.parse::<f64>().ok().filter(|n| n.is_finite() && *n > 0.0)
+                        };
+                    }
+                    "copilot_last_error" => {
+                        settings.copilot_last_error = if v.is_empty() { None } else { Some(v) };
+                    }
+                    "copilot_last_synced_at" => {
+                        settings.copilot_last_synced_at =
+                            if v.is_empty() { None } else { Some(v) };
+                    }
                     _ => {}
                 }
             }
@@ -1234,6 +1265,29 @@ impl Db {
                 ("jira_email", settings.jira_email.clone()),
                 ("jira_api_token", settings.jira_api_token.clone()),
                 ("jira_proxy_url", settings.jira_proxy_url.clone()),
+                (
+                    "copilot_enabled",
+                    if settings.copilot_enabled {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    },
+                ),
+                ("copilot_github_host", settings.copilot_github_host.clone()),
+                ("copilot_username", settings.copilot_username.clone()),
+                ("copilot_api_token", settings.copilot_api_token.clone()),
+                (
+                    "copilot_poll_interval_mins",
+                    settings.copilot_poll_interval_mins.clamp(5, 120).to_string(),
+                ),
+                (
+                    "copilot_monthly_limit_override",
+                    settings
+                        .copilot_monthly_limit_override
+                        .filter(|n| n.is_finite() && *n > 0.0)
+                        .map(|n| n.to_string())
+                        .unwrap_or_default(),
+                ),
             ];
             for (k, v) in pairs {
                 conn.execute(
@@ -1316,6 +1370,185 @@ impl Db {
                     .map_err(|e| e.to_string())?;
                 Ok(())
             }
+        })
+    }
+
+    /// Persist a discovered username only when the setting is still blank.
+    /// Single-lock so a concurrent full settings save cannot be clobbered.
+    pub fn set_copilot_username_if_blank(&self, username: &str) -> Result<(), String> {
+        let trimmed = username.trim();
+        if trimmed.is_empty() {
+            return Ok(());
+        }
+        self.with_conn(|conn| {
+            let current: Option<String> = conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key = 'copilot_username'",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            if current.as_deref().unwrap_or("").trim().is_empty() {
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('copilot_username', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![trimmed],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn set_copilot_last_error(&self, error: Option<&str>) -> Result<(), String> {
+        self.with_conn(|conn| match error {
+            Some(msg) if !msg.is_empty() => {
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('copilot_last_error', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![msg],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+            _ => {
+                conn.execute("DELETE FROM settings WHERE key = 'copilot_last_error'", [])
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        })
+    }
+
+    pub fn set_copilot_last_synced_at(&self, at: Option<DateTime<Utc>>) -> Result<(), String> {
+        self.with_conn(|conn| match at {
+            Some(dt) => {
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('copilot_last_synced_at', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![dt.to_rfc3339()],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+            None => {
+                conn.execute(
+                    "DELETE FROM settings WHERE key = 'copilot_last_synced_at'",
+                    [],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        })
+    }
+
+    pub fn set_copilot_usage_cache(&self, json: &str) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('copilot_usage_cache', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![json],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+    }
+
+    pub fn get_copilot_usage_cache(&self) -> Result<Option<String>, String> {
+        self.with_conn(|conn| {
+            let value: Option<String> = conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key = 'copilot_usage_cache'",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            Ok(value.filter(|s| !s.is_empty()))
+        })
+    }
+
+    pub fn insert_copilot_usage_snapshot(
+        &self,
+        point: &crate::domain::CopilotUsageHistoryPoint,
+        raw_json: &str,
+    ) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO copilot_usage_snapshots
+                    (id, fetched_at, plan, entitlement, used, remaining, percent_used, unit, raw_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    point.id,
+                    point.fetched_at.to_rfc3339(),
+                    point.plan,
+                    point.entitlement,
+                    point.used,
+                    point.remaining,
+                    point.percent_used,
+                    point.unit,
+                    raw_json,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            // Prune older than ~90 days.
+            let cutoff = (Utc::now() - chrono::Duration::days(90)).to_rfc3339();
+            conn.execute(
+                "DELETE FROM copilot_usage_snapshots WHERE fetched_at < ?1",
+                params![cutoff],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+    }
+
+    pub fn list_copilot_usage_history(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<crate::domain::CopilotUsageHistoryPoint>, String> {
+        self.with_conn(|conn| {
+            let limit = limit.clamp(1, 2000) as i64;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, fetched_at, plan, entitlement, used, remaining, percent_used, unit
+                     FROM (
+                         SELECT id, fetched_at, plan, entitlement, used, remaining, percent_used, unit
+                         FROM copilot_usage_snapshots
+                         ORDER BY fetched_at DESC
+                         LIMIT ?1
+                     )
+                     ORDER BY fetched_at ASC",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![limit], |r| {
+                    let fetched_at_s: String = r.get(1)?;
+                    let fetched_at = DateTime::parse_from_rfc3339(&fetched_at_s)
+                        .map(|d| d.with_timezone(&Utc))
+                        .map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                1,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?;
+                    Ok(crate::domain::CopilotUsageHistoryPoint {
+                        id: r.get(0)?,
+                        fetched_at,
+                        plan: r.get(2)?,
+                        entitlement: r.get(3)?,
+                        used: r.get(4)?,
+                        remaining: r.get(5)?,
+                        percent_used: r.get(6)?,
+                        unit: r.get(7)?,
+                    })
+                })
+                .map_err(|e| e.to_string())?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row.map_err(|e| e.to_string())?);
+            }
+            Ok(out)
         })
     }
 
@@ -1632,6 +1865,9 @@ mod tests {
         assert!(!s.tracker_show_seconds);
         assert!(!s.jira_enabled);
         assert!(s.jira_site_url.is_empty());
+        assert!(!s.copilot_enabled);
+        assert_eq!(s.copilot_github_host, "github.com");
+        assert_eq!(s.copilot_poll_interval_mins, 30);
     }
 
     #[test]
@@ -2405,6 +2641,12 @@ mod tests {
         s.jira_email = "dev@example.com".into();
         s.jira_api_token = "secret-token".into();
         s.jira_proxy_url = "http://proxy.example:8080".into();
+        s.copilot_enabled = true;
+        s.copilot_github_host = "octocorp.ghe.com".into();
+        s.copilot_username = "octocat".into();
+        s.copilot_api_token = "github_pat_test".into();
+        s.copilot_poll_interval_mins = 15;
+        s.copilot_monthly_limit_override = Some(300.0);
         db.update_settings(&s).unwrap();
         let loaded = db.get_settings().unwrap();
         assert_eq!(loaded.idle_threshold_mins, 15);
@@ -2419,6 +2661,12 @@ mod tests {
         assert_eq!(loaded.jira_email, "dev@example.com");
         assert_eq!(loaded.jira_api_token, "secret-token");
         assert_eq!(loaded.jira_proxy_url, "http://proxy.example:8080");
+        assert!(loaded.copilot_enabled);
+        assert_eq!(loaded.copilot_github_host, "octocorp.ghe.com");
+        assert_eq!(loaded.copilot_username, "octocat");
+        assert_eq!(loaded.copilot_api_token, "github_pat_test");
+        assert_eq!(loaded.copilot_poll_interval_mins, 15);
+        assert_eq!(loaded.copilot_monthly_limit_override, Some(300.0));
     }
 
     #[test]

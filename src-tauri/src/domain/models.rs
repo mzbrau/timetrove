@@ -122,6 +122,38 @@ pub struct Settings {
     /// ISO timestamp of last successful worklog post.
     #[serde(default)]
     pub jira_last_synced_at: Option<String>,
+    /// Optional GitHub Copilot usage tracking (off by default).
+    #[serde(default)]
+    pub copilot_enabled: bool,
+    /// GitHub host: `github.com` or Enterprise Cloud host (e.g. `company.ghe.com`).
+    #[serde(default = "default_copilot_github_host")]
+    pub copilot_github_host: String,
+    /// Optional GitHub username; auto-filled from the token via `/user` when empty.
+    #[serde(default)]
+    pub copilot_username: String,
+    /// GitHub token (fine-grained PAT with Copilot Requests, or OAuth/`gh` token).
+    #[serde(default)]
+    pub copilot_api_token: String,
+    /// Poll interval in minutes (default 30).
+    #[serde(default = "default_copilot_poll_interval_mins")]
+    pub copilot_poll_interval_mins: u32,
+    /// Manual monthly allowance when the API has no usable entitlement.
+    #[serde(default)]
+    pub copilot_monthly_limit_override: Option<f64>,
+    /// Last sync/connection error (read-only for Settings UI; not cleared by save).
+    #[serde(default)]
+    pub copilot_last_error: Option<String>,
+    /// ISO timestamp of last successful Copilot usage poll.
+    #[serde(default)]
+    pub copilot_last_synced_at: Option<String>,
+}
+
+fn default_copilot_github_host() -> String {
+    "github.com".into()
+}
+
+fn default_copilot_poll_interval_mins() -> u32 {
+    30
 }
 
 impl Default for Settings {
@@ -142,8 +174,67 @@ impl Default for Settings {
             jira_proxy_url: String::new(),
             jira_last_error: None,
             jira_last_synced_at: None,
+            copilot_enabled: false,
+            copilot_github_host: default_copilot_github_host(),
+            copilot_username: String::new(),
+            copilot_api_token: String::new(),
+            copilot_poll_interval_mins: default_copilot_poll_interval_mins(),
+            copilot_monthly_limit_override: None,
+            copilot_last_error: None,
+            copilot_last_synced_at: None,
         }
     }
+}
+
+/// One quota pool from the Copilot internal API (premium, chat, completions, …).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CopilotQuotaPool {
+    pub id: String,
+    pub entitlement: f64,
+    pub remaining: f64,
+    pub used: f64,
+    pub percent_remaining: f64,
+    pub percent_used: f64,
+    pub unlimited: bool,
+    pub overage_count: f64,
+    pub overage_permitted: bool,
+}
+
+/// Normalized Copilot usage for UI / tracker (latest successful poll + overrides).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopilotUsageSummary {
+    pub plan: String,
+    pub username: String,
+    pub unit: String,
+    pub entitlement: f64,
+    pub used: f64,
+    pub remaining: f64,
+    pub percent_used: f64,
+    pub unlimited: bool,
+    pub overage_count: f64,
+    pub overage_permitted: bool,
+    pub reset_date: Option<String>,
+    pub pools: Vec<CopilotQuotaPool>,
+    pub limit_source: String,
+    pub fetched_at: Option<String>,
+    pub last_synced_at: Option<String>,
+    pub last_error: Option<String>,
+}
+
+/// Historical poll row for charts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopilotUsageHistoryPoint {
+    pub id: String,
+    pub fetched_at: DateTime<Utc>,
+    pub plan: String,
+    pub entitlement: f64,
+    pub used: f64,
+    pub remaining: f64,
+    pub percent_used: f64,
+    pub unit: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -182,6 +273,9 @@ pub struct TrackerState {
     pub snooze_until: Option<DateTime<Utc>>,
     /// Note on the running slice when tracking; empty otherwise.
     pub current_slice_note: String,
+    /// Copilot usage summary when the feature is enabled; null otherwise.
+    #[serde(default)]
+    pub copilot_usage: Option<CopilotUsageSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -349,6 +443,11 @@ mod tests {
         assert!(s.jira_proxy_url.is_empty());
         assert!(s.jira_last_error.is_none());
         assert!(s.jira_last_synced_at.is_none());
+        assert!(!s.copilot_enabled);
+        assert_eq!(s.copilot_github_host, "github.com");
+        assert_eq!(s.copilot_poll_interval_mins, 30);
+        assert!(s.copilot_api_token.is_empty());
+        assert!(s.copilot_monthly_limit_override.is_none());
     }
 
     #[test]

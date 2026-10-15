@@ -318,5 +318,49 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         })?;
     }
 
+    // v13: GitHub Copilot usage tracking settings + history snapshots.
+    if version < 13 {
+        migrate_tx(conn, |conn| {
+            let defaults = [
+                ("copilot_enabled", "false"),
+                ("copilot_github_host", "github.com"),
+                ("copilot_username", ""),
+                ("copilot_api_token", ""),
+                ("copilot_poll_interval_mins", "30"),
+            ];
+            for (k, v) in defaults {
+                conn.execute(
+                    "INSERT OR IGNORE INTO settings (key, value) VALUES (?1, ?2)",
+                    (k, v),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            conn.execute(
+                "CREATE TABLE copilot_usage_snapshots (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    fetched_at TEXT NOT NULL,
+                    plan TEXT NOT NULL DEFAULT '',
+                    entitlement REAL NOT NULL DEFAULT 0,
+                    used REAL NOT NULL DEFAULT 0,
+                    remaining REAL NOT NULL DEFAULT 0,
+                    percent_used REAL NOT NULL DEFAULT 0,
+                    unit TEXT NOT NULL DEFAULT 'requests',
+                    raw_json TEXT NOT NULL DEFAULT ''
+                )",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "CREATE INDEX idx_copilot_usage_snapshots_fetched
+                 ON copilot_usage_snapshots(fetched_at DESC)",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (13)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+    }
+
     Ok(())
 }
