@@ -167,83 +167,6 @@ export function JiraPanel({ active }: Props) {
             <p className="muted jira-cap-note">Showing up to 50 open issues</p>
           )}
 
-          <div className="jira-charts">
-            <section className="jira-chart-card">
-              <h3>Hours by issue</h3>
-              <div className="jira-chart-wrap">
-                <ResponsiveContainer width="100%" height={Math.max(220, hoursChartData.length * 28)}>
-                  <BarChart
-                    data={hoursChartData}
-                    layout="vertical"
-                    margin={{ top: 4, right: 16, left: 8, bottom: 4 }}
-                  >
-                    <XAxis type="number" tick={{ fill: muted, fontSize: 11 }} />
-                    <YAxis
-                      type="category"
-                      dataKey="label"
-                      width={72}
-                      tick={{ fill: ink, fontSize: 11 }}
-                    />
-                    <Tooltip
-                      formatter={(value, name) => [
-                        `${Number(value ?? 0).toFixed(2)} h`,
-                        name === "timetroveHours" ? "TimeTrove" : "Jira",
-                      ]}
-                    />
-                    <Bar dataKey="timetroveHours" name="TimeTrove" fill={accent} />
-                    <Bar
-                      dataKey="jiraHours"
-                      name="Jira"
-                      fill="rgba(0, 82, 204, 0.75)"
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </section>
-
-            <section className="jira-chart-card">
-              <h3>By status</h3>
-              <div className="jira-chart-wrap jira-pie-wrap">
-                <ResponsiveContainer width="100%" height={220}>
-                  <PieChart>
-                    <Pie
-                      data={statusChartData}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={48}
-                      outerRadius={80}
-                      paddingAngle={2}
-                    >
-                      {statusChartData.map((_, i) => (
-                        <Cell
-                          key={statusChartData[i].name}
-                          fill={STATUS_COLORS[i % STATUS_COLORS.length]}
-                        />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-                <ul className="jira-legend">
-                  {statusChartData.map((row, i) => (
-                    <li key={row.name}>
-                      <span
-                        className="jira-legend-swatch"
-                        style={{
-                          background: STATUS_COLORS[i % STATUS_COLORS.length],
-                        }}
-                      />
-                      <span className="jira-legend-name">{row.name}</span>
-                      <span className="mono muted">{row.value}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </section>
-          </div>
-
           <div className="jira-table-wrap">
             <table className="jira-table">
               <thead>
@@ -309,6 +232,85 @@ export function JiraPanel({ active }: Props) {
                 })}
               </tbody>
             </table>
+          </div>
+
+          <div className="jira-charts">
+            <section className="jira-chart-card">
+              <h3>Hours by issue</h3>
+              <div className="jira-chart-wrap">
+                <ResponsiveContainer width="100%" height={Math.max(220, hoursChartData.length * 28)}>
+                  <BarChart
+                    data={hoursChartData}
+                    layout="vertical"
+                    margin={{ top: 4, right: 16, left: 8, bottom: 4 }}
+                  >
+                    <XAxis type="number" tick={{ fill: muted, fontSize: 11 }} />
+                    <YAxis
+                      type="category"
+                      dataKey="label"
+                      width={72}
+                      tick={{ fill: ink, fontSize: 11 }}
+                    />
+                    <Tooltip
+                      formatter={(value, name) => [
+                        `${Number(value ?? 0).toFixed(2)} h`,
+                        name === "timetroveHours" ? "TimeTrove" : "Jira",
+                      ]}
+                    />
+                    <Bar dataKey="timetroveHours" name="TimeTrove" fill={accent} />
+                    <Bar
+                      dataKey="jiraHours"
+                      name="Jira"
+                      fill="rgba(0, 82, 204, 0.75)"
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </section>
+
+            <section className="jira-chart-card">
+              <h3>By status</h3>
+              <div className="jira-chart-wrap jira-pie-wrap">
+                <ResponsiveContainer width="100%" height={220}>
+                  <PieChart>
+                    <Pie
+                      data={statusChartData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={48}
+                      outerRadius={80}
+                      paddingAngle={2}
+                      isAnimationActive={false}
+                    >
+                      {statusChartData.map((_, i) => (
+                        <Cell
+                          key={statusChartData[i].name}
+                          fill={STATUS_COLORS[i % STATUS_COLORS.length]}
+                          stroke="transparent"
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+                <ul className="jira-legend">
+                  {statusChartData.map((row, i) => (
+                    <li key={row.name}>
+                      <span
+                        className="jira-legend-swatch"
+                        style={{
+                          background: STATUS_COLORS[i % STATUS_COLORS.length],
+                        }}
+                      />
+                      <span className="jira-legend-name">{row.name}</span>
+                      <span className="mono muted">{row.value}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </section>
           </div>
         </>
       )}
