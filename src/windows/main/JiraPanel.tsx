@@ -185,8 +185,8 @@ export function JiraPanel({ active }: Props) {
                       tick={{ fill: ink, fontSize: 11 }}
                     />
                     <Tooltip
-                      formatter={(value: number, name: string) => [
-                        `${value.toFixed(2)} h`,
+                      formatter={(value, name) => [
+                        `${Number(value ?? 0).toFixed(2)} h`,
                         name === "timetroveHours" ? "TimeTrove" : "Jira",
                       ]}
                     />

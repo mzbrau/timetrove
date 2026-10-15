@@ -322,11 +322,15 @@ pub fn refresh_jira_issue(
 }
 
 #[tauri::command]
-pub fn list_assigned_jira_issues(
+pub async fn list_assigned_jira_issues(
     engine: State<'_, Arc<Engine>>,
     force: Option<bool>,
 ) -> Result<JiraAssignedIssuesResult, String> {
-    crate::jira::list_assigned(engine.db(), force.unwrap_or(false))
+    let db = engine.db().clone();
+    let force = force.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || crate::jira::list_assigned(&db, force))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

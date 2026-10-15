@@ -384,7 +384,7 @@ export function SwitcherApp() {
         <input
           ref={inputRef}
           autoFocus
-          disabled={mode === "link" && Boolean(pendingLink)}
+          readOnly={mode === "link" && Boolean(pendingLink)}
           placeholder={
             mode === "note"
               ? "Note for current slice…"
