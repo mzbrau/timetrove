@@ -1373,6 +1373,34 @@ impl Db {
         })
     }
 
+    /// Persist a discovered username only when the setting is still blank.
+    /// Single-lock so a concurrent full settings save cannot be clobbered.
+    pub fn set_copilot_username_if_blank(&self, username: &str) -> Result<(), String> {
+        let trimmed = username.trim();
+        if trimmed.is_empty() {
+            return Ok(());
+        }
+        self.with_conn(|conn| {
+            let current: Option<String> = conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key = 'copilot_username'",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            if current.as_deref().unwrap_or("").trim().is_empty() {
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('copilot_username', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![trimmed],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        })
+    }
+
     pub fn set_copilot_last_error(&self, error: Option<&str>) -> Result<(), String> {
         self.with_conn(|conn| match error {
             Some(msg) if !msg.is_empty() => {

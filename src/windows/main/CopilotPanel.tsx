@@ -57,21 +57,20 @@ function poolLabel(id: string): string {
   }
 }
 
-export function CopilotPanel() {
-  const [usage, setUsage] = useState<CopilotUsageSummary | null>(null);
+type Props = {
+  /** Live summary from tracker-state; drives KPIs without polling this tab. */
+  usage: CopilotUsageSummary | null;
+};
+
+export function CopilotPanel({ usage }: Props) {
   const [history, setHistory] = useState<CopilotUsageHistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setError(null);
+  const loadHistory = useCallback(async () => {
     try {
-      const [u, h] = await Promise.all([
-        api.getCopilotUsage(),
-        api.getCopilotUsageHistory(500),
-      ]);
-      setUsage(u);
+      const h = await api.getCopilotUsageHistory(500);
       setHistory(h);
     } catch (e) {
       setError(String(e));
@@ -81,8 +80,28 @@ export function CopilotPanel() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadHistory();
+  }, [loadHistory]);
+
+  // Reload history when background poll sync timestamp or error changes — not every tracker tick.
+  useEffect(() => {
+    if (loading) return;
+    void loadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- identity keys only
+  }, [usage?.lastSyncedAt, usage?.lastError]);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    setError(null);
+    try {
+      await api.refreshCopilotUsage();
+      await loadHistory();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadHistory]);
 
   const ink = cssVar("--ink", "#e8eef2");
   const muted = cssVar("--muted", "#8b9aab");
@@ -107,6 +126,12 @@ export function CopilotPanel() {
     color: ink,
   };
 
+  const refreshButton = (
+    <button type="button" disabled={refreshing} onClick={() => void refresh()}>
+      {refreshing ? "Refreshing…" : "Refresh now"}
+    </button>
+  );
+
   if (loading) {
     return <p className="muted">Loading Copilot usage…</p>;
   }
@@ -116,8 +141,9 @@ export function CopilotPanel() {
       <div className="copilot-empty">
         <p>
           No usage data yet. Open Settings, enable Copilot usage tracking, add a
-          token, and run Test connection.
+          token, and run Test connection — or refresh now.
         </p>
+        <div className="row-actions">{refreshButton}</div>
       </div>
     );
   }
@@ -125,26 +151,7 @@ export function CopilotPanel() {
   return (
     <div className="copilot">
       <div className="copilot-toolbar">
-        <div className="row-actions">
-          <button
-            type="button"
-            disabled={refreshing}
-            onClick={async () => {
-              setRefreshing(true);
-              setError(null);
-              try {
-                await api.refreshCopilotUsage();
-                await load();
-              } catch (e) {
-                setError(String(e));
-              } finally {
-                setRefreshing(false);
-              }
-            }}
-          >
-            {refreshing ? "Refreshing…" : "Refresh now"}
-          </button>
-        </div>
+        <div className="row-actions">{refreshButton}</div>
         <p className="muted copilot-sync-meta">
           {usage?.lastSyncedAt
             ? `Last synced ${fmtDate(usage.lastSyncedAt)}`

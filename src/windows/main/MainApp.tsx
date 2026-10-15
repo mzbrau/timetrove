@@ -230,7 +230,9 @@ export function MainApp() {
         {tab === "timesheet" && <TimesheetPanel />}
         {tab === "insights" && <InsightsPanel />}
         {tab === "entries" && <EntriesPanel state={state} />}
-        {tab === "copilot" && copilotEnabled && <CopilotPanel />}
+        {tab === "copilot" && copilotEnabled && (
+          <CopilotPanel usage={state?.copilotUsage ?? null} />
+        )}
         {tab === "settings" && <SettingsPanel />}
       </main>
 

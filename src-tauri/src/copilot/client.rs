@@ -10,6 +10,24 @@ pub struct CopilotCredentials {
     pub monthly_limit_override: Option<f64>,
 }
 
+impl CopilotCredentials {
+    /// Host + token + override identity used to reject stale poll results.
+    /// Username is excluded so discovery fill does not invalidate an in-flight poll.
+    pub fn config_matches(&self, other: &Self) -> bool {
+        self.github_host.trim().eq_ignore_ascii_case(other.github_host.trim())
+            && self.api_token.trim() == other.api_token.trim()
+            && override_eq(self.monthly_limit_override, other.monthly_limit_override)
+    }
+}
+
+fn override_eq(a: Option<f64>, b: Option<f64>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => x.to_bits() == y.to_bits(),
+        _ => false,
+    }
+}
+
 /// Resolve REST API base URL for github.com or Enterprise Cloud (`*.ghe.com`).
 pub fn api_base_url(host: &str) -> Result<String, String> {
     let trimmed = host.trim().trim_end_matches('/');
@@ -202,7 +220,6 @@ pub fn apply_limit_override(
 fn summary_from_user_body(
     body: &Value,
     username: &str,
-    override_limit: Option<f64>,
 ) -> Result<CopilotUsageSummary, String> {
     let plan = body
         .get("copilot_plan")
@@ -231,7 +248,15 @@ fn summary_from_user_body(
         .or_else(|| pools.first().cloned())
         .ok_or_else(|| "No premium quota pool".to_string())?;
 
-    let summary = CopilotUsageSummary {
+    let limit_source = if premium.unlimited {
+        "unlimited"
+    } else if premium.entitlement.is_finite() && premium.entitlement > 0.0 {
+        "api"
+    } else {
+        "unknown"
+    };
+
+    Ok(CopilotUsageSummary {
         plan,
         username: username.to_string(),
         unit: unit_from_body(body),
@@ -244,19 +269,17 @@ fn summary_from_user_body(
         overage_permitted: premium.overage_permitted,
         reset_date: reset_date_from_body(body),
         pools,
-        limit_source: "api".into(),
+        limit_source: limit_source.into(),
         fetched_at: None,
         last_synced_at: None,
         last_error: None,
-    };
-    Ok(apply_limit_override(summary, override_limit))
+    })
 }
 
 /// Individual-plan fallback: `/copilot_internal/v2/token` limited_user_quotas.
 fn summary_from_v2_token(
     body: &Value,
     username: &str,
-    override_limit: Option<f64>,
 ) -> Result<CopilotUsageSummary, String> {
     let quotas = body
         .get("limited_user_quotas")
@@ -313,7 +336,12 @@ fn summary_from_v2_token(
         overage_count: 0.0,
         overage_permitted: false,
     };
-    let summary = CopilotUsageSummary {
+    let limit_source = if entitlement.is_finite() && entitlement > 0.0 {
+        "api"
+    } else {
+        "unknown"
+    };
+    Ok(CopilotUsageSummary {
         plan: body
             .get("copilot_plan")
             .and_then(|v| v.as_str())
@@ -330,12 +358,11 @@ fn summary_from_v2_token(
         overage_permitted: false,
         reset_date: reset_date_from_body(body),
         pools: vec![pool],
-        limit_source: "api".into(),
+        limit_source: limit_source.into(),
         fetched_at: None,
         last_synced_at: None,
         last_error: None,
-    };
-    Ok(apply_limit_override(summary, override_limit))
+    })
 }
 
 pub fn fetch_usage(
@@ -357,8 +384,8 @@ pub fn fetch_usage(
     match get_json(&agent, &user_url, &creds.api_token) {
         Ok(body) => {
             let raw = body.to_string();
-            let summary =
-                summary_from_user_body(&body, &username, creds.monthly_limit_override)?;
+            // API-native summary only; override applied at read / poll return.
+            let summary = summary_from_user_body(&body, &username)?;
             Ok((summary, raw))
         }
         Err(user_err) => {
@@ -366,8 +393,7 @@ pub fn fetch_usage(
             match get_json(&agent, &token_url, &creds.api_token) {
                 Ok(body) => {
                     let raw = body.to_string();
-                    let summary =
-                        summary_from_v2_token(&body, &username, creds.monthly_limit_override)?;
+                    let summary = summary_from_v2_token(&body, &username)?;
                     Ok((summary, raw))
                 }
                 Err(token_err) => Err(format!(
@@ -516,7 +542,7 @@ mod tests {
                 }
             }
         });
-        let summary = summary_from_user_body(&body, "octocat", None).unwrap();
+        let summary = summary_from_user_body(&body, "octocat").unwrap();
         assert_eq!(summary.plan, "business");
         assert_eq!(summary.entitlement, 300.0);
         assert_eq!(summary.remaining, 93.0);

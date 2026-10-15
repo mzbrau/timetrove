@@ -409,7 +409,7 @@ pub fn get_copilot_usage_history(
 }
 
 #[tauri::command]
-pub fn refresh_copilot_usage(
+pub async fn refresh_copilot_usage(
     engine: State<'_, Arc<Engine>>,
     app: AppHandle,
 ) -> Result<Option<CopilotUsageSummary>, String> {
@@ -417,8 +417,12 @@ pub fn refresh_copilot_usage(
     if !settings.copilot_enabled {
         return Err("Enable Copilot usage tracking first".into());
     }
-    let result = crate::copilot::poll_once(engine.db());
-    engine.emit_state(&app);
+    let db = engine.db().clone();
+    let eng = engine.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || crate::copilot::poll_once(&db))
+        .await
+        .map_err(|e| e.to_string())?;
+    eng.emit_state(&app);
     result
 }
 

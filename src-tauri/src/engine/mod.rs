@@ -976,14 +976,63 @@ pub fn position_tracker(window: &WebviewWindow, width: f64) {
 }
 
 /// Resize tracker chrome for current settings without re-docking (preserves user drag).
+/// Preserves the right edge when growing/shrinking, then clamps into the monitor work area.
 pub fn apply_tracker_size(app: &AppHandle, engine: &Engine) {
-    if let Some(w) = app.get_webview_window("tracker") {
-        let width = tracker_width_for(engine.db());
+    let Some(w) = app.get_webview_window("tracker") else {
+        return;
+    };
+    let new_width = tracker_width_for(engine.db());
+    let scale = w.scale_factor().unwrap_or(1.0);
+
+    let old_width = w
+        .outer_size()
+        .ok()
+        .map(|s| s.width as f64 / scale)
+        .unwrap_or(TRACKER_WIDTH);
+
+    let (mut x, y) = match w.outer_position() {
+        Ok(pos) => {
+            let lx = pos.x as f64 / scale;
+            let ly = pos.y as f64 / scale;
+            // Keep the right edge fixed so a right-docked bar does not clip offscreen.
+            (lx + old_width - new_width, ly)
+        }
+        Err(_) => {
+            let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize {
+                width: new_width,
+                height: TRACKER_HEIGHT,
+            }));
+            return;
+        }
+    };
+
+    if let Ok(Some(monitor)) = w.current_monitor() {
+        let mon_scale = monitor.scale_factor();
+        let work = monitor.work_area();
+        let work_x = work.position.x as f64 / mon_scale;
+        let work_y = work.position.y as f64 / mon_scale;
+        let work_w = work.size.width as f64 / mon_scale;
+        let work_h = work.size.height as f64 / mon_scale;
+        const MARGIN: f64 = 4.0;
+        let min_x = work_x + MARGIN;
+        let max_x = (work_x + work_w - new_width - MARGIN).max(min_x);
+        let min_y = work_y + MARGIN;
+        let max_y = (work_y + work_h - TRACKER_HEIGHT - MARGIN).max(min_y);
+        x = x.clamp(min_x, max_x);
+        let y = y.clamp(min_y, max_y);
         let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize {
-            width,
+            width: new_width,
             height: TRACKER_HEIGHT,
         }));
+        let _ = w.set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
+        return;
     }
+
+    let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize {
+        width: new_width,
+        height: TRACKER_HEIGHT,
+    }));
+    let _ = w.set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
 }
 
 /// Dock just inside the work area above/beside the taskbar, left of the system tray.
