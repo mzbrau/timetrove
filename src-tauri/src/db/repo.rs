@@ -1180,6 +1180,7 @@ impl Db {
                     }
                     "copilot_username" => settings.copilot_username = v,
                     "copilot_api_token" => settings.copilot_api_token = v,
+                    "copilot_proxy_url" => settings.copilot_proxy_url = v,
                     "copilot_poll_interval_mins" => {
                         if let Ok(n) = v.parse::<u32>() {
                             settings.copilot_poll_interval_mins = n.clamp(5, 120);
@@ -1276,6 +1277,7 @@ impl Db {
                 ("copilot_github_host", settings.copilot_github_host.clone()),
                 ("copilot_username", settings.copilot_username.clone()),
                 ("copilot_api_token", settings.copilot_api_token.clone()),
+                ("copilot_proxy_url", settings.copilot_proxy_url.clone()),
                 (
                     "copilot_poll_interval_mins",
                     settings.copilot_poll_interval_mins.clamp(5, 120).to_string(),
@@ -2645,6 +2647,7 @@ mod tests {
         s.copilot_github_host = "octocorp.ghe.com".into();
         s.copilot_username = "octocat".into();
         s.copilot_api_token = "github_pat_test".into();
+        s.copilot_proxy_url = "http://gh-proxy.example:3128".into();
         s.copilot_poll_interval_mins = 15;
         s.copilot_monthly_limit_override = Some(300.0);
         db.update_settings(&s).unwrap();
@@ -2665,6 +2668,7 @@ mod tests {
         assert_eq!(loaded.copilot_github_host, "octocorp.ghe.com");
         assert_eq!(loaded.copilot_username, "octocat");
         assert_eq!(loaded.copilot_api_token, "github_pat_test");
+        assert_eq!(loaded.copilot_proxy_url, "http://gh-proxy.example:3128");
         assert_eq!(loaded.copilot_poll_interval_mins, 15);
         assert_eq!(loaded.copilot_monthly_limit_override, Some(300.0));
     }

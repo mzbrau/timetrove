@@ -21,6 +21,7 @@ pub fn credentials_from_db(db: &Db) -> Result<Option<CopilotCredentials>, String
         github_host: settings.copilot_github_host,
         api_token: settings.copilot_api_token,
         username: settings.copilot_username,
+        proxy_url: settings.copilot_proxy_url,
         monthly_limit_override: settings.copilot_monthly_limit_override,
     }))
 }
@@ -271,12 +272,14 @@ mod tests {
             github_host: "github.com".into(),
             api_token: "tok".into(),
             username: "".into(),
+            proxy_url: "http://proxy.example:8080".into(),
             monthly_limit_override: Some(100.0),
         };
         let b = CopilotCredentials {
             github_host: "github.com".into(),
             api_token: "tok".into(),
             username: "octocat".into(),
+            proxy_url: "http://proxy.example:8080".into(),
             monthly_limit_override: Some(100.0),
         };
         assert!(a.config_matches(&b));
@@ -284,8 +287,17 @@ mod tests {
             github_host: "github.com".into(),
             api_token: "other".into(),
             username: "octocat".into(),
+            proxy_url: "http://proxy.example:8080".into(),
             monthly_limit_override: Some(100.0),
         };
         assert!(!a.config_matches(&c));
+        let d = CopilotCredentials {
+            github_host: "github.com".into(),
+            api_token: "tok".into(),
+            username: "octocat".into(),
+            proxy_url: "".into(),
+            monthly_limit_override: Some(100.0),
+        };
+        assert!(!a.config_matches(&d));
     }
 }

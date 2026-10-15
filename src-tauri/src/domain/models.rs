@@ -164,6 +164,9 @@ pub struct Settings {
     /// GitHub token (fine-grained PAT with Copilot Requests, or OAuth/`gh` token).
     #[serde(default)]
     pub copilot_api_token: String,
+    /// Optional HTTP CONNECT proxy for GitHub requests (`http://host:port`). Empty = none.
+    #[serde(default)]
+    pub copilot_proxy_url: String,
     /// Poll interval in minutes (default 30).
     #[serde(default = "default_copilot_poll_interval_mins")]
     pub copilot_poll_interval_mins: u32,
@@ -208,6 +211,7 @@ impl Default for Settings {
             copilot_github_host: default_copilot_github_host(),
             copilot_username: String::new(),
             copilot_api_token: String::new(),
+            copilot_proxy_url: String::new(),
             copilot_poll_interval_mins: default_copilot_poll_interval_mins(),
             copilot_monthly_limit_override: None,
             copilot_last_error: None,
@@ -477,6 +481,7 @@ mod tests {
         assert_eq!(s.copilot_github_host, "github.com");
         assert_eq!(s.copilot_poll_interval_mins, 30);
         assert!(s.copilot_api_token.is_empty());
+        assert!(s.copilot_proxy_url.is_empty());
         assert!(s.copilot_monthly_limit_override.is_none());
     }
 

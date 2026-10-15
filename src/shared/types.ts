@@ -164,6 +164,8 @@ export interface Settings {
   copilotGithubHost: string;
   copilotUsername: string;
   copilotApiToken: string;
+  /** Optional HTTP CONNECT proxy (`http://host:port`). Empty = none. */
+  copilotProxyUrl: string;
   copilotPollIntervalMins: number;
   /** Manual monthly allowance when API entitlement is missing/unlimited. */
   copilotMonthlyLimitOverride: number | null;

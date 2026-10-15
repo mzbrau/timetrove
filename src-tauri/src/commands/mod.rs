@@ -481,8 +481,10 @@ pub fn start_copilot_connection_test(
         github_host: settings.copilot_github_host,
         api_token: settings.copilot_api_token,
         username: settings.copilot_username,
+        proxy_url: settings.copilot_proxy_url,
         monthly_limit_override: settings.copilot_monthly_limit_override,
     };
+    let use_proxy = !creds.proxy_url.trim().is_empty();
     let db = engine.db().clone();
     let eng = engine.inner().clone();
 
@@ -497,7 +499,12 @@ pub fn start_copilot_connection_test(
             "validating",
             "Validating GitHub host and token…",
         );
-        emit_copilot_test(&app, "connecting", "Connecting to GitHub…");
+        let connect_msg = if use_proxy {
+            "Connecting via proxy…"
+        } else {
+            "Connecting to GitHub…"
+        };
+        emit_copilot_test(&app, "connecting", connect_msg);
 
         match crate::copilot::test_connection(&creds) {
             Ok(msg) => {

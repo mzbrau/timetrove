@@ -7,15 +7,18 @@ pub struct CopilotCredentials {
     pub github_host: String,
     pub api_token: String,
     pub username: String,
+    /// Optional HTTP CONNECT proxy (`http://host:port` or with user:pass). Empty = none.
+    pub proxy_url: String,
     pub monthly_limit_override: Option<f64>,
 }
 
 impl CopilotCredentials {
-    /// Host + token + override identity used to reject stale poll results.
+    /// Host + token + proxy + override identity used to reject stale poll results.
     /// Username is excluded so discovery fill does not invalidate an in-flight poll.
     pub fn config_matches(&self, other: &Self) -> bool {
         self.github_host.trim().eq_ignore_ascii_case(other.github_host.trim())
             && self.api_token.trim() == other.api_token.trim()
+            && self.proxy_url.trim() == other.proxy_url.trim()
             && override_eq(self.monthly_limit_override, other.monthly_limit_override)
     }
 }
@@ -50,11 +53,18 @@ pub fn api_base_url(host: &str) -> Result<String, String> {
     }
 }
 
-fn build_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
+/// Build a ureq Agent with connect/overall timeouts and optional HTTP proxy.
+fn build_agent(creds: &CopilotCredentials) -> Result<ureq::Agent, String> {
+    let mut builder = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(15))
-        .timeout(Duration::from_secs(30))
-        .build()
+        .timeout(Duration::from_secs(30));
+    let proxy = creds.proxy_url.trim();
+    if !proxy.is_empty() {
+        let parsed = ureq::Proxy::new(proxy)
+            .map_err(|e| format!("Invalid Copilot proxy URL: {e}"))?;
+        builder = builder.proxy(parsed);
+    }
+    Ok(builder.build())
 }
 
 fn auth_header(token: &str) -> String {
@@ -96,7 +106,7 @@ pub fn fetch_authenticated_login(creds: &CopilotCredentials) -> Result<String, S
         return Err("GitHub API token is required".into());
     }
     let base = api_base_url(&creds.github_host)?;
-    let agent = build_agent();
+    let agent = build_agent(creds)?;
     let body = get_json(&agent, &format!("{base}/user"), &creds.api_token)?;
     body.get("login")
         .and_then(|v| v.as_str())
@@ -372,7 +382,7 @@ pub fn fetch_usage(
         return Err("GitHub API token is required".into());
     }
     let base = api_base_url(&creds.github_host)?;
-    let agent = build_agent();
+    let agent = build_agent(creds)?;
 
     let username = if creds.username.trim().is_empty() {
         fetch_authenticated_login(creds)?
@@ -463,6 +473,35 @@ mod tests {
     fn api_base_rejects_path() {
         assert!(api_base_url("github.com/foo").is_err());
         assert!(api_base_url("").is_err());
+    }
+
+    fn sample_creds(proxy: &str) -> CopilotCredentials {
+        CopilotCredentials {
+            github_host: "github.com".into(),
+            api_token: "tok".into(),
+            username: String::new(),
+            proxy_url: proxy.into(),
+            monthly_limit_override: None,
+        }
+    }
+
+    #[test]
+    fn build_agent_ok_without_proxy() {
+        assert!(build_agent(&sample_creds("")).is_ok());
+        assert!(build_agent(&sample_creds("   ")).is_ok());
+    }
+
+    #[test]
+    fn build_agent_ok_with_http_proxy() {
+        assert!(build_agent(&sample_creds("http://127.0.0.1:8080")).is_ok());
+        assert!(build_agent(&sample_creds("http://user:pass@proxy.example:3128")).is_ok());
+    }
+
+    #[test]
+    fn build_agent_rejects_invalid_proxy() {
+        // ureq only accepts http / socks* schemes when a scheme is present.
+        let err = build_agent(&sample_creds("ftp://proxy.example:8080")).unwrap_err();
+        assert!(err.contains("Invalid Copilot proxy URL"));
     }
 
     #[test]

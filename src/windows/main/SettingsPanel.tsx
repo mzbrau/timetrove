@@ -408,6 +408,25 @@ export function SettingsPanel() {
               </span>
             </label>
             <label>
+              Proxy URL (optional)
+              <input
+                value={settings.copilotProxyUrl}
+                placeholder="http://host:port"
+                autoComplete="off"
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    copilotProxyUrl: e.target.value,
+                  })
+                }
+              />
+              <span className="hint">
+                HTTP CONNECT proxy if required by your network — e.g.
+                http://host:port or http://user:pass@host:port. Leave empty for
+                a direct connection.
+              </span>
+            </label>
+            <label>
               Poll interval (minutes)
               <input
                 type="number"
