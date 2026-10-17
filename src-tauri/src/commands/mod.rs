@@ -368,12 +368,17 @@ pub fn update_settings(
     if settings.copilot_enabled && settings.copilot_poll_interval_mins < 5 {
         return Err("Copilot poll interval must be at least 5 minutes".into());
     }
+    if settings.github_activity_enabled && settings.github_activity_poll_interval_mins < 5 {
+        return Err("GitHub activity poll interval must be at least 5 minutes".into());
+    }
     // Visibility is controlled by tray / tracker Close — don't clobber from Settings UI.
     let mut settings = settings;
     if let Ok(current) = engine.db().get_settings() {
         settings.tracker_visible = current.tracker_visible;
     }
     settings.copilot_poll_interval_mins = settings.copilot_poll_interval_mins.clamp(5, 120);
+    settings.github_activity_poll_interval_mins =
+        settings.github_activity_poll_interval_mins.clamp(5, 120);
     if settings.copilot_github_host.trim().is_empty() {
         settings.copilot_github_host = "github.com".into();
     }
@@ -393,6 +398,13 @@ pub fn update_settings(
         let handle = app.clone();
         crate::copilot::spawn_poll(engine.db().clone(), move || {
             eng.emit_state(&handle);
+        });
+    }
+    // Kick a GitHub activity poll when enabling / saving credentials.
+    if settings.github_activity_enabled && !settings.copilot_api_token.trim().is_empty() {
+        let handle = app.clone();
+        crate::github::spawn_poll(engine.db().clone(), move || {
+            let _ = handle.emit("github-activity-updated", ());
         });
     }
     Ok(settings)
@@ -450,6 +462,27 @@ pub async fn refresh_copilot_usage(
         .map_err(|e| e.to_string())?;
     eng.emit_state(&app);
     result
+}
+
+#[tauri::command]
+pub fn get_github_activity(
+    engine: State<'_, Arc<Engine>>,
+) -> Result<Option<GithubActivityDigest>, String> {
+    crate::github::load_cached_digest(engine.db())
+}
+
+#[tauri::command]
+pub async fn refresh_github_activity(
+    engine: State<'_, Arc<Engine>>,
+) -> Result<Option<GithubActivityDigest>, String> {
+    let settings = engine.db().get_settings()?;
+    if !settings.github_activity_enabled {
+        return Err("Enable GitHub activity first".into());
+    }
+    let db = engine.db().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::github::poll_once(&db))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Starts a Copilot connection test on a background thread; emits `copilot-connection-test`.

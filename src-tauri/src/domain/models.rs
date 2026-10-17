@@ -179,6 +179,18 @@ pub struct Settings {
     /// ISO timestamp of last successful Copilot usage poll.
     #[serde(default)]
     pub copilot_last_synced_at: Option<String>,
+    /// Optional GitHub activity page (open PRs + recent commits; off by default).
+    #[serde(default)]
+    pub github_activity_enabled: bool,
+    /// Poll interval in minutes for GitHub activity (default 30).
+    #[serde(default = "default_github_activity_poll_interval_mins")]
+    pub github_activity_poll_interval_mins: u32,
+    /// Last GitHub activity sync/connection error.
+    #[serde(default)]
+    pub github_activity_last_error: Option<String>,
+    /// ISO timestamp of last successful GitHub activity poll.
+    #[serde(default)]
+    pub github_activity_last_synced_at: Option<String>,
 }
 
 fn default_copilot_github_host() -> String {
@@ -186,6 +198,10 @@ fn default_copilot_github_host() -> String {
 }
 
 fn default_copilot_poll_interval_mins() -> u32 {
+    30
+}
+
+fn default_github_activity_poll_interval_mins() -> u32 {
     30
 }
 
@@ -216,6 +232,10 @@ impl Default for Settings {
             copilot_monthly_limit_override: None,
             copilot_last_error: None,
             copilot_last_synced_at: None,
+            github_activity_enabled: false,
+            github_activity_poll_interval_mins: default_github_activity_poll_interval_mins(),
+            github_activity_last_error: None,
+            github_activity_last_synced_at: None,
         }
     }
 }
@@ -269,6 +289,53 @@ pub struct CopilotUsageHistoryPoint {
     pub remaining: f64,
     pub percent_used: f64,
     pub unit: String,
+}
+
+/// Open PR summary for the GitHub activity page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubPrSummary {
+    pub number: i32,
+    pub title: String,
+    pub url: String,
+    pub repo_full_name: String,
+    pub created_at: String,
+    /// SUCCESS / FAILURE / PENDING / EXPECTED / ERROR / …
+    pub check_status: String,
+    /// APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED / …
+    pub review_decision: String,
+    pub unresolved_comment_count: u32,
+    /// Short human summary of review states.
+    pub reviews_summary: String,
+    /// True when the viewer still needs to submit a review.
+    pub needs_my_review: bool,
+    /// Internal: logins currently requested as reviewers (not sent to UI).
+    #[serde(default, skip_serializing)]
+    pub requested_reviewer_logins: Vec<String>,
+}
+
+/// Recent commit by the authenticated user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubCommitSummary {
+    pub sha: String,
+    pub message: String,
+    pub repo_full_name: String,
+    pub committed_at: String,
+    pub url: String,
+}
+
+/// Cached digest for the GitHub activity tab.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubActivityDigest {
+    pub authored_prs: Vec<GithubPrSummary>,
+    pub review_prs: Vec<GithubPrSummary>,
+    pub recent_commits: Vec<GithubCommitSummary>,
+    pub username: String,
+    pub fetched_at: Option<String>,
+    pub last_synced_at: Option<String>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -483,6 +550,10 @@ mod tests {
         assert!(s.copilot_api_token.is_empty());
         assert!(s.copilot_proxy_url.is_empty());
         assert!(s.copilot_monthly_limit_override.is_none());
+        assert!(!s.github_activity_enabled);
+        assert_eq!(s.github_activity_poll_interval_mins, 30);
+        assert!(s.github_activity_last_error.is_none());
+        assert!(s.github_activity_last_synced_at.is_none());
     }
 
     #[test]

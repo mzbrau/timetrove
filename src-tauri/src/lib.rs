@@ -4,6 +4,7 @@ mod copilot;
 mod db;
 mod domain;
 mod engine;
+mod github;
 mod jira;
 
 #[cfg(test)]
@@ -149,6 +150,7 @@ pub fn run() {
             let mut last_midnight_check = chrono::Local::now().date_naive();
             let mut last_jira_sync = std::time::Instant::now();
             let mut last_copilot_sync = std::time::Instant::now();
+            let mut last_github_activity_sync = std::time::Instant::now();
             // Startup gap check shortly after launch
             std::thread::sleep(Duration::from_secs(1));
             eng.on_resume_or_startup_gap(&handle);
@@ -158,6 +160,13 @@ pub fn run() {
                 let handle_c = handle.clone();
                 copilot::spawn_poll(eng.db().clone(), move || {
                     eng_c.emit_state(&handle_c);
+                });
+            }
+            // First GitHub activity poll soon after launch when enabled.
+            {
+                let handle_g = handle.clone();
+                github::spawn_poll(eng.db().clone(), move || {
+                    let _ = handle_g.emit("github-activity-updated", ());
                 });
             }
             loop {
@@ -191,6 +200,16 @@ pub fn run() {
                     let handle_c = handle.clone();
                     copilot::spawn_poll(eng.db().clone(), move || {
                         eng_c.emit_state(&handle_c);
+                    });
+                }
+
+                let github_interval =
+                    Duration::from_secs(github::poll_interval_secs(eng.db()));
+                if last_github_activity_sync.elapsed() >= github_interval {
+                    last_github_activity_sync = std::time::Instant::now();
+                    let handle_g = handle.clone();
+                    github::spawn_poll(eng.db().clone(), move || {
+                        let _ = handle_g.emit("github-activity-updated", ());
                     });
                 }
             }
@@ -244,6 +263,8 @@ pub fn run() {
             commands::get_copilot_usage_history,
             commands::refresh_copilot_usage,
             commands::start_copilot_connection_test,
+            commands::get_github_activity,
+            commands::refresh_github_activity,
             commands::get_timesheet,
             commands::get_insights,
             commands::list_slices_for_day,

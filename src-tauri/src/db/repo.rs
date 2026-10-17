@@ -1200,6 +1200,22 @@ impl Db {
                         settings.copilot_last_synced_at =
                             if v.is_empty() { None } else { Some(v) };
                     }
+                    "github_activity_enabled" => {
+                        settings.github_activity_enabled = v == "true" || v == "1";
+                    }
+                    "github_activity_poll_interval_mins" => {
+                        if let Ok(n) = v.parse::<u32>() {
+                            settings.github_activity_poll_interval_mins = n.clamp(5, 120);
+                        }
+                    }
+                    "github_activity_last_error" => {
+                        settings.github_activity_last_error =
+                            if v.is_empty() { None } else { Some(v) };
+                    }
+                    "github_activity_last_synced_at" => {
+                        settings.github_activity_last_synced_at =
+                            if v.is_empty() { None } else { Some(v) };
+                    }
                     _ => {}
                 }
             }
@@ -1289,6 +1305,21 @@ impl Db {
                         .filter(|n| n.is_finite() && *n > 0.0)
                         .map(|n| n.to_string())
                         .unwrap_or_default(),
+                ),
+                (
+                    "github_activity_enabled",
+                    if settings.github_activity_enabled {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    },
+                ),
+                (
+                    "github_activity_poll_interval_mins",
+                    settings
+                        .github_activity_poll_interval_mins
+                        .clamp(5, 120)
+                        .to_string(),
                 ),
             ];
             for (k, v) in pairs {
@@ -1440,6 +1471,79 @@ impl Db {
                 )
                 .map_err(|e| e.to_string())?;
                 Ok(())
+            }
+        })
+    }
+
+    pub fn set_github_activity_last_error(&self, error: Option<&str>) -> Result<(), String> {
+        self.with_conn(|conn| match error {
+            Some(msg) => {
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('github_activity_last_error', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![msg],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+            None => {
+                conn.execute(
+                    "DELETE FROM settings WHERE key = 'github_activity_last_error'",
+                    [],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        })
+    }
+
+    pub fn set_github_activity_last_synced_at(
+        &self,
+        at: Option<DateTime<Utc>>,
+    ) -> Result<(), String> {
+        self.with_conn(|conn| match at {
+            Some(dt) => {
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('github_activity_last_synced_at', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![dt.to_rfc3339()],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+            None => {
+                conn.execute(
+                    "DELETE FROM settings WHERE key = 'github_activity_last_synced_at'",
+                    [],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+        })
+    }
+
+    pub fn set_github_activity_cache(&self, json: &str) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('github_activity_cache', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![json],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+    }
+
+    pub fn get_github_activity_cache(&self) -> Result<Option<String>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT value FROM settings WHERE key = 'github_activity_cache'")
+                .map_err(|e| e.to_string())?;
+            let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+            if let Some(row) = rows.next().map_err(|e| e.to_string())? {
+                Ok(Some(row.get(0).map_err(|e| e.to_string())?))
+            } else {
+                Ok(None)
             }
         })
     }
@@ -1870,6 +1974,8 @@ mod tests {
         assert!(!s.copilot_enabled);
         assert_eq!(s.copilot_github_host, "github.com");
         assert_eq!(s.copilot_poll_interval_mins, 30);
+        assert!(!s.github_activity_enabled);
+        assert_eq!(s.github_activity_poll_interval_mins, 30);
     }
 
     #[test]
@@ -2650,6 +2756,8 @@ mod tests {
         s.copilot_proxy_url = "http://gh-proxy.example:3128".into();
         s.copilot_poll_interval_mins = 15;
         s.copilot_monthly_limit_override = Some(300.0);
+        s.github_activity_enabled = true;
+        s.github_activity_poll_interval_mins = 45;
         db.update_settings(&s).unwrap();
         let loaded = db.get_settings().unwrap();
         assert_eq!(loaded.idle_threshold_mins, 15);
@@ -2671,6 +2779,8 @@ mod tests {
         assert_eq!(loaded.copilot_proxy_url, "http://gh-proxy.example:3128");
         assert_eq!(loaded.copilot_poll_interval_mins, 15);
         assert_eq!(loaded.copilot_monthly_limit_override, Some(300.0));
+        assert!(loaded.github_activity_enabled);
+        assert_eq!(loaded.github_activity_poll_interval_mins, 45);
     }
 
     #[test]
