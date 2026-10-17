@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -9,6 +10,15 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../../shared/api";
+import {
+  buildMonthPaceSeries,
+  isSameLocalMonth,
+  monthProgressPct,
+  paceDelta,
+  paceStatus,
+  percentAgainstLimit,
+  type PaceStatus,
+} from "../../shared/copilotPace";
 import type {
   CopilotUsageHistoryPoint,
   CopilotUsageSummary,
@@ -57,21 +67,56 @@ function poolLabel(id: string): string {
   }
 }
 
+function paceHeadline(status: PaceStatus): string {
+  switch (status) {
+    case "ahead":
+      return "Ahead";
+    case "behind":
+      return "Behind";
+    case "onTrack":
+      return "On track";
+  }
+}
+
+function paceValueLabel(status: PaceStatus, absDelta: number): string {
+  const pp = `${Math.round(absDelta)}pp`;
+  switch (status) {
+    case "ahead":
+      return `${pp} ahead`;
+    case "behind":
+      return `${pp} behind`;
+    case "onTrack":
+      return absDelta < 0.5 ? "On pace" : `${pp} off`;
+  }
+}
+
 type Props = {
   /** Live summary from tracker-state; drives KPIs without polling this tab. */
   usage: CopilotUsageSummary | null;
 };
 
+function localMonthStartIso(now: Date = new Date()): string {
+  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  return start.toISOString();
+}
+
 export function CopilotPanel({ usage }: Props) {
   const [history, setHistory] = useState<CopilotUsageHistoryPoint[]>([]);
+  const [monthHistory, setMonthHistory] = useState<CopilotUsageHistoryPoint[]>(
+    [],
+  );
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadHistory = useCallback(async () => {
     try {
-      const h = await api.getCopilotUsageHistory(500);
+      const [h, month] = await Promise.all([
+        api.getCopilotUsageHistory({ limit: 500 }),
+        api.getCopilotUsageHistory({ since: localMonthStartIso() }),
+      ]);
       setHistory(h);
+      setMonthHistory(month);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -117,6 +162,43 @@ export function CopilotPanel({ usage }: Props) {
         entitlement: p.entitlement,
       })),
     [history],
+  );
+
+  const pace = useMemo(() => {
+    if (!usage || usage.unlimited) return null;
+    const now = new Date();
+    if (!isSameLocalMonth(usage.fetchedAt, now)) return null;
+    const monthPct = monthProgressPct(now);
+    const delta = paceDelta(usage.percentUsed, monthPct);
+    const status = paceStatus(delta);
+    const monthName = now.toLocaleString(undefined, { month: "long" });
+    return {
+      monthPct,
+      delta,
+      status,
+      monthName,
+      absDelta: Math.abs(delta),
+    };
+  }, [usage]);
+
+  const paceChartData = useMemo(() => {
+    if (!usage || usage.unlimited) return [];
+    const now = new Date();
+    const activeLimit = usage.entitlement;
+    const samples = monthHistory.map((p) => ({
+      fetchedAt: p.fetchedAt,
+      percentUsed: percentAgainstLimit(p.used, activeLimit, p.percentUsed),
+    }));
+    const liveSample =
+      usage.fetchedAt && isSameLocalMonth(usage.fetchedAt, now)
+        ? { fetchedAt: usage.fetchedAt, percentUsed: usage.percentUsed }
+        : null;
+    return buildMonthPaceSeries(samples, now, liveSample);
+  }, [monthHistory, usage]);
+
+  const paceUsagePoints = useMemo(
+    () => paceChartData.filter((p) => p.usage != null).length,
+    [paceChartData],
   );
 
   const tooltipStyle = {
@@ -217,6 +299,22 @@ export function CopilotPanel({ usage }: Props) {
             </div>
           </div>
 
+          {pace && (
+            <div className={`copilot-pace copilot-pace-${pace.status}`}>
+              <span className="copilot-kpi-label">Month pace</span>
+              <strong className="copilot-pace-headline">
+                {paceHeadline(pace.status)}
+              </strong>
+              <strong className="copilot-kpi-value mono">
+                {paceValueLabel(pace.status, pace.absDelta)}
+              </strong>
+              <span className="muted">
+                {fmtPct(usage.percentUsed)} used · {fmtPct(pace.monthPct)}{" "}
+                through {pace.monthName}
+              </span>
+            </div>
+          )}
+
           {usage.pools.length > 0 && (
             <section className="copilot-section">
               <h3>Quota pools</h3>
@@ -258,6 +356,88 @@ export function CopilotPanel({ usage }: Props) {
                   </div>
                 ))}
               </div>
+            </section>
+          )}
+
+          {!usage.unlimited && (
+            <section className="copilot-section">
+              <h3>Pace this month</h3>
+              {paceUsagePoints < 2 ? (
+                <p className="muted">
+                  Usage line appears after a few successful polls this month.
+                  The expected diagonal shows day-of-month progress toward
+                  100%.
+                </p>
+              ) : null}
+              {paceChartData.length > 0 && (
+                <div className="copilot-chart-card">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <LineChart data={paceChartData}>
+                      <CartesianGrid stroke={line} strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="day"
+                        stroke={muted}
+                        tick={{ fill: muted, fontSize: 11 }}
+                        label={{
+                          value: "Day",
+                          position: "insideBottomRight",
+                          offset: -2,
+                          fill: muted,
+                          fontSize: 11,
+                        }}
+                      />
+                      <YAxis
+                        domain={[0, 100]}
+                        stroke={muted}
+                        tick={{ fill: muted, fontSize: 11 }}
+                        width={40}
+                        unit="%"
+                      />
+                      <Tooltip
+                        contentStyle={tooltipStyle}
+                        formatter={(value, name) => {
+                          const n =
+                            typeof value === "number"
+                              ? value
+                              : Number(value);
+                          const label =
+                            name === "usage" ? "% used" : "Expected";
+                          return [
+                            Number.isFinite(n) ? `${Math.round(n)}%` : "—",
+                            label,
+                          ];
+                        }}
+                        labelFormatter={(day) => `Day ${day}`}
+                      />
+                      <Legend
+                        wrapperStyle={{ color: muted, fontSize: 12 }}
+                        formatter={(value) =>
+                          value === "usage" ? "% used" : "Expected"
+                        }
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="expected"
+                        name="expected"
+                        stroke={muted}
+                        strokeWidth={2}
+                        strokeDasharray="6 4"
+                        dot={false}
+                        connectNulls
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="usage"
+                        name="usage"
+                        stroke={accent}
+                        strokeWidth={2}
+                        dot={false}
+                        connectNulls
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </section>
           )}
 

@@ -3,6 +3,7 @@ import { withStartupRetry } from "./startupRetry";
 import type {
   CopilotUsageHistoryPoint,
   CopilotUsageSummary,
+  GithubActivityDigest,
   InsightsReport,
   JiraAssignedIssuesResult,
   JiraIssueDetails,
@@ -61,14 +62,19 @@ export const api = {
     invokeManaged<TaskJiraHistoryEntry[]>("list_task_jira_history", { taskId }),
   getCopilotUsage: () =>
     invokeManaged<CopilotUsageSummary | null>("get_copilot_usage"),
-  getCopilotUsageHistory: (limit?: number) =>
+  getCopilotUsageHistory: (opts?: { limit?: number; since?: string }) =>
     invokeManaged<CopilotUsageHistoryPoint[]>("get_copilot_usage_history", {
-      limit: limit ?? null,
+      limit: opts?.limit ?? null,
+      since: opts?.since ?? null,
     }),
   refreshCopilotUsage: () =>
     invokeManaged<CopilotUsageSummary | null>("refresh_copilot_usage"),
   startCopilotConnectionTest: () =>
     invokeManaged<void>("start_copilot_connection_test"),
+  getGithubActivity: () =>
+    invokeManaged<GithubActivityDigest | null>("get_github_activity"),
+  refreshGithubActivity: () =>
+    invokeManaged<GithubActivityDigest | null>("refresh_github_activity"),
   getTaskBookingSummary: (taskId: string) =>
     invokeManaged<TaskBookingSummary>("get_task_booking_summary", { taskId }),
   startTask: (taskId: string) =>

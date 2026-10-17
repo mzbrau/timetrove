@@ -362,5 +362,25 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         })?;
     }
 
+    // v14: GitHub activity page settings + cache key defaults.
+    if version < 14 {
+        migrate_tx(conn, |conn| {
+            let defaults = [
+                ("github_activity_enabled", "false"),
+                ("github_activity_poll_interval_mins", "30"),
+            ];
+            for (k, v) in defaults {
+                conn.execute(
+                    "INSERT OR IGNORE INTO settings (key, value) VALUES (?1, ?2)",
+                    (k, v),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (14)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+    }
+
     Ok(())
 }

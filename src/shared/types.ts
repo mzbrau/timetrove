@@ -171,6 +171,42 @@ export interface Settings {
   copilotMonthlyLimitOverride: number | null;
   copilotLastError: string | null;
   copilotLastSyncedAt: string | null;
+  /** Open PRs + recent commits digest (off by default). */
+  githubActivityEnabled: boolean;
+  githubActivityPollIntervalMins: number;
+  githubActivityLastError: string | null;
+  githubActivityLastSyncedAt: string | null;
+}
+
+export interface GithubPrSummary {
+  number: number;
+  title: string;
+  url: string;
+  repoFullName: string;
+  createdAt: string;
+  checkStatus: string;
+  reviewDecision: string;
+  unresolvedCommentCount: number;
+  reviewsSummary: string;
+  needsMyReview: boolean;
+}
+
+export interface GithubCommitSummary {
+  sha: string;
+  message: string;
+  repoFullName: string;
+  committedAt: string;
+  url: string;
+}
+
+export interface GithubActivityDigest {
+  authoredPrs: GithubPrSummary[];
+  reviewPrs: GithubPrSummary[];
+  recentCommits: GithubCommitSummary[];
+  username: string;
+  fetchedAt: string | null;
+  lastSyncedAt: string | null;
+  lastError: string | null;
 }
 
 export interface JiraConnectionTestEvent {

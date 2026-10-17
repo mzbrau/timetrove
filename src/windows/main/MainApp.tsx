@@ -9,6 +9,7 @@ import { EntriesPanel } from "./EntriesPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { InsightsPanel } from "./InsightsPanel";
 import { CopilotPanel } from "./CopilotPanel";
+import { GitHubPanel } from "./GitHubPanel";
 import { JiraPanel } from "./JiraPanel";
 import { ConfirmBar } from "./ConfirmBar";
 import { api } from "../../shared/api";
@@ -21,6 +22,7 @@ type Tab =
   | "insights"
   | "entries"
   | "jira"
+  | "github"
   | "copilot"
   | "settings";
 
@@ -34,6 +36,7 @@ export function MainApp() {
   const [tick, setTick] = useState(0);
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [copilotEnabled, setCopilotEnabled] = useState(false);
+  const [githubActivityEnabled, setGithubActivityEnabled] = useState(false);
   const [jiraEnabled, setJiraEnabled] = useState(false);
   const receivedAtRef = useRef(Date.now());
   const prevStateRef = useRef(state);
@@ -49,12 +52,14 @@ export function MainApp() {
       .getSettings()
       .then((s) => {
         setCopilotEnabled(s.copilotEnabled);
+        setGithubActivityEnabled(s.githubActivityEnabled);
         setJiraEnabled(s.jiraEnabled);
       })
       .catch(() => {});
     let unlisten: (() => void) | undefined;
     listen<Settings>("settings-changed", (e) => {
       setCopilotEnabled(e.payload.copilotEnabled);
+      setGithubActivityEnabled(e.payload.githubActivityEnabled);
       setJiraEnabled(e.payload.jiraEnabled);
     }).then((fn) => {
       unlisten = fn;
@@ -68,10 +73,13 @@ export function MainApp() {
     if (!copilotEnabled && tab === "copilot") {
       setTab("tasks");
     }
+    if (!githubActivityEnabled && tab === "github") {
+      setTab("tasks");
+    }
     if (!jiraEnabled && tab === "jira") {
       setTab("tasks");
     }
-  }, [copilotEnabled, jiraEnabled, tab]);
+  }, [copilotEnabled, githubActivityEnabled, jiraEnabled, tab]);
 
   const bannerError = error || state?.dbError || null;
   const showBanner = Boolean(bannerError && bannerError !== dismissedError);
@@ -189,6 +197,7 @@ export function MainApp() {
             ["insights", "Insights"],
             ["entries", "Time entries"],
             ...(jiraEnabled ? [["jira", "Jira"] as const] : []),
+            ...(githubActivityEnabled ? [["github", "GitHub"] as const] : []),
             ...(copilotEnabled ? [["copilot", "Copilot"] as const] : []),
             ["settings", "Settings"],
           ] as Array<readonly [Tab, string]>
@@ -242,6 +251,7 @@ export function MainApp() {
         {tab === "insights" && <InsightsPanel />}
         {tab === "entries" && <EntriesPanel state={state} />}
         {tab === "jira" && jiraEnabled && <JiraPanel active={tab === "jira"} />}
+        {tab === "github" && githubActivityEnabled && <GitHubPanel />}
         {tab === "copilot" && copilotEnabled && (
           <CopilotPanel usage={state?.copilotUsage ?? null} />
         )}

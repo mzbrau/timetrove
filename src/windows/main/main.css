@@ -1293,6 +1293,36 @@
   font-size: 1.25rem;
 }
 
+.copilot-pace {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--s3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.copilot-pace-headline {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.copilot-pace-ahead .copilot-pace-headline,
+.copilot-pace-ahead .copilot-kpi-value {
+  color: var(--accent);
+}
+
+.copilot-pace-behind .copilot-pace-headline,
+.copilot-pace-behind .copilot-kpi-value {
+  color: var(--danger);
+}
+
+.copilot-pace-onTrack .copilot-pace-headline,
+.copilot-pace-onTrack .copilot-kpi-value {
+  color: var(--ink);
+}
+
 .copilot-section h3 {
   margin: 0 0 var(--s2);
   font-size: 0.95rem;
@@ -1520,4 +1550,203 @@ button.linkish {
 button.linkish:disabled {
   color: var(--muted);
   cursor: default;
+}
+
+/* GitHub activity panel */
+.github {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+.github-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.github-heading {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.github-sync-meta {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.github-section h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2);
+  margin: 0 0 var(--s2);
+  font-size: 0.95rem;
+}
+
+.github-count {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.github-needs-count {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+}
+
+.github-empty {
+  margin: 0;
+  padding: var(--s3);
+  color: var(--muted);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.github-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.gh-pr-row,
+.gh-commit-row {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  gap: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color 0.15s ease, transform 0.12s ease;
+}
+
+.gh-pr-row:hover,
+.gh-commit-row:hover {
+  border-color: var(--gh-accent, var(--accent));
+}
+
+.gh-pr-needs {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.gh-pr-accent {
+  flex: 0 0 5px;
+  background: var(--gh-accent, var(--accent));
+}
+
+.gh-pr-main,
+.gh-commit-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--s3);
+}
+
+.gh-pr-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.gh-pr-title,
+.gh-commit-msg {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-pr-num {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.gh-pr-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.gh-repo {
+  font-weight: 600;
+}
+
+.gh-badge-needs {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--bg);
+  background: var(--accent);
+}
+
+.gh-pr-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gh-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+
+.gh-pill-ok {
+  color: #0f766e;
+  background: color-mix(in srgb, #17bebb 18%, transparent);
+  border-color: color-mix(in srgb, #17bebb 35%, transparent);
+}
+
+.gh-pill-bad {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+.gh-pill-warn {
+  color: #b45309;
+  background: color-mix(in srgb, #f3a712 20%, transparent);
+  border-color: color-mix(in srgb, #f3a712 40%, transparent);
+}
+
+.gh-pill-muted {
+  color: var(--muted);
+  background: rgba(128, 128, 128, 0.12);
+  border-color: var(--line);
+}
+
+[data-theme="dark"] .gh-pill-ok {
+  color: #5eead4;
+}
+
+[data-theme="dark"] .gh-pill-warn {
+  color: #fbbf24;
 }
