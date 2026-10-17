@@ -1293,6 +1293,36 @@
   font-size: 1.25rem;
 }
 
+.copilot-pace {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--s3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.copilot-pace-headline {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.copilot-pace-ahead .copilot-pace-headline,
+.copilot-pace-ahead .copilot-kpi-value {
+  color: var(--accent);
+}
+
+.copilot-pace-behind .copilot-pace-headline,
+.copilot-pace-behind .copilot-kpi-value {
+  color: var(--danger);
+}
+
+.copilot-pace-onTrack .copilot-pace-headline,
+.copilot-pace-onTrack .copilot-kpi-value {
+  color: var(--ink);
+}
+
 .copilot-section h3 {
   margin: 0 0 var(--s2);
   font-size: 0.95rem;
