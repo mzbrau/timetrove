@@ -62,9 +62,10 @@ export const api = {
     invokeManaged<TaskJiraHistoryEntry[]>("list_task_jira_history", { taskId }),
   getCopilotUsage: () =>
     invokeManaged<CopilotUsageSummary | null>("get_copilot_usage"),
-  getCopilotUsageHistory: (limit?: number) =>
+  getCopilotUsageHistory: (opts?: { limit?: number; since?: string }) =>
     invokeManaged<CopilotUsageHistoryPoint[]>("get_copilot_usage_history", {
-      limit: limit ?? null,
+      limit: opts?.limit ?? null,
+      since: opts?.since ?? null,
     }),
   refreshCopilotUsage: () =>
     invokeManaged<CopilotUsageSummary | null>("refresh_copilot_usage"),

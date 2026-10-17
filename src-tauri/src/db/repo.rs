@@ -1627,28 +1627,32 @@ impl Db {
                 )
                 .map_err(|e| e.to_string())?;
             let rows = stmt
-                .query_map(params![limit], |r| {
-                    let fetched_at_s: String = r.get(1)?;
-                    let fetched_at = DateTime::parse_from_rfc3339(&fetched_at_s)
-                        .map(|d| d.with_timezone(&Utc))
-                        .map_err(|e| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                1,
-                                rusqlite::types::Type::Text,
-                                Box::new(e),
-                            )
-                        })?;
-                    Ok(crate::domain::CopilotUsageHistoryPoint {
-                        id: r.get(0)?,
-                        fetched_at,
-                        plan: r.get(2)?,
-                        entitlement: r.get(3)?,
-                        used: r.get(4)?,
-                        remaining: r.get(5)?,
-                        percent_used: r.get(6)?,
-                        unit: r.get(7)?,
-                    })
-                })
+                .query_map(params![limit], map_copilot_history_row)
+                .map_err(|e| e.to_string())?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row.map_err(|e| e.to_string())?);
+            }
+            Ok(out)
+        })
+    }
+
+    /// Snapshots with `fetched_at >= since` (ascending). Used for month-pace charts.
+    pub fn list_copilot_usage_history_since(
+        &self,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<crate::domain::CopilotUsageHistoryPoint>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, fetched_at, plan, entitlement, used, remaining, percent_used, unit
+                     FROM copilot_usage_snapshots
+                     WHERE fetched_at >= ?1
+                     ORDER BY fetched_at ASC",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![since.to_rfc3339()], map_copilot_history_row)
                 .map_err(|e| e.to_string())?;
             let mut out = Vec::new();
             for row in rows {
@@ -1818,6 +1822,31 @@ const TASK_SELECT: &str = "id, name, color, description, notes, archived, starre
     jira_issue_summary, jira_issue_status, jira_issue_assignee,
     jira_issue_estimate_s, jira_issue_total_spent_s, jira_issue_fetched_at,
     created_at, updated_at";
+
+fn map_copilot_history_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<crate::domain::CopilotUsageHistoryPoint> {
+    let fetched_at_s: String = row.get(1)?;
+    let fetched_at = DateTime::parse_from_rfc3339(&fetched_at_s)
+        .map(|d| d.with_timezone(&Utc))
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                1,
+                rusqlite::types::Type::Text,
+                Box::new(e),
+            )
+        })?;
+    Ok(crate::domain::CopilotUsageHistoryPoint {
+        id: row.get(0)?,
+        fetched_at,
+        plan: row.get(2)?,
+        entitlement: row.get(3)?,
+        used: row.get(4)?,
+        remaining: row.get(5)?,
+        percent_used: row.get(6)?,
+        unit: row.get(7)?,
+    })
+}
 
 fn map_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
     let fetched: Option<String> = row.get(16)?;

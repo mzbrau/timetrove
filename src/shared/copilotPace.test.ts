@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildMonthPaceSeries,
   daysInMonth,
+  isSameLocalMonth,
   monthProgressPct,
   paceDelta,
   paceStatus,
+  percentAgainstLimit,
 } from "./copilotPace";
 
 describe("daysInMonth / monthProgressPct", () => {
@@ -51,6 +53,29 @@ describe("paceDelta / paceStatus", () => {
   });
 });
 
+describe("percentAgainstLimit / isSameLocalMonth", () => {
+  it("recomputes percent against active limit", () => {
+    expect(percentAgainstLimit(90, 300, 0)).toBe(30);
+    expect(percentAgainstLimit(30, 300, 0)).toBe(10);
+  });
+
+  it("falls back to stored percent when limit invalid", () => {
+    expect(percentAgainstLimit(90, 0, 42)).toBe(42);
+    expect(percentAgainstLimit(90, -1, 42)).toBe(42);
+  });
+
+  it("detects same local month", () => {
+    const now = new Date(2025, 10, 1, 9, 0, 0); // Nov 1
+    expect(isSameLocalMonth(new Date(2025, 10, 15).toISOString(), now)).toBe(
+      true,
+    );
+    expect(isSameLocalMonth(new Date(2025, 9, 31).toISOString(), now)).toBe(
+      false,
+    );
+    expect(isSameLocalMonth(null, now)).toBe(false);
+  });
+});
+
 describe("buildMonthPaceSeries", () => {
   it("builds expected diagonal and buckets last sample per day", () => {
     const now = new Date(2025, 1, 5, 18, 0, 0); // Feb 5, 2025
@@ -63,7 +88,11 @@ describe("buildMonthPaceSeries", () => {
     ];
     const series = buildMonthPaceSeries(history, now, null);
     expect(series).toHaveLength(28);
-    expect(series[0]).toEqual({ day: 1, expected: Math.round((1 / 28) * 1000) / 10, usage: 8 });
+    expect(series[0]).toEqual({
+      day: 1,
+      expected: Math.round((1 / 28) * 1000) / 10,
+      usage: 8,
+    });
     expect(series[2].usage).toBe(15);
     expect(series[1].usage).toBeNull(); // Feb 2 — no sample
     expect(series[4].usage).toBeNull(); // Feb 5 — no sample yet
@@ -71,15 +100,30 @@ describe("buildMonthPaceSeries", () => {
     expect(series[27].usage).toBeNull(); // future
   });
 
-  it("prefers live usage for today", () => {
+  it("places live sample on its fetchedAt day, not always today", () => {
     const now = new Date(2025, 1, 5, 18, 0, 0);
     const history = [
       {
-        fetchedAt: new Date(2025, 1, 5, 8, 0, 0).toISOString(),
-        percentUsed: 20,
+        fetchedAt: new Date(2025, 1, 4, 8, 0, 0).toISOString(),
+        percentUsed: 18,
       },
     ];
-    const series = buildMonthPaceSeries(history, now, 22.5);
-    expect(series[4].usage).toBe(22.5);
+    const live = {
+      fetchedAt: new Date(2025, 1, 4, 20, 0, 0).toISOString(),
+      percentUsed: 22.5,
+    };
+    const series = buildMonthPaceSeries(history, now, live);
+    expect(series[3].usage).toBe(22.5); // Feb 4
+    expect(series[4].usage).toBeNull(); // Feb 5 — no live for today
+  });
+
+  it("ignores live sample from a previous month", () => {
+    const now = new Date(2025, 1, 1, 12, 0, 0); // Feb 1
+    const live = {
+      fetchedAt: new Date(2025, 0, 31, 23, 0, 0).toISOString(),
+      percentUsed: 90,
+    };
+    const series = buildMonthPaceSeries([], now, live);
+    expect(series[0].usage).toBeNull();
   });
 });

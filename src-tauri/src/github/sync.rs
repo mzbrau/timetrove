@@ -4,10 +4,12 @@ use crate::db::Db;
 use crate::domain::GithubActivityDigest;
 use chrono::Utc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 static POLL_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static POLL_QUEUED: AtomicBool = AtomicBool::new(false);
+/// Serializes fetch+persist so manual refresh and background polls cannot overwrite out of order.
+static POLL_MUTEX: Mutex<()> = Mutex::new(());
 
 pub fn credentials_from_db(db: &Db) -> Result<Option<(GithubHttpConfig, String)>, String> {
     let settings = db.get_settings()?;
@@ -88,6 +90,9 @@ fn config_still_matches(db: &Db, started: &GithubHttpConfig) -> Result<bool, Str
 }
 
 pub fn poll_once(db: &Db) -> Result<Option<GithubActivityDigest>, String> {
+    let _guard = POLL_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let Some((creds, username)) = credentials_from_db(db)? else {
         return Ok(None);
     };

@@ -214,13 +214,21 @@ export function GitHubPanel() {
   }, [load]);
 
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     listen("github-activity-updated", () => {
       void load();
-    }).then((fn) => {
-      unlisten = fn;
-    });
+    })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+      })
+      .catch(() => {});
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [load]);

@@ -40,15 +40,41 @@ export type HistorySample = {
   percentUsed: number;
 };
 
+/** True when `iso` falls in the same local calendar month as `now`. */
+export function isSameLocalMonth(
+  iso: string | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!iso) return false;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return false;
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+}
+
+/**
+ * Recompute percent used against an active limit (e.g. manual override).
+ * Falls back to stored percent when limit is missing/non-positive.
+ */
+export function percentAgainstLimit(
+  used: number,
+  activeLimit: number,
+  storedPercent: number,
+): number {
+  if (Number.isFinite(activeLimit) && activeLimit > 0 && Number.isFinite(used)) {
+    return (used / activeLimit) * 100;
+  }
+  return storedPercent;
+}
+
 /**
  * Build a full-month series: expected diagonal for every day, usage from the
- * last sample per local day (and optional live today override). Future days
- * have usage null so the chart line stops at today.
+ * last sample per local day (and optional live sample placed on its fetchedAt day).
+ * Future days have usage null so the chart line stops at today.
  */
 export function buildMonthPaceSeries(
   history: HistorySample[],
   now: Date = new Date(),
-  liveUsagePct: number | null = null,
+  liveSample: HistorySample | null = null,
 ): PaceMonthPoint[] {
   const year = now.getFullYear();
   const month = now.getMonth();
@@ -65,8 +91,18 @@ export function buildMonthPaceSeries(
     byDay.set(day, p.percentUsed);
   }
 
-  if (liveUsagePct != null && Number.isFinite(liveUsagePct)) {
-    byDay.set(today, liveUsagePct);
+  if (liveSample && Number.isFinite(liveSample.percentUsed)) {
+    const d = new Date(liveSample.fetchedAt);
+    if (
+      !Number.isNaN(d.getTime()) &&
+      d.getFullYear() === year &&
+      d.getMonth() === month
+    ) {
+      const day = d.getDate();
+      if (day >= 1 && day <= days) {
+        byDay.set(day, liveSample.percentUsed);
+      }
+    }
   }
 
   const points: PaceMonthPoint[] = [];
@@ -80,8 +116,7 @@ export function buildMonthPaceSeries(
     points.push({
       day,
       expected: Math.round(expected * 10) / 10,
-      usage:
-        usage != null ? Math.round(usage * 10) / 10 : null,
+      usage: usage != null ? Math.round(usage * 10) / 10 : null,
     });
   }
   return points;

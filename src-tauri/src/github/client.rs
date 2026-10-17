@@ -21,10 +21,10 @@ query($q: String!) {
             }
           }
         }
-        reviewThreads(first: 100) {
-          nodes { isResolved }
+        reviewThreads(first: 1, filterBy: { resolved: false }) {
+          totalCount
         }
-        reviews(first: 50) {
+        latestReviews(first: 100) {
           nodes {
             state
             author { login }
@@ -157,21 +157,15 @@ fn parse_pr_node(node: &Value) -> Option<GithubPrSummary> {
     let check_status = node
         .pointer("/commits/nodes/0/commit/statusCheckRollup/state")
         .and_then(|v| v.as_str())
-        .unwrap_or("EXPECTED")
+        .unwrap_or("")
         .to_string();
 
     let unresolved = node
-        .pointer("/reviewThreads/nodes")
-        .and_then(|v| v.as_array())
-        .map(|threads| {
-            threads
-                .iter()
-                .filter(|t| t.get("isResolved").and_then(|v| v.as_bool()) == Some(false))
-                .count() as u32
-        })
-        .unwrap_or(0);
+        .pointer("/reviewThreads/totalCount")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
 
-    let reviews_summary = summarize_reviews(node.pointer("/reviews/nodes"));
+    let reviews_summary = summarize_reviews(node.pointer("/latestReviews/nodes"));
 
     let mut requested_logins = Vec::new();
     if let Some(reqs) = node.pointer("/reviewRequests/nodes").and_then(|v| v.as_array()) {
@@ -358,13 +352,9 @@ mod tests {
                 }]
             },
             "reviewThreads": {
-                "nodes": [
-                    { "isResolved": false },
-                    { "isResolved": true },
-                    { "isResolved": false }
-                ]
+                "totalCount": 2
             },
-            "reviews": {
+            "latestReviews": {
                 "nodes": [
                     { "state": "COMMENTED", "author": { "login": "alice" } },
                     { "state": "APPROVED", "author": { "login": "bob" } }
@@ -409,5 +399,31 @@ mod tests {
     fn summarize_empty_reviews() {
         assert_eq!(summarize_reviews(None), "No reviews");
         assert_eq!(summarize_reviews(Some(&json!([]))), "No reviews");
+    }
+
+    #[test]
+    fn parse_pr_missing_checks_is_empty_status() {
+        let node = serde_json::json!({
+            "number": 7,
+            "title": "Docs",
+            "url": "https://github.com/acme/app/pull/7",
+            "createdAt": "2026-10-01T12:00:00Z",
+            "reviewDecision": "",
+            "repository": { "nameWithOwner": "acme/app" },
+            "commits": {
+                "nodes": [{
+                    "commit": {
+                        "statusCheckRollup": null
+                    }
+                }]
+            },
+            "reviewThreads": { "totalCount": 0 },
+            "latestReviews": { "nodes": [] },
+            "reviewRequests": { "nodes": [] }
+        });
+        let pr = parse_pr_node(&node).unwrap();
+        assert_eq!(pr.check_status, "");
+        assert_eq!(pr.unresolved_comment_count, 0);
+        assert_eq!(pr.reviews_summary, "No reviews");
     }
 }

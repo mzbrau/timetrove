@@ -12,9 +12,11 @@ import {
 import { api } from "../../shared/api";
 import {
   buildMonthPaceSeries,
+  isSameLocalMonth,
   monthProgressPct,
   paceDelta,
   paceStatus,
+  percentAgainstLimit,
   type PaceStatus,
 } from "../../shared/copilotPace";
 import type {
@@ -93,16 +95,28 @@ type Props = {
   usage: CopilotUsageSummary | null;
 };
 
+function localMonthStartIso(now: Date = new Date()): string {
+  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  return start.toISOString();
+}
+
 export function CopilotPanel({ usage }: Props) {
   const [history, setHistory] = useState<CopilotUsageHistoryPoint[]>([]);
+  const [monthHistory, setMonthHistory] = useState<CopilotUsageHistoryPoint[]>(
+    [],
+  );
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadHistory = useCallback(async () => {
     try {
-      const h = await api.getCopilotUsageHistory(500);
+      const [h, month] = await Promise.all([
+        api.getCopilotUsageHistory({ limit: 500 }),
+        api.getCopilotUsageHistory({ since: localMonthStartIso() }),
+      ]);
       setHistory(h);
+      setMonthHistory(month);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -153,6 +167,7 @@ export function CopilotPanel({ usage }: Props) {
   const pace = useMemo(() => {
     if (!usage || usage.unlimited) return null;
     const now = new Date();
+    if (!isSameLocalMonth(usage.fetchedAt, now)) return null;
     const monthPct = monthProgressPct(now);
     const delta = paceDelta(usage.percentUsed, monthPct);
     const status = paceStatus(delta);
@@ -168,12 +183,18 @@ export function CopilotPanel({ usage }: Props) {
 
   const paceChartData = useMemo(() => {
     if (!usage || usage.unlimited) return [];
-    return buildMonthPaceSeries(
-      history,
-      new Date(),
-      usage.percentUsed,
-    );
-  }, [history, usage]);
+    const now = new Date();
+    const activeLimit = usage.entitlement;
+    const samples = monthHistory.map((p) => ({
+      fetchedAt: p.fetchedAt,
+      percentUsed: percentAgainstLimit(p.used, activeLimit, p.percentUsed),
+    }));
+    const liveSample =
+      usage.fetchedAt && isSameLocalMonth(usage.fetchedAt, now)
+        ? { fetchedAt: usage.fetchedAt, percentUsed: usage.percentUsed }
+        : null;
+    return buildMonthPaceSeries(samples, now, liveSample);
+  }, [monthHistory, usage]);
 
   const paceUsagePoints = useMemo(
     () => paceChartData.filter((p) => p.usage != null).length,

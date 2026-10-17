@@ -440,7 +440,14 @@ pub fn get_copilot_usage(
 pub fn get_copilot_usage_history(
     engine: State<'_, Arc<Engine>>,
     limit: Option<u32>,
+    since: Option<String>,
 ) -> Result<Vec<CopilotUsageHistoryPoint>, String> {
+    if let Some(since) = since {
+        let since = DateTime::parse_from_rfc3339(&since)
+            .map_err(|e| format!("Invalid since timestamp: {e}"))?
+            .with_timezone(&Utc);
+        return engine.db().list_copilot_usage_history_since(since);
+    }
     engine
         .db()
         .list_copilot_usage_history(limit.unwrap_or(500))
@@ -474,15 +481,18 @@ pub fn get_github_activity(
 #[tauri::command]
 pub async fn refresh_github_activity(
     engine: State<'_, Arc<Engine>>,
+    app: AppHandle,
 ) -> Result<Option<GithubActivityDigest>, String> {
     let settings = engine.db().get_settings()?;
     if !settings.github_activity_enabled {
         return Err("Enable GitHub activity first".into());
     }
     let db = engine.db().clone();
-    tauri::async_runtime::spawn_blocking(move || crate::github::poll_once(&db))
+    let result = tauri::async_runtime::spawn_blocking(move || crate::github::poll_once(&db))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("github-activity-updated", ());
+    result
 }
 
 /// Starts a Copilot connection test on a background thread; emits `copilot-connection-test`.

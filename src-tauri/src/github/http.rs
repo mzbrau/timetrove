@@ -111,23 +111,29 @@ pub fn post_graphql(
         return Err(format!("GitHub GraphQL returned HTTP {}", resp.status()));
     }
     let value: Value = resp.into_json().map_err(|e| e.to_string())?;
-    if let Some(errors) = value.get("errors").and_then(|e| e.as_array()) {
-        if !errors.is_empty() {
-            let msg = errors
-                .iter()
-                .filter_map(|e| e.get("message").and_then(|m| m.as_str()))
-                .collect::<Vec<_>>()
-                .join("; ");
-            if value.get("data").map(|d| d.is_null()).unwrap_or(true) {
-                return Err(if msg.is_empty() {
-                    "GitHub GraphQL returned errors".into()
-                } else {
-                    format!("GitHub GraphQL: {msg}")
-                });
-            }
-        }
+    // Reject partial successes: field-level errors can drop PRs or zero out counts.
+    if let Some(msg) = graphql_errors_message(&value) {
+        return Err(msg);
     }
     Ok(value)
+}
+
+/// Extract GraphQL error messages from a parsed response body.
+fn graphql_errors_message(value: &Value) -> Option<String> {
+    let errors = value.get("errors").and_then(|e| e.as_array())?;
+    if errors.is_empty() {
+        return None;
+    }
+    let msg = errors
+        .iter()
+        .filter_map(|e| e.get("message").and_then(|m| m.as_str()))
+        .collect::<Vec<_>>()
+        .join("; ");
+    Some(if msg.is_empty() {
+        "GitHub GraphQL returned errors".into()
+    } else {
+        format!("GitHub GraphQL: {msg}")
+    })
 }
 
 pub fn fetch_authenticated_login(config: &GithubHttpConfig) -> Result<String, String> {
@@ -194,5 +200,23 @@ mod tests {
     fn build_agent_rejects_invalid_proxy() {
         let err = build_agent("ftp://proxy.example:8080").unwrap_err();
         assert!(err.contains("Invalid GitHub proxy URL"));
+    }
+
+    #[test]
+    fn graphql_errors_reject_partial_data() {
+        let body = json!({
+            "data": { "search": { "nodes": [] } },
+            "errors": [{ "message": "Something went wrong" }]
+        });
+        let msg = graphql_errors_message(&body).unwrap();
+        assert!(msg.contains("Something went wrong"));
+    }
+
+    #[test]
+    fn graphql_errors_none_when_clean() {
+        let body = json!({ "data": { "search": { "nodes": [] } } });
+        assert!(graphql_errors_message(&body).is_none());
+        let empty_errors = json!({ "data": null, "errors": [] });
+        assert!(graphql_errors_message(&empty_errors).is_none());
     }
 }
