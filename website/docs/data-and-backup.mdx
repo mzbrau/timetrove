@@ -1,0 +1,51 @@
+---
+title: Data and backup
+---
+
+All TimeTrove data (tasks, time slices, notes, settings, tokens and cached integration data) lives in a single SQLite file on your computer. Nothing is stored anywhere else.
+
+| Platform | Location |
+| --- | --- |
+| macOS | `~/Library/Application Support/com.mzbrau.timetrove/timetrove.db` |
+| Windows | `%APPDATA%\com.mzbrau.timetrove\timetrove.db` |
+
+<Screenshot name="settings-database" alt="Settings Database card with Reveal, Export and Import buttons" />
+
+## Reveal
+
+**Settings → Database → Reveal database** opens the folder that contains the file in Finder or Explorer.
+
+## Export a backup
+
+1. Click **Export backup**.
+2. Enter the full path for the copy. The default is the database path with `.bak` on the end.
+
+The export is a consistent copy, safe to take while TimeTrove is running and tracking. Put it somewhere your normal backups cover.
+
+## Import a backup
+
+1. Click **Import backup**.
+2. Enter the full path of a backup file.
+3. Confirm. This **replaces** your current data and cannot be undone.
+
+Restart TimeTrove afterwards.
+
+:::tip Moving to a new computer
+Export a backup on the old machine, install TimeTrove on the new one, then import the backup.
+:::
+
+## Upgrades
+
+Installing a new version replaces the app only. The database stays where it is, and TimeTrove updates its structure automatically on first launch.
+
+## Discarded time
+
+When you [discard a gap](./tracking/gap-attribution.mdx), its start, end and duration go into a discard log. They're never attached to a task or counted in totals. The total for any period is shown on [Insights](./insights.mdx) as **Discarded**.
+
+## Database errors
+
+If TimeTrove can't read or write the database (for example, the disk is full or the file is locked), it shows a single banner at the top of the main window instead of a stream of pop-ups. Fix the cause, then dismiss the banner or restart the app.
+
+## Tokens
+
+Jira and GitHub tokens are stored in the same local database. They're only sent to the hosts you configure. Treat backup files as sensitive.

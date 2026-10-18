@@ -7,6 +7,7 @@ import { api } from "../../shared/api";
 import { formatHms } from "../../shared/format";
 import { jiraBrowseUrl } from "../../shared/jira";
 import type { Settings } from "../../shared/types";
+import { useDemoShot } from "../../shared/useDemoShot";
 import { useTrackerState } from "../../shared/useTrackerState";
 import "./tracker.css";
 
@@ -52,6 +53,8 @@ export function TrackerApp() {
   const lastMainClickRef = useRef<{ t: number; x: number; y: number } | null>(
     null,
   );
+  const [demoHover, setDemoHover] = useState(false);
+  useDemoShot((shot) => setDemoHover(Boolean(shot.hover)));
 
   useEffect(() => {
     api
@@ -284,7 +287,7 @@ export function TrackerApp() {
 
   return (
     <div
-      className={`tracker ${state.tracking ? "tracking" : "idle"}${snoozing ? " snoozing" : ""}`}
+      className={`tracker ${state.tracking ? "tracking" : "idle"}${snoozing ? " snoozing" : ""}${demoHover ? " demo-hover" : ""}`}
       onMouseDown={onMouseDown}
       onContextMenu={(e) => {
         void onContextMenu(e);

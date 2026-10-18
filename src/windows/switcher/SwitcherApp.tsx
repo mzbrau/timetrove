@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../shared/api";
+import { useDemoShot } from "../../shared/useDemoShot";
 import { useTrackerState } from "../../shared/useTrackerState";
 import type { JiraDashboardIssue, Settings, Task } from "../../shared/types";
 import "./switcher.css";
@@ -24,6 +25,20 @@ export function SwitcherApp() {
     null,
   );
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Demo shots that set query + confirmCreate: the query effect would otherwise
+  // clear confirmation, so stash the flag and apply it inside that effect.
+  const pendingConfirmCreate = useRef<boolean | null>(null);
+
+  useDemoShot((shot) => {
+    if (shot.confirmCreate !== undefined) {
+      pendingConfirmCreate.current = !!shot.confirmCreate;
+    }
+    if (shot.query !== undefined) setQuery(shot.query);
+    else if (shot.confirmCreate !== undefined) {
+      setConfirmCreate(!!shot.confirmCreate);
+      pendingConfirmCreate.current = null;
+    }
+  });
 
   const tracking = Boolean(state?.tracking);
   const noteModeAvailable = tracking;
@@ -143,7 +158,12 @@ export function SwitcherApp() {
 
   useEffect(() => {
     setSelected(0);
-    setConfirmCreate(false);
+    if (pendingConfirmCreate.current !== null) {
+      setConfirmCreate(pendingConfirmCreate.current);
+      pendingConfirmCreate.current = null;
+    } else {
+      setConfirmCreate(false);
+    }
   }, [query]);
 
   const availableModes = useMemo(() => {

@@ -1,0 +1,42 @@
+---
+title: Settings
+---
+
+Open the **Settings** tab in the main window. Changes take effect when you click **Save settings**. The button stays disabled until something has changed.
+
+<Screenshot name="settings-general" alt="Settings tab with General, Jira Cloud and GitHub cards" />
+
+## General
+
+| Setting | Default | Notes |
+| --- | --- | --- |
+| Theme | Dark | Dark or Light. Applies to every TimeTrove window |
+| Idle threshold (minutes) | 10 | How long without input before the [gap prompt](./tracking/gap-attribution.mdx) appears |
+| Daily goal (minutes) | 480 | When the tracker clock turns gold. 480 is 8 hours |
+| Switch-task shortcut | `CommandOrControl+Shift+T` | The global shortcut for the [switcher](./tracking/switching-tasks.mdx). Restart TimeTrove after changing it |
+| Start at login | On | Launch TimeTrove when you sign in |
+| Keep tracker always on top | On | Recommended on Windows, where the bar docks over the taskbar. Also available from the bar's right-click menu |
+| Show seconds on tracker | Off | Show a live `HH:MM:SS` on the bar instead of `HH:MM` |
+
+## Jira Cloud
+
+Site URL, email, API token and an optional proxy, plus **Test connection**. See [Jira Cloud](./integrations/jira.mdx).
+
+## GitHub
+
+One host, token and optional proxy shared by two independent features:
+
+- **Enable Copilot usage tracking**, with a poll interval and an optional monthly limit override. See [GitHub Copilot usage](./integrations/copilot.mdx).
+- **Enable GitHub activity page**, with its own poll interval. See [GitHub activity](./integrations/github.mdx).
+
+The last sync time and any error are shown under each section.
+
+## Database
+
+Shows where your database file is, with **Reveal database**, **Export backup** and **Import backup**. See [Data and backup](./data-and-backup.mdx).
+
+<Screenshot name="settings-database" alt="Database card with the file path and backup buttons" />
+
+## Proxies
+
+Both proxy fields take an HTTP CONNECT proxy such as `http://host:port` or `http://user:pass@host:port`. Leave them empty to connect directly.

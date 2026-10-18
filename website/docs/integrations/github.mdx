@@ -1,0 +1,32 @@
+---
+title: GitHub activity
+---
+
+The **GitHub** tab gives you a read-only view of your current work on GitHub: pull requests you opened, pull requests waiting for your review, and your recent commits. It's handy when you're filling in a timesheet and need a reminder of what a day involved.
+
+<Screenshot name="github-activity" alt="GitHub tab with open pull requests and their check and review status" />
+
+## Set up
+
+GitHub activity shares its host, token and proxy with [Copilot usage](./copilot.mdx).
+
+1. In **Settings → GitHub**, tick **Enable GitHub activity page**.
+2. Set **GitHub host** to `github.com`, or to your Enterprise Cloud host (for example `company.ghe.com`).
+3. Paste an **API token**. It needs read access to pull requests, contents, metadata and checks. A classic token with the `repo` scope also covers private repositories.
+4. Optionally set your **Username**. If you leave it blank, it's worked out from the token.
+5. Set the **Activity poll interval**. The default is 30 minutes, and it can be anything from 5 to 120.
+
+## What you see
+
+**PRs you opened**: each open pull request with:
+
+- its repository and how long ago it was updated,
+- check status: passing, pending or failing,
+- review status: approved, review required or changes requested,
+- unresolved review threads and comment counts.
+
+**PRs to review**: open pull requests where your review has been requested. The ones still waiting on you are marked **Needs your review**.
+
+**Recent commits**: your last 20 commits.
+
+Click any item to open it on GitHub. Click **Refresh** to fetch now rather than waiting for the next poll. Results are cached locally, so the tab still shows the last fetch when you're offline.

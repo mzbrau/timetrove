@@ -90,6 +90,9 @@ fn config_still_matches(db: &Db, started: &GithubHttpConfig) -> Result<bool, Str
 }
 
 pub fn poll_once(db: &Db) -> Result<Option<GithubActivityDigest>, String> {
+    if crate::demo::enabled() {
+        return load_cached_digest(db);
+    }
     let _guard = POLL_MUTEX
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());

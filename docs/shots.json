@@ -1,0 +1,293 @@
+[
+  {
+    "name": "tracker-tracking",
+    "window": "tracker",
+    "actions": [
+      "setting:copilot_enabled=false",
+      "track:Data export service"
+    ],
+    "ui": {}
+  },
+  {
+    "name": "tracker-hover-stop",
+    "window": "tracker",
+    "ui": {
+      "hover": true
+    }
+  },
+  {
+    "name": "tracker-copilot",
+    "window": "tracker",
+    "actions": [
+      "setting:copilot_enabled=true"
+    ],
+    "ui": {}
+  },
+  {
+    "name": "tracker-goal-reached",
+    "window": "tracker",
+    "actions": [
+      "setting:daily_goal_mins=300"
+    ],
+    "ui": {}
+  },
+  {
+    "name": "tasks-overview",
+    "window": "main",
+    "actions": [
+      "setting:daily_goal_mins=480",
+      "showMain"
+    ],
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "tasks",
+      "task": "Data export service",
+      "showArchived": false
+    },
+    "delayMs": 2500
+  },
+  {
+    "name": "task-detail-jira",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "tasks",
+      "task": "Onboarding flow revamp",
+      "showArchived": false,
+      "scrollTo": "Notes"
+    },
+    "delayMs": 2000
+  },
+  {
+    "name": "tasks-archived",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "tasks",
+      "task": "Payments API v2",
+      "showArchived": true
+    },
+    "delayMs": 2000
+  },
+  {
+    "name": "timesheet-week",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "timesheet",
+      "weekOffset": -1
+    },
+    "delayMs": 2500
+  },
+  {
+    "name": "day-timeline",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "timesheet",
+      "weekOffset": -1,
+      "scrollTo": "Week timeline"
+    },
+    "delayMs": 2500
+  },
+  {
+    "name": "entries",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "entries",
+      "entriesDay": "lastWorkday"
+    },
+    "delayMs": 2000
+  },
+  {
+    "name": "insights-year",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "insights",
+      "insightsPreset": "lastYear"
+    },
+    "delayMs": 6000
+  },
+  {
+    "name": "insights-tasks",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "insights",
+      "insightsPreset": "lastYear",
+      "scrollTo": "Time by task"
+    },
+    "delayMs": 6000
+  },
+  {
+    "name": "insights-time-of-day",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "insights",
+      "insightsPreset": "lastYear",
+      "scrollTo": "Weekly hours"
+    },
+    "delayMs": 6000
+  },
+  {
+    "name": "insights-month",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "insights",
+      "insightsPreset": "lastMonth"
+    },
+    "delayMs": 6000
+  },
+  {
+    "name": "jira-dashboard",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "jira"
+    },
+    "delayMs": 3000
+  },
+  {
+    "name": "github-activity",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "github"
+    },
+    "delayMs": 2500
+  },
+  {
+    "name": "copilot-usage",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "copilot"
+    },
+    "delayMs": 3500
+  },
+  {
+    "name": "copilot-history",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "copilot",
+      "scrollTo": "Pace this month"
+    },
+    "delayMs": 3500
+  },
+  {
+    "name": "settings-general",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "settings"
+    },
+    "delayMs": 2000
+  },
+  {
+    "name": "settings-database",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "settings",
+      "scrollTo": "Database"
+    },
+    "delayMs": 2000
+  },
+  {
+    "name": "switcher-list",
+    "window": "switcher",
+    "actions": [
+      "showSwitcher",
+      "wait:800"
+    ],
+    "ui": {
+      "query": ""
+    }
+  },
+  {
+    "name": "switcher-search",
+    "window": "switcher",
+    "ui": {
+      "query": "rev"
+    }
+  },
+  {
+    "name": "switcher-create",
+    "window": "switcher",
+    "ui": {
+      "query": "Quarterly roadmap",
+      "confirmCreate": true
+    }
+  },
+  {
+    "name": "snooze-picker",
+    "window": "snooze",
+    "actions": [
+      "hideSwitcher",
+      "showSnooze",
+      "wait:800"
+    ],
+    "ui": {}
+  },
+  {
+    "name": "gap-prompt",
+    "window": "gap",
+    "actions": [
+      "hideSnooze",
+      "gap:47",
+      "wait:800"
+    ],
+    "ui": {
+      "gapMode": "choose"
+    }
+  },
+  {
+    "name": "gap-other-search",
+    "window": "gap",
+    "ui": {
+      "gapMode": "search",
+      "query": "sup"
+    }
+  },
+  {
+    "name": "tracker-stopped",
+    "window": "tracker",
+    "actions": [
+      "resolveGap",
+      "stop"
+    ],
+    "ui": {}
+  },
+  {
+    "name": "main-stopped",
+    "window": "main",
+    "width": 1200,
+    "height": 820,
+    "ui": {
+      "tab": "entries",
+      "entriesDay": "today"
+    },
+    "delayMs": 2000
+  }
+]

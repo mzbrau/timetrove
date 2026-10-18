@@ -1,0 +1,39 @@
+---
+title: GitHub Copilot usage
+---
+
+If your Copilot plan has a monthly allowance of premium requests, TimeTrove can show how much you've used and whether you're on pace to run out before it resets.
+
+<Screenshot name="copilot-usage" alt="Copilot tab showing 37% used, 110 of 300 requests, and 21 points ahead of pace" />
+
+## Set up
+
+1. In **Settings → GitHub**, tick **Enable Copilot usage tracking**.
+2. Set **GitHub host** to `github.com` or your Enterprise Cloud host.
+3. Paste an **API token**: a fine-grained personal access token with the **Copilot Requests** permission, or an OAuth or `gh` CLI token.
+4. Set the **Copilot poll interval**. The default is 30 minutes, and it can be anything from 5 to 120.
+5. Click **Test Copilot connection**.
+
+TimeTrove reads the same per-user quota that VS Code shows. It never changes anything on GitHub.
+
+### Monthly limit override
+
+Your limit normally comes from GitHub. If GitHub doesn't report a usable limit (or reports it as unlimited), enter your allowance in **Monthly limit override**. Leave it empty to trust GitHub.
+
+## On the tracker bar
+
+When tracking is on, a percentage bubble appears to the right of the clock. It turns amber at 75% and red at 90%. Hover it for details, or click it to open the main window.
+
+<Screenshot name="tracker-copilot" alt="Tracker bar with a Copilot bubble showing 37%" width={390} variant="bar" />
+
+## The Copilot tab
+
+- **Headline figures**: percentage used, requests used and remaining, the reset date, your plan and any overage.
+- **Month pace**: whether you're ahead of or behind an even spread across the month. "21pp ahead" means you've used 21 percentage points less than an even pace would by today.
+- **Quota pools**: premium requests, chat and completions, each with its own limit or "Unlimited".
+- **Pace this month**: your actual usage plotted against the even-pace line.
+- **Usage over time**: requests used and percentage used from every poll, with drops at each monthly reset.
+
+<Screenshot name="copilot-history" alt="Pace this month and Usage over time charts" />
+
+Click **Refresh now** to poll immediately.

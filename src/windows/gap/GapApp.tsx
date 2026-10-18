@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { api } from "../../shared/api";
 import { formatGap } from "../../shared/format";
+import { useDemoShot } from "../../shared/useDemoShot";
 import { useTrackerState } from "../../shared/useTrackerState";
 import type { Task } from "../../shared/types";
 import "./gap.css";
@@ -40,6 +41,15 @@ export function GapApp() {
     setError(null);
     loadTasks();
   };
+
+  useDemoShot((shot) => {
+    if (shot.gapMode === "search") {
+      enterSearch();
+      if (shot.query) setQuery(shot.query);
+    } else if (shot.gapMode === "choose") {
+      leaveSearch();
+    }
+  });
 
   useEffect(() => {
     loadTasks();

@@ -1,5 +1,7 @@
 packages:
   - .
+  - website
 
 allowBuilds:
   esbuild: true
+  core-js: false
