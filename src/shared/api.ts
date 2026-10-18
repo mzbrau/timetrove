@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { withStartupRetry } from "./startupRetry";
+import { waitForEngineReady, withStartupRetry } from "./startupRetry";
 import type {
   CopilotUsageHistoryPoint,
   CopilotUsageSummary,
@@ -16,11 +16,12 @@ import type {
   TrackerState,
 } from "./types";
 
-/** Retry while Tauri setup is still registering managed engine state. */
-function invokeManaged<T>(
+/** Wait for manage(), then retry while setup is still registering State. */
+async function invokeManaged<T>(
   cmd: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
+  await waitForEngineReady();
   return withStartupRetry(() => invoke<T>(cmd, args));
 }
 

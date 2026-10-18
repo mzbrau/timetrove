@@ -57,28 +57,28 @@ export function TrackerApp() {
   useDemoShot((shot) => setDemoHover(Boolean(shot.hover)));
 
   useEffect(() => {
-    api
-      .getSettings()
-      .then((s) => {
-        alwaysOnTopRef.current = s.trackerAlwaysOnTop;
-        setShowSeconds(s.trackerShowSeconds);
-        setJiraEnabled(s.jiraEnabled);
-        setJiraSiteUrl(s.jiraSiteUrl);
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
-    listen<Settings>("settings-changed", (e) => {
-      alwaysOnTopRef.current = e.payload.trackerAlwaysOnTop;
-      setShowSeconds(e.payload.trackerShowSeconds);
-      setJiraEnabled(e.payload.jiraEnabled);
-      setJiraSiteUrl(e.payload.jiraSiteUrl);
-    }).then((fn) => {
-      unlisten = fn;
-    });
+    const apply = (s: Settings) => {
+      alwaysOnTopRef.current = s.trackerAlwaysOnTop;
+      setShowSeconds(s.trackerShowSeconds);
+      setJiraEnabled(s.jiraEnabled);
+      setJiraSiteUrl(s.jiraSiteUrl);
+    };
+    // Register settings-changed before getSettings so a late setup emit is not missed.
+    void (async () => {
+      unlisten = await listen<Settings>("settings-changed", (e) => {
+        apply(e.payload);
+      });
+      if (cancelled) return;
+      try {
+        apply(await api.getSettings());
+      } catch {
+        // invokeManaged already retried; setup also emits settings-changed.
+      }
+    })();
     return () => {
+      cancelled = true;
       unlisten?.();
     };
   }, []);
