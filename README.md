@@ -1,25 +1,43 @@
 # TimeTrove
 
-Personal, local-only time tracking for developers. Built with Tauri 2 + React + TypeScript.
+Local-first time tracking for developers. A small always-on bar, honest idle prompts, and a Monday-start timesheet — everything stays in one SQLite file on your machine.
 
-**Documentation:** [mzbrau.github.io/timetrove](https://mzbrau.github.io/timetrove/)
+**[Website](https://www.timetrove.dev/)** · **[Docs](https://www.timetrove.dev/docs/intro)** · **[Download](https://github.com/mzbrau/timetrove/releases)**
 
-## Requirements
+## Screenshots
 
-- Node.js 20+
-- pnpm
-- Rust (stable)
-- macOS for day-to-day development (floating tracker bar)
-- Windows for the product target (docked bar above the taskbar + system tray)
+<p align="center">
+  <img src="website/static/img/screenshots/tasks-overview.png" alt="TimeTrove main window — tasks overview" width="720" />
+  <br />
+  <em>Tasks, timesheet, insights, and settings in one window</em>
+</p>
 
-## Setup
+<p align="center">
+  <img src="website/static/img/screenshots/tracker-tracking.png" alt="Tracker bar while timing a task" width="360" />
+  &nbsp;&nbsp;
+  <img src="website/static/img/screenshots/gap-prompt.png" alt="Gap attribution prompt" width="280" />
+  <br />
+  <em>Always-visible tracker · Gap attribution when you return</em>
+</p>
+
+## Features
+
+- **Always in view** — compact tracker bar with task colour, name, and daily total
+- **Gap attribution** — idle, sleep, and startup gaps ask where the time should go (keep, move, or discard)
+- **Quick switch** — `Cmd/Ctrl+Shift+T` to search or create a task from anywhere
+- **Timesheet** — Monday-start weekly grid with CSV export
+- **Insights** — week, month, and year views of how your time was spent
+- **Local only** — no account, no cloud sync; one `timetrove.db` you can back up or delete
+- **Optional integrations** — Jira Cloud worklogs, GitHub activity, Copilot usage (all off until you add a token)
+
+## Develop
+
+Requirements: Node.js 20+, pnpm, Rust (stable). Day-to-day development on macOS; Windows is the product target for the docked tracker bar.
 
 ```bash
 pnpm install
 pnpm tauri dev
 ```
-
-## Windows (labels)
 
 | Window   | Role                                      |
 |----------|-------------------------------------------|
@@ -28,40 +46,25 @@ pnpm tauri dev
 | switcher | Global shortcut task search               |
 | gap      | Idle / sleep / startup attribution prompt |
 
-Default switch shortcut: `Cmd/Ctrl+Shift+T`.
-
-## Data
-
-SQLite database lives in the OS app data directory (`timetrove.db`). Reveal / export / import from Settings.
-
 ## Releases
 
-Push a version tag to trigger installer builds and a GitHub Release:
+Push a version tag to build installers and publish a GitHub Release:
 
 ```bash
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-The workflow syncs the app version from the tag (`v1.0.0` → `1.0.0`), then builds:
-
-- macOS `.dmg` (Apple Silicon and Intel)
-- Windows NSIS setup `.exe`
-
-Installing or upgrading replaces the app binary only. `timetrove.db` stays in the OS app-data directory, so existing tasks and time entries are preserved.
-
-Builds are currently unsigned (macOS uses ad-hoc signing). Expect Gatekeeper / SmartScreen warnings until code signing is configured.
+Produces a macOS `.dmg` (Apple Silicon and Intel) and a Windows NSIS `.exe`. Installing replaces the app binary only; `timetrove.db` stays in the OS app-data directory. Builds are currently unsigned.
 
 ## Documentation site
 
-The user docs live in [`website/`](website/) (Docusaurus) and deploy to GitHub Pages from `main` via [`.github/workflows/docs.yml`](.github/workflows/docs.yml). One-time setup: in the repo's **Settings → Pages**, set the source to **GitHub Actions**.
+User docs live in [`website/`](website/) (Docusaurus) and deploy from `main` to [www.timetrove.dev](https://www.timetrove.dev/).
 
 ```bash
-pnpm docs:dev    # local preview with hot reload
+pnpm docs:dev    # local preview
 pnpm docs:build  # production build (fails on broken links)
 pnpm docs:shots  # macOS: recapture screenshots from the real app
 ```
 
-`pnpm docs:shots` seeds a 12-month demo database in `src-tauri/target/demo/` (your real `timetrove.db` is never touched), launches the app in a dev-only demo mode with no network access, and captures every shot listed in [`docs/shots.json`](docs/shots.json) into `website/static/img/screenshots/`. Quit any installed TimeTrove first. Screenshots are stored with Git LFS.
-
-See [plan.md](plan.md) for full product requirements.
+`pnpm docs:shots` seeds a demo database under `src-tauri/target/demo/` (your real `timetrove.db` is never touched) and captures the shots listed in [`docs/shots.json`](docs/shots.json). Quit any running TimeTrove first. Screenshots are stored with Git LFS.
