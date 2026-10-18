@@ -1,0 +1,51 @@
+---
+title: Gap attribution
+---
+
+When TimeTrove can't be sure you were working, it doesn't guess. It asks.
+
+<Screenshot name="gap-prompt" alt="Gap prompt showing 47m and three choices" width={420} caption="A 47-minute gap. The duration colour shows how long it is." />
+
+## When the prompt appears
+
+The same prompt covers three situations:
+
+- **Idle.** No keyboard or mouse input for longer than the idle threshold (10 minutes by default).
+- **Sleep.** The computer slept or the lid was closed.
+- **Startup.** TimeTrove was quit or crashed while a task was running, or the machine restarted.
+
+Time up to the moment you went idle stays on the task you were on. The time from then until you answer is the **gap**.
+
+## Your three choices
+
+| Key | Choice | What happens |
+| --- | --- | --- |
+| <Kbd>1</Kbd> | Assign to the previous task | The gap is added to the task you were on, and tracking continues on it |
+| <Kbd>2</Kbd> | Assign to another task | Search for a task (or create one). The gap goes to it, and tracking continues on that task |
+| <Kbd>3</Kbd> | Discard time | The gap is logged and dropped. Tracking resumes on the previous task from now |
+
+You have to pick one. <Kbd>Esc</Kbd> won't dismiss the prompt, and you can't start, stop or switch tasks until it's answered. That way no time is silently lost or invented.
+
+<Screenshot name="gap-other-search" alt="Gap prompt in search mode, filtering tasks by sup" width={420} caption="After pressing 2: type to filter, Enter to pick. Esc goes back to the three choices." />
+
+## Duration colours
+
+The duration is large and colour-coded so you can judge it at a glance:
+
+| Length | Colour | Usually means |
+| --- | --- | --- |
+| Under 20 minutes | Teal | A coffee or a call. Probably keep it |
+| 20 minutes to 2 hours | Amber | A meeting or lunch. Think about it |
+| Over 2 hours | Red | Overnight or a long break. Probably discard |
+
+## Checkpoints keep gaps small
+
+While you're tracking, TimeTrove saves a checkpoint about once a minute. If the app is killed, the machine loses power, or it sleeps unexpectedly, work is closed at the last checkpoint rather than at the start of the slice. The gap prompt then only covers the minutes since that checkpoint.
+
+## Discarded time
+
+Discarded gaps never count towards daily totals, timesheets or Insights. Their total for a period is shown on the [Insights](../insights.mdx) tab as **Discarded**, so you can see how much time you've thrown away.
+
+:::tip Expecting to be away from the keyboard?
+If you'll be in a workshop or pairing on someone else's machine, [snooze](./snooze.mdx) the prompts so the time stays on your task.
+:::

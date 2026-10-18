@@ -145,6 +145,9 @@ fn with_current_override(db: &Db, summary: CopilotUsageSummary) -> Result<Copilo
 
 /// Fetch and persist; returns the updated summary (with current override applied for display).
 pub fn poll_once(db: &Db) -> Result<Option<CopilotUsageSummary>, String> {
+    if crate::demo::enabled() {
+        return load_cached_summary(db);
+    }
     let Some(creds) = credentials_from_db(db)? else {
         return Ok(None);
     };

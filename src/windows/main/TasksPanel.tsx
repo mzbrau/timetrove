@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../shared/api";
 import { formatHm, normalizeHexColor } from "../../shared/format";
+import { useDemoShot } from "../../shared/useDemoShot";
 import type {
   JiraIssueDetails,
   Settings,
@@ -122,6 +123,17 @@ export function TasksPanel({
     setTasks(list);
     if (!selectedId && list[0]) setSelectedId(list[0].id);
   };
+
+  const [demoTaskName, setDemoTaskName] = useState<string | null>(null);
+  useDemoShot((shot) => {
+    if (shot.showArchived !== undefined) setShowArchived(shot.showArchived);
+    if (shot.task) setDemoTaskName(shot.task);
+  });
+  useEffect(() => {
+    if (!demoTaskName) return;
+    const match = tasks.find((t) => t.name === demoTaskName);
+    if (match) setSelectedId(match.id);
+  }, [demoTaskName, tasks]);
 
   useEffect(() => {
     load().catch((e) => setError(String(e)));

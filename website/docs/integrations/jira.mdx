@@ -1,0 +1,65 @@
+---
+title: Jira Cloud
+---
+
+Link tasks to Jira issues and TimeTrove posts your tracked time to them as worklogs. You keep tracking the way you always do, and Jira stays up to date.
+
+<Screenshot name="jira-dashboard" alt="Jira tab listing assigned issues with estimate, TimeTrove time, Jira time and percentage" />
+
+## Set up
+
+1. Create an API token at [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens).
+2. In **Settings → Jira Cloud**, tick **Enable Jira worklog sync**.
+3. Enter your **Site URL** (for example `https://your-org.atlassian.net`), your Atlassian **Email** and the **API token**.
+4. If your network needs one, enter an HTTP **Proxy URL**, such as `http://host:port`.
+5. Click **Test connection**. It saves your settings and checks that Jira accepts them.
+
+<Screenshot name="settings-general" alt="Settings with the Jira Cloud card in the middle column" caption="The token is stored only in your local database." />
+
+Only Jira Cloud with an API token is supported. Jira Server and Data Center are not.
+
+## Link a task to an issue
+
+There are two ways:
+
+- **From the Tasks tab:** type the key into **Jira issue**, click **Add** to fetch and check it, then **Save**. See [Tasks](../tasks.mdx#linking-a-jira-issue).
+- **From the switcher:** while tracking, open the switcher, press <Kbd>Ctrl+Tab</Kbd> to reach **Link Jira**, and pick one of your open assigned issues.
+
+A task has one active issue at a time. When a task is linked, the tracker bar shows a Jira icon; click it to open the issue.
+
+## When time is posted
+
+TimeTrove posts any time that hasn't been sent yet:
+
+- every hour while the app is running,
+- when you stop tracking,
+- when you switch to another task.
+
+It keeps a record of how much it has already posted to each issue, so time is never posted twice.
+
+## Changing the issue on a task
+
+When you replace or clear a task's issue:
+
+1. Any unsent time is posted to the old issue.
+2. The old issue moves to **Previous tickets**, with the time TimeTrove booked to it.
+3. Only work from that point on goes to the new issue.
+
+## The Jira tab
+
+The **Jira** tab lists your open assigned issues alongside the TimeTrove tasks they're linked to:
+
+| Column | Meaning |
+| --- | --- |
+| Estimate | The issue's original estimate |
+| TimeTrove | Time TimeTrove has booked to the issue |
+| Jira spent | Total time logged on the issue in Jira, by anyone |
+| % | TimeTrove time as a share of the estimate, or Jira time for issues not linked to a task |
+| Task | The linked TimeTrove task |
+
+Click **↗** to open an issue in your browser. **Hours by issue** compares TimeTrove and Jira time, and **By status** shows how your assigned work is spread across statuses. Click **Refresh** to reload from Jira.
+
+## Limits
+
+- TimeTrove only adds worklogs. If you shorten or delete time locally after it was posted, edit the worklog in Jira yourself.
+- Changes made in Jira are not pulled back into TimeTrove.

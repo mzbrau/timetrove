@@ -166,6 +166,16 @@ pub fn list_assigned_at(
     let account_id = normalize_account_id(&creds.email);
     let linked = db.list_tasks_with_jira_key()?;
 
+    if crate::demo::enabled() {
+        return Ok(JiraAssignedIssuesResult {
+            issues: enrich_issues(&crate::demo::jira_fixture(), &creds.site_url, &linked),
+            fetched_at: Some(now),
+            truncated: false,
+            from_cache: false,
+            error: None,
+        });
+    }
+
     {
         let cache = CACHE.lock().map_err(|e| e.to_string())?;
         if !force

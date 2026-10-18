@@ -1,0 +1,56 @@
+---
+title: The tracker bar
+---
+
+The tracker bar is a small window that stays on top of everything else, so you always know what you're timing and how much you've done today.
+
+<Screenshot name="tracker-tracking" alt="Tracker bar tracking Data export service at 05:12" width={310} variant="bar" caption="Tracking: task colour (pulsing), task name and today's total." />
+
+## What it shows
+
+| State | Looks like |
+| --- | --- |
+| Tracking | The task's colour dot pulses, followed by the task name and today's total |
+| Not tracking | No colour, and the words **Not tracking** |
+| Goal reached | Today's total turns from teal to gold |
+| Snoozing | A small `zᴢ` mark after the task name (see [Snooze](./snooze.mdx)) |
+
+<Screenshot name="tracker-stopped" alt="Tracker bar showing Not tracking" width={390} variant="bar" />
+
+<Screenshot name="tracker-goal-reached" alt="Tracker bar with today's total in gold" width={390} variant="bar" />
+
+Today's total is shown as `HH:MM` by default. Turn on **Show seconds on tracker** in [Settings](../settings.mdx) for a live `HH:MM:SS` clock.
+
+## Controls
+
+- **Click the clock** to open the [task switcher](./switching-tasks.mdx).
+- **Hover the bar** to reveal a stop button to the left of the clock.
+- **Click the Jira icon** (shown when the task is linked to an issue) to open that issue in your browser.
+- **Click the Copilot percentage** (when [Copilot tracking](../integrations/copilot.mdx) is on) to open the main window.
+- **Drag** the bar to move it.
+
+<Screenshot name="tracker-hover-stop" alt="Tracker bar on hover with the stop button and Jira icon visible" width={310} variant="bar" caption="On hover: the stop button, then the Jira link, then the clock." />
+
+With Copilot tracking on, a usage bubble appears to the right of the clock. It turns amber at 75% and red at 90% of your monthly allowance.
+
+<Screenshot name="tracker-copilot" alt="Tracker bar with a Copilot usage bubble showing 37%" width={390} variant="bar" />
+
+## Right-click menu
+
+Right-click the bar for:
+
+- **Open TimeTrove**: show the main window.
+- **Snooze**: 1, 4 or 8 hours, until 17:00, or a custom time. Only shown while tracking. While snoozing, this becomes **Exit snooze**.
+- **Always on top**: keep the bar above other windows (on by default).
+- **Reset position**: move the bar back to its default spot.
+- **Close**: hide the bar. Bring it back from the tray or menu bar icon.
+
+## Windows and macOS
+
+On **Windows** the bar docks above the taskbar near the system tray. The tray icon offers **Show tracker bar**, **Hide tracker bar**, **Open TimeTrove** and **Quit**.
+
+On **macOS** the bar floats and can be dragged anywhere. The menu bar icon has the same options.
+
+:::note Screenshots
+The screenshots in these docs were taken on macOS. The Windows docked bar shows the same information.
+:::

@@ -1,0 +1,56 @@
+---
+title: Getting started
+---
+
+## Install
+
+Download the latest build from [GitHub Releases](https://github.com/mzbrau/Time-Keeper/releases).
+
+| Platform | File |
+| --- | --- |
+| macOS (Apple Silicon or Intel) | `.dmg` |
+| Windows | NSIS setup `.exe` |
+
+:::caution Unsigned builds
+Builds are not code-signed yet.
+
+- **macOS:** the first time you open the app, Gatekeeper may block it. Right-click TimeTrove in Applications, choose **Open**, then confirm.
+- **Windows:** SmartScreen may warn about an unrecognised app. Choose **More info**, then **Run anyway**.
+:::
+
+Upgrading replaces the app only. Your database is stored separately and is kept.
+
+## First run
+
+When TimeTrove starts you'll see the tracker bar showing **Not tracking**, and the main window.
+
+<Screenshot name="tracker-stopped" alt="Tracker bar showing Not tracking" width={390} variant="bar" />
+
+1. Press <Kbd>Mod+Shift+T</Kbd> to open the switcher.
+2. Type a task name, for example `Code review`, and press Enter. There are no tasks yet, so TimeTrove asks you to confirm creating it. Press Enter again.
+3. The bar now shows the task's colour, its name and today's total.
+
+<Screenshot name="tracker-tracking" alt="Tracker bar tracking Data export service" width={310} variant="bar" />
+
+To stop, hover the bar and click the square stop button, or use **Stop** in the main window header.
+
+## Recommended settings
+
+Open **Settings** in the main window and check:
+
+- **Daily goal.** The default is 480 minutes (8 hours). The bar's clock turns gold when you reach it.
+- **Idle threshold.** The default is 10 minutes. After this long without keyboard or mouse input, TimeTrove asks where the time went.
+- **Start at login.** On by default, so tracking is one shortcut away each morning.
+
+See [Settings](./settings.mdx) for everything else.
+
+## Where your data lives
+
+Everything is stored in `timetrove.db`:
+
+| Platform | Path |
+| --- | --- |
+| macOS | `~/Library/Application Support/com.mzbrau.timetrove/timetrove.db` |
+| Windows | `%APPDATA%\com.mzbrau.timetrove\timetrove.db` |
+
+**Settings → Database → Reveal database** opens the folder. See [Data and backup](./data-and-backup.mdx).

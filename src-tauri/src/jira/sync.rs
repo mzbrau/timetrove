@@ -101,6 +101,9 @@ pub fn sync_task(db: &Db, task_id: &str) -> Result<(), String> {
 /// Unlike [`sync_task`], this rejects the operation when there is a postable delta but
 /// Jira sync is disabled or credentials are incomplete — so relink cannot silently drop time.
 pub fn flush_before_relink(db: &Db, task_id: &str) -> Result<(), String> {
+    if crate::demo::enabled() {
+        return Ok(());
+    }
     let _guard = SYNC_LOCK.lock();
     let task = match db.get_task(task_id)? {
         Some(t) => t,
@@ -183,12 +186,18 @@ pub fn sync_all_due(db: &Db) -> Result<(), String> {
 }
 
 pub fn spawn_flush_task(db: Arc<Db>, task_id: String) {
+    if crate::demo::enabled() {
+        return;
+    }
     std::thread::spawn(move || {
         let _ = sync_task(&db, &task_id);
     });
 }
 
 pub fn spawn_flush_all(db: Arc<Db>) {
+    if crate::demo::enabled() {
+        return;
+    }
     std::thread::spawn(move || {
         let _ = sync_all_due(&db);
     });

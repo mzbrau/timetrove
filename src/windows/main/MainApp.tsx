@@ -3,6 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { formatHms } from "../../shared/format";
 import { useTrackerState } from "../../shared/useTrackerState";
+import { scrollToHeading, useDemoShot } from "../../shared/useDemoShot";
 import { TasksPanel } from "./TasksPanel";
 import { TimesheetPanel } from "./TimesheetPanel";
 import { EntriesPanel } from "./EntriesPanel";
@@ -40,6 +41,12 @@ export function MainApp() {
   const [jiraEnabled, setJiraEnabled] = useState(false);
   const receivedAtRef = useRef(Date.now());
   const prevStateRef = useRef(state);
+
+  useDemoShot((shot) => {
+    if (shot.tab) setTab(shot.tab as Tab);
+    const heading = shot.scrollTo;
+    if (heading) window.setTimeout(() => scrollToHeading(heading), 700);
+  });
 
   useEffect(() => {
     void getVersion()

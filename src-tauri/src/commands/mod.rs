@@ -306,6 +306,16 @@ pub fn refresh_jira_issue(
     if task.jira_issue_key.is_empty() {
         return Ok(None);
     }
+    if crate::demo::enabled() {
+        return Ok(Some(JiraIssueDetails {
+            issue_key: task.jira_issue_key.clone(),
+            summary: task.jira_issue_summary.clone(),
+            status: task.jira_issue_status.clone(),
+            assignee: task.jira_issue_assignee.clone(),
+            estimate_seconds: task.jira_issue_estimate_s,
+            total_spent_seconds: task.jira_issue_total_spent_s,
+        }));
+    }
     let creds = jira_creds_if_enabled(&engine)?;
     match crate::jira::fetch_issue(&creds, &task.jira_issue_key) {
         Ok(details) => {
@@ -383,7 +393,9 @@ pub fn update_settings(
         settings.copilot_github_host = "github.com".into();
     }
     engine.db().update_settings(&settings)?;
-    if settings.autostart {
+    if crate::demo::enabled() {
+        // Demo DB must not touch the real login item (same bundle identifier).
+    } else if settings.autostart {
         let _ = app.autolaunch().enable();
     } else {
         let _ = app.autolaunch().disable();
@@ -703,6 +715,9 @@ pub fn coalesce_near_adjacent(
 
 #[tauri::command]
 pub fn get_db_path(engine: State<'_, Arc<Engine>>) -> Result<String, String> {
+    if crate::demo::enabled() {
+        return Ok(crate::demo::display_db_path());
+    }
     Ok(engine.db().path().display().to_string())
 }
 

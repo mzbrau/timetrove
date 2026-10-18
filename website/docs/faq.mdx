@@ -1,0 +1,60 @@
+---
+title: FAQ
+---
+
+### I forgot to switch tasks an hour ago. How do I fix it?
+
+Open **Time entries** for today and find the slice. If only part of it was the wrong task, use **Split** at the moment you actually switched, then **Move** the second half to the right task. You can also drag the edges of entries on the timeline. See [Timeline and entries](./timeline-and-entries.mdx).
+
+### Why did the gap prompt appear when I was reading?
+
+There was no keyboard or mouse input for longer than the idle threshold. Press <Kbd>1</Kbd> to keep the time on your task. If this happens a lot, raise the **Idle threshold** in [Settings](./settings.mdx), or [snooze](./tracking/snooze.mdx) during long reads and meetings.
+
+### Can I close the gap prompt and decide later?
+
+No. Starting, stopping and switching are paused until you answer, so time is never lost or double-counted. The prompt is built to be answered in a second with <Kbd>1</Kbd>, <Kbd>2</Kbd> or <Kbd>3</Kbd>.
+
+### What happens if my computer crashes while I'm tracking?
+
+TimeTrove saves a checkpoint about once a minute. On the next start, your work up to the last checkpoint is kept, and the gap prompt only asks about the time after it.
+
+### What happens at midnight?
+
+The running slice is split at 24:00 and continues on the same task. Each day's total stays correct, and you don't have to do anything.
+
+### Does discarded time show up anywhere?
+
+Only as the **Discarded** figure on [Insights](./insights.mdx). It never counts towards daily totals or the timesheet.
+
+### Where do archived tasks go?
+
+They're hidden from the switcher and gap search, but still appear on timesheets, in Insights and in entries wherever they have time. Tick **Archived** on the Tasks tab to see and unarchive them.
+
+### Can I export decimal hours?
+
+Not yet. The timesheet copies and exports `HH:MM`.
+
+### Can I use TimeTrove on two computers?
+
+Not at the same time. There's no sync. You can move your data with [Export backup and Import backup](./data-and-backup.mdx).
+
+### Does TimeTrove send my data anywhere?
+
+Only if you turn on an integration, and only to the host you configure:
+
+- Jira worklogs go to your Jira site.
+- Copilot usage and GitHub activity are read from your GitHub host.
+
+There is no analytics or telemetry.
+
+### Is my Jira time updated if I edit entries after they were posted?
+
+New time is posted, but TimeTrove never edits or deletes worklogs that already exist in Jira. If you shorten an entry after it was posted, adjust the worklog in Jira. See [Jira Cloud](./integrations/jira.mdx#limits).
+
+### The shortcut doesn't work.
+
+Another app may already use <Kbd>Mod+Shift+T</Kbd>. Change **Switch-task shortcut** in [Settings](./settings.mdx), for example to `CommandOrControl+Alt+Space`, then restart TimeTrove.
+
+### macOS says the app is damaged or can't be opened.
+
+Builds aren't code-signed yet. Right-click the app, choose **Open**, then confirm. If that doesn't help, run `xattr -dr com.apple.quarantine /Applications/TimeTrove.app` in Terminal. See [Getting started](./getting-started.mdx#install).

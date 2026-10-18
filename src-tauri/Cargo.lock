@@ -4116,8 +4116,10 @@ name = "time-trove"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "block2",
  "chrono",
  "dirs 6.0.0",
+ "objc2",
  "parking_lot",
  "rusqlite",
  "serde",

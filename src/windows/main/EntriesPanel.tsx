@@ -9,6 +9,7 @@ import {
 } from "../../shared/datetime";
 import { formatHm, normalizeHexColor } from "../../shared/format";
 import type { Task, TimeSlice, TrackerState } from "../../shared/types";
+import { useDemoShot } from "../../shared/useDemoShot";
 import { ConfirmBar } from "./ConfirmBar";
 import { DayTimeline } from "./DayTimeline";
 import { TaskPicker } from "./TaskPicker";
@@ -60,6 +61,15 @@ export function EntriesPanel({ state }: Props) {
   const [notePopoverId, setNotePopoverId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const notePopoverRef = useRef<HTMLDivElement | null>(null);
+
+  useDemoShot((shot) => {
+    if (shot.entriesDay === "today") setDay(todayStr());
+    if (shot.entriesDay === "lastWorkday") {
+      let d = addDays(todayStr(), -1);
+      while ([0, 6].includes(new Date(`${d}T12:00`).getDay())) d = addDays(d, -1);
+      setDay(d);
+    }
+  });
 
   const activeTasks = useMemo(
     () => tasks.filter((t) => !t.archived),

@@ -1,0 +1,47 @@
+---
+title: Concepts
+---
+
+A few terms are used throughout these docs.
+
+## Task
+
+Something you spend time on: `Code review`, `Support / on-call`, `Checkout redesign`. Tasks are a flat list with no projects or folders. Each one has:
+
+- a **name**, which should be unique so search finds it,
+- a **colour**, picked automatically to stand out from your other tasks (you can change it),
+- a **description** for what the task is, and **notes** as a scratchpad while you work,
+- an optional **star**, which pins it to the top of lists,
+- an optional **Jira issue** when the [Jira integration](./integrations/jira.mdx) is on.
+
+**Archived** tasks disappear from the switcher but still show up on timesheets and in history wherever they have time. See [Tasks](./tasks.mdx).
+
+## Time slice
+
+A continuous stretch of time on one task, with a start and an end. The running slice has no end yet. Only one slice can run at a time.
+
+- **Switching** ends the current slice and starts a new one on the chosen task.
+- **Stopping** ends the slice. No prompt appears.
+- At **midnight**, the running slice is split automatically: one slice ends at 24:00 and a new one starts at 00:00 on the same task. That keeps each day's total correct.
+
+Slices are what you edit on the [timeline and entries](./timeline-and-entries.mdx) screen. Each slice can carry a short note.
+
+## Gap
+
+Time TimeTrove can't vouch for: you were idle past the threshold, the computer slept, or the app wasn't running. Time up to the start of the gap stays on the task you were on. The gap itself is held until you decide what to do with it:
+
+- give it to the previous task,
+- give it to a different task,
+- or discard it.
+
+Discarded time is kept in a log for reference, but never counts towards totals or timesheets. See [Gap attribution](./tracking/gap-attribution.mdx).
+
+## Daily total and goal
+
+The **daily total** is everything booked on today's local date. The **daily goal** (8 hours by default) decides when the tracker's clock turns from teal to gold.
+
+<Screenshot name="tracker-goal-reached" alt="Tracker bar with the clock in gold after reaching the goal" width={390} variant="bar" />
+
+## Week
+
+Timesheets and weekly figures always start on **Monday**.

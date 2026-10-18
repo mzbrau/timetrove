@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../shared/api";
+import { useDemoShot } from "../../shared/useDemoShot";
 import { useTrackerState } from "../../shared/useTrackerState";
 import type { JiraDashboardIssue, Settings, Task } from "../../shared/types";
 import "./switcher.css";
@@ -24,6 +25,10 @@ export function SwitcherApp() {
     null,
   );
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useDemoShot((shot) => {
+    if (shot.query !== undefined) setQuery(shot.query);
+  });
 
   const tracking = Boolean(state?.tracking);
   const noteModeAvailable = tracking;

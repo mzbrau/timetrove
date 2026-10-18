@@ -118,7 +118,8 @@ body,
 }
 
 .tracker:hover .tracker-stop,
-.tracker:focus-within .tracker-stop {
+.tracker:focus-within .tracker-stop,
+.tracker.demo-hover .tracker-stop {
   opacity: 1;
   pointer-events: auto;
 }

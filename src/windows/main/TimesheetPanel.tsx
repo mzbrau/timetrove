@@ -6,6 +6,7 @@ import {
   mondayOfIsoWeek,
 } from "../../shared/datetime";
 import type { Task, TimeSlice, Timesheet } from "../../shared/types";
+import { useDemoShot } from "../../shared/useDemoShot";
 import { DayTimeline } from "./DayTimeline";
 
 export function TimesheetPanel() {
@@ -43,6 +44,16 @@ export function TimesheetPanel() {
   useEffect(() => {
     load().catch((e) => setError(String(e)));
   }, []);
+
+  useDemoShot((shot) => {
+    const offset = shot.weekOffset;
+    if (offset === undefined) return;
+    void api
+      .currentWeekStart()
+      .then((ws) => api.shiftWeek(ws, offset))
+      .then((ws) => load(ws))
+      .catch((e) => setError(String(e)));
+  });
 
   useEffect(() => {
     const tick = () => setNowMs(Date.now());

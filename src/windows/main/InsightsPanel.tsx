@@ -17,6 +17,7 @@ import { api } from "../../shared/api";
 import { addDays, formatDay, todayStr } from "../../shared/datetime";
 import { formatHm, normalizeHexColor } from "../../shared/format";
 import type { InsightsReport } from "../../shared/types";
+import { useDemoShot } from "../../shared/useDemoShot";
 
 type Preset = "lastWeek" | "lastMonth" | "lastYear" | "month" | "year" | "custom";
 
@@ -108,6 +109,10 @@ export function InsightsPanel() {
   const [report, setReport] = useState<InsightsReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useDemoShot((shot) => {
+    if (shot.insightsPreset) setPreset(shot.insightsPreset as Preset);
+  });
 
   const range = useMemo(
     () => resolveRange(preset, month, year, customStart, customEnd),

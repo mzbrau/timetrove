@@ -1,0 +1,30 @@
+---
+slug: /
+title: What is TimeTrove?
+sidebar_label: Introduction
+---
+
+TimeTrove is a desktop time tracker for one person on one machine. It keeps the current task and today's total in a small bar on screen, notices when you've been away, and produces a Monday-to-Sunday timesheet at the end of the week.
+
+<Screenshot name="tasks-overview" alt="TimeTrove main window on the Tasks tab" caption="The main window. The tracker bar lives separately, always on top." />
+
+## The daily loop
+
+1. **Track.** Press <Kbd>Mod+Shift+T</Kbd> anywhere, type part of a task name and press Enter. The previous task stops and the new one starts. See [Switching tasks](./tracking/switching-tasks.mdx).
+2. **Correct.** If you leave your desk, close the lid or quit the app, TimeTrove asks where that time should go the next time you're back. Nothing is assigned until you answer. See [Gap attribution](./tracking/gap-attribution.mdx).
+3. **Report.** The [Timesheet](./timesheet.mdx) tab shows tasks by day with totals, ready to copy or export as CSV.
+
+## What it is not
+
+- **Not a team tool.** There are no accounts, no server and no sync. Your data is one SQLite file. See [Data and backup](./data-and-backup.mdx).
+- **Not a project hierarchy.** Tasks are a flat list. Use names, colours and stars to organise them.
+- **Not an ERP connector.** The optional [Jira Cloud](./integrations/jira.mdx) integration posts worklogs. Everything else stays local.
+
+## Platforms
+
+| Platform | Tracker bar |
+| --- | --- |
+| Windows | Docked above the taskbar near the tray, with a tray icon as a fallback |
+| macOS | A floating, draggable bar that can be hidden to the menu bar |
+
+The main window, switcher and prompts are the same on both.

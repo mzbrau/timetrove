@@ -1,0 +1,56 @@
+---
+title: Tasks
+---
+
+The **Tasks** tab is where you name, colour, annotate and archive tasks. Most tasks are created on the fly from the [switcher](./tracking/switching-tasks.mdx); this is where you tidy them up.
+
+<Screenshot name="tasks-overview" alt="Tasks tab with Data export service selected" />
+
+## The task list
+
+- **New task** creates a blank task.
+- **Filter tasks…** narrows the list by name.
+- **Archived** shows archived tasks as well as active ones.
+- Starred tasks are listed first, then the rest alphabetically.
+
+## Editing a task
+
+Select a task to edit it on the right. Click **Save** to keep changes.
+
+| Field | Use it for |
+| --- | --- |
+| Name | What appears in the bar, switcher and timesheet. Keep names unique |
+| Colour | Assigned automatically to stand apart from your other tasks. Pick another from the swatch or type a hex value |
+| Description | What the task is: scope, links, acceptance criteria |
+| Notes | A running scratchpad: next steps, questions, reminders |
+| Star (☆ / ★) | Pins the task to the top of the list and the switcher |
+
+Below the fields, **Recent booking** shows how much time went on the task this week and last week, or when it was last booked.
+
+The buttons at the bottom:
+
+- **Save** keeps your edits.
+- **Start** begins tracking this task.
+- **Archive** or **Unarchive** hides the task from the switcher, or brings it back.
+
+## Linking a Jira issue
+
+With the [Jira integration](./integrations/jira.mdx) turned on, each task can be linked to one issue:
+
+1. Type the key, for example `TT-211`, into **Jira issue**.
+2. Click **Add**. TimeTrove fetches the issue and shows a card with its summary, status, assignee, estimate and time logged.
+3. Click **Save**. From now on, time on this task is posted to that issue.
+
+<Screenshot name="task-detail-jira" alt="Task linked to TT-211 with an issue card and a previous ticket TT-206" caption="If you change a task's issue, the old one moves to Previous tickets with the time TimeTrove booked to it." />
+
+When you replace or clear the key, any unsent time is posted to the old issue first. Only work done after the change goes to the new one.
+
+## Archiving
+
+Archive tasks you've finished with. Archived tasks:
+
+- don't appear in the switcher or the gap prompt's search,
+- still appear on timesheets, in Insights and in entries wherever they have time,
+- can be unarchived at any time.
+
+<Screenshot name="tasks-archived" alt="Tasks tab with Archived ticked, showing an archived task" />

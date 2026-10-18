@@ -2,6 +2,7 @@ mod chrome;
 mod commands;
 mod copilot;
 mod db;
+mod demo;
 mod domain;
 mod engine;
 mod github;
@@ -27,17 +28,23 @@ use tauri_plugin_global_shortcut::{
 };
 use tauri_plugin_window_state::{Builder as WindowStateBuilder, StateFlags};
 
+#[cfg(debug_assertions)]
+pub use demo::seed::seed_demo_db;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .plugin(
+    let demo_mode = demo::enabled();
+    let mut builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    if !demo_mode {
+        builder = builder.plugin(
             WindowStateBuilder::new()
                 // Never restore visibility — gap/switcher/snooze are ephemeral overlays
                 .with_state_flags(StateFlags::all() - StateFlags::VISIBLE)
                 .with_denylist(&["gap", "switcher", "snooze"])
                 .build(),
-        )
+        );
+    }
+    builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             engine::show_main(app);
         }))
@@ -47,14 +54,19 @@ pub fn run() {
         ));
 
     builder = builder.setup(|app| {
+        let demo_mode = demo::enabled();
         let app_dir = app
             .path()
             .app_data_dir()
             .map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
-        let db_path = app_dir.join("timetrove.db");
+        let db_path = demo::db_path_override().unwrap_or_else(|| app_dir.join("timetrove.db"));
         let conn = open_db(&db_path).map_err(|e| e.to_string())?;
         let database = db::Db::new(conn, db_path);
+        if demo_mode {
+            // Seeded running slice must not open a startup gap after a slow dev build.
+            database.set_last_good_at(Some(chrono::Utc::now()))?;
+        }
         let engine = Engine::new(database);
         // Register before any further work so webview invokes can resolve State.
         app.manage(engine.clone());
@@ -139,7 +151,7 @@ pub fn run() {
         let _ = app.global_shortcut().register(shortcut);
 
         // Autostart preference
-        if settings.autostart {
+        if settings.autostart && !demo_mode {
             let _ = app.autolaunch().enable();
         }
 
@@ -153,7 +165,9 @@ pub fn run() {
             let mut last_github_activity_sync = std::time::Instant::now();
             // Startup gap check shortly after launch
             std::thread::sleep(Duration::from_secs(1));
-            eng.on_resume_or_startup_gap(&handle);
+            if !demo_mode {
+                eng.on_resume_or_startup_gap(&handle);
+            }
             // First Copilot poll soon after launch when enabled.
             {
                 let eng_c = eng.clone();
@@ -172,7 +186,11 @@ pub fn run() {
             loop {
                 std::thread::sleep(Duration::from_secs(5));
                 eng.checkpoint_if_due();
-                eng.check_idle(&handle);
+                if demo_mode {
+                    eng.emit_state(&handle);
+                } else {
+                    eng.check_idle(&handle);
+                }
                 refresh_tray_tooltip(&handle, &eng);
 
                 let today = chrono::Local::now().date_naive();
@@ -232,6 +250,11 @@ pub fn run() {
         apply_tracker_size(app.handle(), &engine);
         set_tracker_visible_persisted(app.handle(), &engine, settings.tracker_visible);
         show_main(app.handle());
+
+        #[cfg(all(debug_assertions, target_os = "macos"))]
+        if demo_mode {
+            demo::shots::spawn_if_configured(app.handle().clone(), engine.clone());
+        }
 
         Ok(())
     });
