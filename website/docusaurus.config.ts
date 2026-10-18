@@ -9,8 +9,8 @@ const config: Config = {
   tagline: "Local-first time tracking for developers",
   favicon: "img/favicon.png",
 
-  url: "https://mzbrau.github.io",
-  baseUrl: "/timetrove/",
+  url: "https://www.timetrove.dev",
+  baseUrl: "/",
   organizationName: "mzbrau",
   projectName: "timetrove",
   trailingSlash: false,
