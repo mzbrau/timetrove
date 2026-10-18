@@ -2,7 +2,7 @@ import { themes as prismThemes } from "prism-react-renderer";
 import type { Config } from "@docusaurus/types";
 import type * as Preset from "@docusaurus/preset-classic";
 
-const repoUrl = "https://github.com/mzbrau/Time-Keeper";
+const repoUrl = "https://github.com/mzbrau/timetrove";
 
 const config: Config = {
   title: "TimeTrove",
@@ -10,9 +10,9 @@ const config: Config = {
   favicon: "img/favicon.png",
 
   url: "https://mzbrau.github.io",
-  baseUrl: "/Time-Keeper/",
+  baseUrl: "/timetrove/",
   organizationName: "mzbrau",
-  projectName: "Time-Keeper",
+  projectName: "timetrove",
   trailingSlash: false,
 
   onBrokenLinks: "throw",

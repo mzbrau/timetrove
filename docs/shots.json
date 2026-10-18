@@ -236,7 +236,8 @@
     "name": "switcher-create",
     "window": "switcher",
     "ui": {
-      "query": "Quarterly roadmap"
+      "query": "Quarterly roadmap",
+      "confirmCreate": true
     }
   },
   {

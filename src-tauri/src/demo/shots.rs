@@ -61,9 +61,9 @@ fn run(app: &AppHandle, engine: &Arc<Engine>, plan: &str, out: PathBuf) -> Resul
     let mut failures = 0;
     for shot in &shots {
         for action in &shot.actions {
-            if let Err(e) = apply_action(app, engine, action) {
-                eprintln!("[shots] {}: action {action} failed: {e}", shot.name);
-            }
+            apply_action(app, engine, action).map_err(|e| {
+                format!("{}: action {action} failed: {e}", shot.name)
+            })?;
         }
         engine.emit_state(app);
         let Some(window) = app.get_webview_window(&shot.window) else {

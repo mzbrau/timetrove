@@ -40,7 +40,13 @@ export default function Screenshot({ name, alt, caption, width, variant = "windo
         <img src={src} alt={alt} loading="lazy" decoding="async" />
       </button>
       {caption && <figcaption className={styles.caption}>{caption}</figcaption>}
-      <dialog ref={dialogRef} className={styles.dialog} onClose={close} onClick={close}>
+      <dialog
+        ref={dialogRef}
+        className={styles.dialog}
+        aria-label={alt}
+        onClose={close}
+        onClick={close}
+      >
         <img src={src} alt={alt} />
       </dialog>
     </figure>

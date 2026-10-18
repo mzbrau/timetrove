@@ -70,11 +70,11 @@
 
 .btnPrimary {
   background: var(--tt-teal);
-  color: #0c0f12;
+  color: #fff;
 }
 
 .btnPrimary:hover {
-  color: #0c0f12;
+  color: #fff;
   background: var(--ifm-color-primary-light);
 }
 

@@ -6,7 +6,7 @@ import Layout from "@theme/Layout";
 import LiveTracker from "@site/src/components/LiveTracker";
 import styles from "./index.module.css";
 
-const RELEASES = "https://github.com/mzbrau/Time-Keeper/releases";
+const RELEASES = "https://github.com/mzbrau/timetrove/releases";
 
 function Shot({
   name,

@@ -2,7 +2,7 @@
 
 Personal, local-only time tracking for developers. Built with Tauri 2 + React + TypeScript.
 
-**Documentation:** [mzbrau.github.io/Time-Keeper](https://mzbrau.github.io/Time-Keeper/)
+**Documentation:** [mzbrau.github.io/timetrove](https://mzbrau.github.io/timetrove/)
 
 ## Requirements
 

@@ -12,6 +12,8 @@ export type DemoShot = {
   insightsPreset?: string;
   scrollTo?: string;
   query?: string;
+  /** Force the switcher create-confirmation banner (after an unmatched query). */
+  confirmCreate?: boolean;
   gapMode?: "choose" | "search";
   hover?: boolean;
 };
@@ -26,18 +28,28 @@ if (import.meta.env.DEV) {
   // requestAnimationFrame, which would leave chart animations stuck at frame zero.
   const nativeRaf = window.requestAnimationFrame.bind(window);
   const nativeCancel = window.cancelAnimationFrame.bind(window);
+  // Fallback frames use setTimeout; keep their IDs separate so cancelAnimationFrame
+  // does not clear unrelated timers that share the same numeric pool.
+  const fallbackTimeouts = new Set<number>();
   // Hidden pages also throttle timers, so each fallback frame advances a virtual clock
   // by 250ms to finish animations in a handful of ticks.
   let virtualNow = 0;
-  window.requestAnimationFrame = (cb) =>
-    lastShot && document.hidden
-      ? window.setTimeout(() => {
-          virtualNow = Math.max(virtualNow + 250, performance.now());
-          cb(virtualNow);
-        }, 16)
-      : nativeRaf(cb);
+  window.requestAnimationFrame = (cb) => {
+    if (!(lastShot && document.hidden)) return nativeRaf(cb);
+    const id = window.setTimeout(() => {
+      fallbackTimeouts.delete(id);
+      virtualNow = Math.max(virtualNow + 250, performance.now());
+      cb(virtualNow);
+    }, 16);
+    fallbackTimeouts.add(id);
+    return id;
+  };
   window.cancelAnimationFrame = (id) => {
-    window.clearTimeout(id);
+    if (fallbackTimeouts.has(id)) {
+      fallbackTimeouts.delete(id);
+      window.clearTimeout(id);
+      return;
+    }
     nativeCancel(id);
   };
 
