@@ -76,6 +76,9 @@ export async function withStartupRetry<T>(
       if (!isUnmanagedStateError(e) || i === attempts - 1) {
         throw e;
       }
+      // Only wait for engine-ready after an unmanaged failure — never block
+      // already-ready webviews that missed the one-shot setup event.
+      await waitForEngineReady();
       await sleep(delayMs);
     }
   }

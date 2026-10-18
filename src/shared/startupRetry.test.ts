@@ -1,4 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const listen = vi.fn(
+  (_event: string, handler: () => void) => {
+    // Simulate a late webview that still receives engine-ready promptly.
+    queueMicrotask(() => handler());
+    return Promise.resolve(() => {});
+  },
+);
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (...args: unknown[]) =>
+    listen(...(args as [string, () => void])),
+}));
+
 import {
   isUnmanagedStateError,
   resetEngineReadyForTests,
@@ -26,14 +40,20 @@ describe("isUnmanagedStateError", () => {
 describe("withStartupRetry", () => {
   beforeEach(() => {
     resetEngineReadyForTests();
+    listen.mockClear();
+    listen.mockImplementation((_event: string, handler: () => void) => {
+      queueMicrotask(() => handler());
+      return Promise.resolve(() => {});
+    });
   });
 
-  it("returns on first success", async () => {
+  it("returns on first success without waiting for engine-ready", async () => {
     const fn = vi.fn().mockResolvedValue(42);
     await expect(withStartupRetry(fn, { attempts: 3, delayMs: 1 })).resolves.toBe(
       42,
     );
     expect(fn).toHaveBeenCalledTimes(1);
+    expect(listen).not.toHaveBeenCalled();
   });
 
   it("retries unmanaged errors then succeeds", async () => {
@@ -46,6 +66,7 @@ describe("withStartupRetry", () => {
       "ok",
     );
     expect(fn).toHaveBeenCalledTimes(3);
+    expect(listen).toHaveBeenCalled();
   });
 
   it("throws immediately for non-unmanaged errors", async () => {
@@ -54,6 +75,7 @@ describe("withStartupRetry", () => {
       "database is locked",
     );
     expect(fn).toHaveBeenCalledTimes(1);
+    expect(listen).not.toHaveBeenCalled();
   });
 
   it("throws after exhausting unmanaged retries", async () => {
@@ -64,5 +86,6 @@ describe("withStartupRetry", () => {
       "state not managed",
     );
     expect(fn).toHaveBeenCalledTimes(3);
+    expect(listen).toHaveBeenCalled();
   });
 });
