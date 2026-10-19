@@ -1,41 +1,73 @@
 use super::http::{self, GithubHttpConfig};
 use crate::domain::{GithubActivityDigest, GithubCommitSummary, GithubPrSummary};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+/// Identity-only search — keep complexity low so GitHub does not null out nodes.
 const PR_SEARCH_QUERY: &str = r#"
 query($q: String!) {
   search(query: $q, type: ISSUE, first: 50) {
+    issueCount
     nodes {
       ... on PullRequest {
+        id
         number
         title
         url
         createdAt
         reviewDecision
         repository { nameWithOwner }
-        commits(last: 1) {
-          nodes {
-            commit {
-              statusCheckRollup { state }
-            }
+      }
+    }
+  }
+}
+"#;
+
+const VIEWER_AUTHORED_PRS_QUERY: &str = r#"
+query {
+  viewer {
+    login
+    pullRequests(states: OPEN, first: 50, orderBy: { field: CREATED_AT, direction: DESC }) {
+      nodes {
+        id
+        number
+        title
+        url
+        createdAt
+        reviewDecision
+        repository { nameWithOwner }
+      }
+    }
+  }
+}
+"#;
+
+const PR_HYDRATE_QUERY: &str = r#"
+query($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on PullRequest {
+      id
+      commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup { state }
           }
         }
-        reviewThreads(first: 100) {
-          nodes { isResolved }
-          pageInfo { hasNextPage endCursor }
+      }
+      reviewThreads(first: 100) {
+        nodes { isResolved }
+        pageInfo { hasNextPage endCursor }
+      }
+      latestReviews(first: 100) {
+        nodes {
+          state
+          author { login }
         }
-        latestReviews(first: 100) {
-          nodes {
-            state
-            author { login }
-          }
-        }
-        reviewRequests(first: 30) {
-          nodes {
-            requestedReviewer {
-              ... on User { login }
-            }
+      }
+      reviewRequests(first: 30) {
+        nodes {
+          requestedReviewer {
+            ... on User { login }
           }
         }
       }
@@ -59,11 +91,12 @@ query($owner: String!, $name: String!, $number: Int!, $after: String!) {
 
 /// Cap follow-up thread pages so a pathological PR cannot loop forever (100 × 50 = 5000 threads).
 const MAX_REVIEW_THREAD_PAGES: usize = 50;
+const MAX_RECENT_COMMITS: usize = 20;
 
 /// Fetch authored PRs, reviewer PRs, and recent commits for the authenticated user.
 pub fn fetch_activity(
     config: &GithubHttpConfig,
-    username_hint: &str,
+    _username_hint: &str,
 ) -> Result<GithubActivityDigest, String> {
     if config.api_token.trim().is_empty() {
         return Err("GitHub API token is required".into());
@@ -71,24 +104,26 @@ pub fn fetch_activity(
     let base = http::api_base_url(&config.github_host)?;
     let agent = http::build_agent(&config.proxy_url)?;
 
-    let login = if username_hint.trim().is_empty() {
-        http::fetch_authenticated_login(config)?
-    } else {
-        username_hint.trim().to_string()
-    };
+    // Always bind to the token — Settings username is not used for queries.
+    let login = http::fetch_authenticated_login(config)?;
 
-    let authored = search_prs(&agent, &base, &config.api_token, &format!("is:open is:pr author:{login}"))?;
+    let mut authored_prs = fetch_viewer_authored_prs(&agent, &base, &config.api_token)?;
+    for pr in &mut authored_prs {
+        pr.needs_my_review = false;
+    }
+    authored_prs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
     let requested = search_prs(
         &agent,
         &base,
         &config.api_token,
-        &format!("is:open is:pr review-requested:{login}"),
+        "is:open is:pr review-requested:@me",
     )?;
     let reviewed = search_prs(
         &agent,
         &base,
         &config.api_token,
-        &format!("is:open is:pr reviewed-by:{login}"),
+        "is:open is:pr reviewed-by:@me",
     )?;
 
     let mut review_map: HashMap<String, GithubPrSummary> = HashMap::new();
@@ -102,7 +137,6 @@ pub fn fetch_activity(
         review_map
             .entry(pr.url.clone())
             .and_modify(|existing| {
-                // Prefer keeping needs_my_review if either source says so.
                 if pr.needs_my_review {
                     existing.needs_my_review = true;
                 }
@@ -115,12 +149,6 @@ pub fn fetch_activity(
             .cmp(&a.needs_my_review)
             .then_with(|| b.created_at.cmp(&a.created_at))
     });
-
-    let mut authored_prs = authored;
-    for pr in &mut authored_prs {
-        pr.needs_my_review = false;
-    }
-    authored_prs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
     let recent_commits = fetch_recent_commits(&agent, &base, &config.api_token, &login)?;
 
@@ -135,6 +163,20 @@ pub fn fetch_activity(
     })
 }
 
+fn fetch_viewer_authored_prs(
+    agent: &ureq::Agent,
+    api_base: &str,
+    token: &str,
+) -> Result<Vec<GithubPrSummary>, String> {
+    let body = http::post_graphql(agent, api_base, token, VIEWER_AUTHORED_PRS_QUERY, json!({}))?;
+    let nodes = body
+        .pointer("/data/viewer/pullRequests/nodes")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "GitHub GraphQL viewer.pullRequests missing nodes".to_string())?;
+    let identities = parse_pr_identity_nodes(nodes)?;
+    hydrate_prs(agent, api_base, token, identities)
+}
+
 fn search_prs(
     agent: &ureq::Agent,
     api_base: &str,
@@ -142,33 +184,45 @@ fn search_prs(
     query: &str,
 ) -> Result<Vec<GithubPrSummary>, String> {
     let body = http::post_graphql(agent, api_base, token, PR_SEARCH_QUERY, json!({ "q": query }))?;
+    let issue_count = body
+        .pointer("/data/search/issueCount")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     let nodes = body
         .pointer("/data/search/nodes")
         .and_then(|v| v.as_array())
         .ok_or_else(|| "GitHub GraphQL search response missing nodes".to_string())?;
-    let mut out = Vec::with_capacity(nodes.len());
+    let identities = search_identities_or_err(issue_count, nodes)?;
+    hydrate_prs(agent, api_base, token, identities)
+}
+
+#[derive(Debug)]
+struct PrIdentity {
+    id: String,
+    summary: GithubPrSummary,
+}
+
+fn parse_pr_identity_nodes(nodes: &[Value]) -> Result<Vec<PrIdentity>, String> {
+    let mut out = Vec::new();
     for node in nodes {
-        let Some(mut pr) = parse_pr_node(node) else {
+        if node.is_null() {
             continue;
-        };
-        let first_page = node
-            .get("reviewThreads")
-            .cloned()
-            .unwrap_or_else(|| json!({ "nodes": [] }));
-        let repo = pr.repo_full_name.clone();
-        let number = pr.number;
-        pr.unresolved_comment_count = count_unresolved_across_pages(&first_page, |after| {
-            fetch_review_threads_page(agent, api_base, token, &repo, number, after)
-        })?;
-        out.push(pr);
+        }
+        if let Some(id) = parse_pr_identity(node) {
+            out.push(id);
+        }
+    }
+    if out.is_empty() && nodes.iter().any(|n| !n.is_null()) {
+        return Err("pull request nodes missing required identity fields".into());
     }
     Ok(out)
 }
 
-fn parse_pr_node(node: &Value) -> Option<GithubPrSummary> {
+fn parse_pr_identity(node: &Value) -> Option<PrIdentity> {
     if node.get("number").is_none() {
         return None;
     }
+    let id = node.get("id")?.as_str()?.to_string();
     let number = node.get("number")?.as_i64()? as i32;
     let title = node.get("title")?.as_str()?.to_string();
     let url = node.get("url")?.as_str()?.to_string();
@@ -187,44 +241,114 @@ fn parse_pr_node(node: &Value) -> Option<GithubPrSummary> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let check_status = node
+
+    Some(PrIdentity {
+        id,
+        summary: GithubPrSummary {
+            number,
+            title,
+            url,
+            repo_full_name,
+            created_at,
+            check_status: String::new(),
+            review_decision,
+            unresolved_comment_count: 0,
+            reviews_summary: "No reviews".into(),
+            needs_my_review: false,
+            requested_reviewer_logins: Vec::new(),
+        },
+    })
+}
+
+fn hydrate_prs(
+    agent: &ureq::Agent,
+    api_base: &str,
+    token: &str,
+    identities: Vec<PrIdentity>,
+) -> Result<Vec<GithubPrSummary>, String> {
+    if identities.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let order: Vec<String> = identities.iter().map(|p| p.id.clone()).collect();
+    let mut by_id: HashMap<String, GithubPrSummary> = identities
+        .into_iter()
+        .map(|p| (p.id, p.summary))
+        .collect();
+
+    // Batch in chunks of 20 to stay within GraphQL complexity limits.
+    for chunk in order.chunks(20) {
+        let body = http::post_graphql(
+            agent,
+            api_base,
+            token,
+            PR_HYDRATE_QUERY,
+            json!({ "ids": chunk }),
+        )?;
+        let nodes = body
+            .pointer("/data/nodes")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "GitHub GraphQL hydrate response missing nodes".to_string())?;
+        for node in nodes {
+            if node.is_null() {
+                continue;
+            }
+            let Some(id) = node.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(pr) = by_id.get_mut(id) else {
+                continue;
+            };
+            apply_hydration(pr, node);
+            let first_page = node
+                .get("reviewThreads")
+                .cloned()
+                .unwrap_or_else(|| json!({ "nodes": [] }));
+            let repo = pr.repo_full_name.clone();
+            let number = pr.number;
+            pr.unresolved_comment_count = count_unresolved_across_pages(&first_page, |after| {
+                fetch_review_threads_page(agent, api_base, token, &repo, number, after)
+            })?;
+        }
+    }
+
+    Ok(order
+        .into_iter()
+        .filter_map(|id| by_id.remove(&id))
+        .collect())
+}
+
+fn apply_hydration(pr: &mut GithubPrSummary, node: &Value) {
+    pr.check_status = node
         .pointer("/commits/nodes/0/commit/statusCheckRollup/state")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-
-    let unresolved = count_unresolved_in_thread_nodes(
-        node.pointer("/reviewThreads/nodes")
-            .and_then(|v| v.as_array()),
-    );
-
-    let reviews_summary = summarize_reviews(node.pointer("/latestReviews/nodes"));
-
-    let mut requested_logins = Vec::new();
+    pr.reviews_summary = summarize_reviews(node.pointer("/latestReviews/nodes"));
+    pr.requested_reviewer_logins.clear();
     if let Some(reqs) = node.pointer("/reviewRequests/nodes").and_then(|v| v.as_array()) {
         for req in reqs {
             if let Some(login) = req
                 .pointer("/requestedReviewer/login")
                 .and_then(|v| v.as_str())
             {
-                requested_logins.push(login.to_string());
+                pr.requested_reviewer_logins.push(login.to_string());
             }
         }
     }
+    // First-page unresolved count; pagination may refine in hydrate_prs.
+    pr.unresolved_comment_count = count_unresolved_in_thread_nodes(
+        node.pointer("/reviewThreads/nodes")
+            .and_then(|v| v.as_array()),
+    );
+}
 
-    Some(GithubPrSummary {
-        number,
-        title,
-        url,
-        repo_full_name,
-        created_at,
-        check_status,
-        review_decision,
-        unresolved_comment_count: unresolved,
-        reviews_summary,
-        needs_my_review: false,
-        requested_reviewer_logins: requested_logins,
-    })
+/// Parse a fully-hydrated PR node (identity + detail fields) — used by tests.
+#[cfg(test)]
+fn parse_pr_node(node: &Value) -> Option<GithubPrSummary> {
+    let mut identity = parse_pr_identity(node)?;
+    apply_hydration(&mut identity.summary, node);
+    Some(identity.summary)
 }
 
 fn count_unresolved_in_thread_nodes(nodes: Option<&Vec<Value>>) -> u32 {
@@ -257,11 +381,8 @@ fn count_unresolved_across_pages<F>(first_page: &Value, mut fetch_next: F) -> Re
 where
     F: FnMut(&str) -> Result<Value, String>,
 {
-    let mut total = count_unresolved_in_thread_nodes(
-        first_page
-            .get("nodes")
-            .and_then(|v| v.as_array()),
-    );
+    let mut total =
+        count_unresolved_in_thread_nodes(first_page.get("nodes").and_then(|v| v.as_array()));
     let mut cursor = next_thread_cursor(first_page);
     let mut pages = 1usize;
     while let Some(after) = cursor {
@@ -382,7 +503,7 @@ fn fetch_recent_commits(
 ) -> Result<Vec<GithubCommitSummary>, String> {
     let q = urlencoding_simple(&format!("author:{login}"));
     let url = format!(
-        "{api_base}/search/commits?q={q}&sort=author-date&order=desc&per_page=20"
+        "{api_base}/search/commits?q={q}&sort=author-date&order=desc&per_page={MAX_RECENT_COMMITS}"
     );
     // Commits search historically required the cloak media type; keep it alongside API version.
     let body = http::get_json_accept(
@@ -398,7 +519,130 @@ fn fetch_recent_commits(
         .and_then(|v| v.as_array())
         .ok_or_else(|| "GitHub commit search response missing items".to_string())?;
 
-    Ok(items.iter().filter_map(parse_commit_item).collect())
+    let from_search: Vec<GithubCommitSummary> =
+        items.iter().filter_map(parse_commit_item).collect();
+    if !from_search.is_empty() {
+        return Ok(from_search);
+    }
+
+    // Search often returns empty for fine-grained PATs / SSO; fall back to public events.
+    fetch_commits_from_events(agent, api_base, token, login)
+}
+
+fn fetch_commits_from_events(
+    agent: &ureq::Agent,
+    api_base: &str,
+    token: &str,
+    login: &str,
+) -> Result<Vec<GithubCommitSummary>, String> {
+    let url = format!("{api_base}/users/{login}/events?per_page=100");
+    let body = http::get_json(agent, &url, token)?;
+    let events = body
+        .as_array()
+        .ok_or_else(|| "GitHub user events response is not an array".to_string())?;
+    // Events API no longer embeds commit summaries (Oct 2025); only head/before SHAs remain.
+    let refs = push_head_refs_from_events(events);
+    let mut out = Vec::with_capacity(refs.len());
+    for r in refs {
+        match fetch_repo_commit(agent, api_base, token, &r.repo_full_name, &r.sha) {
+            Ok(Some(commit)) => out.push(commit),
+            Ok(None) | Err(_) => {
+                // Skip private/inaccessible repos; keep collecting from later events.
+                continue;
+            }
+        }
+        if out.len() >= MAX_RECENT_COMMITS {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PushHeadRef {
+    repo_full_name: String,
+    sha: String,
+}
+
+/// Collect tip SHAs from modern PushEvent payloads (`payload.head`, not removed `payload.commits`).
+fn push_head_refs_from_events(events: &[Value]) -> Vec<PushHeadRef> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for event in events {
+        if event.get("type").and_then(|v| v.as_str()) != Some("PushEvent") {
+            continue;
+        }
+        let Some(repo_full_name) = event.pointer("/repo/name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if repo_full_name.is_empty() || split_owner_repo(repo_full_name).is_none() {
+            continue;
+        }
+        let Some(sha) = event
+            .pointer("/payload/head")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        if !seen.insert(sha.to_string()) {
+            continue;
+        }
+        out.push(PushHeadRef {
+            repo_full_name: repo_full_name.to_string(),
+            sha: sha.to_string(),
+        });
+        if out.len() >= MAX_RECENT_COMMITS {
+            break;
+        }
+    }
+    out
+}
+
+fn fetch_repo_commit(
+    agent: &ureq::Agent,
+    api_base: &str,
+    token: &str,
+    repo_full_name: &str,
+    sha: &str,
+) -> Result<Option<GithubCommitSummary>, String> {
+    let (owner, name) = split_owner_repo(repo_full_name).ok_or_else(|| {
+        format!("GitHub commit repo name is not owner/name: {repo_full_name}")
+    })?;
+    let url = format!("{api_base}/repos/{owner}/{name}/commits/{sha}");
+    let body = http::get_json(agent, &url, token)?;
+    Ok(parse_repo_commit(&body, repo_full_name))
+}
+
+/// Parse `GET /repos/{owner}/{repo}/commits/{ref}` — uses API `html_url` (host-correct for GHE).
+fn parse_repo_commit(body: &Value, repo_full_name: &str) -> Option<GithubCommitSummary> {
+    let sha = body.get("sha")?.as_str()?.to_string();
+    let message = body
+        .pointer("/commit/message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    let committed_at = body
+        .pointer("/commit/author/date")
+        .and_then(|v| v.as_str())
+        .or_else(|| body.pointer("/commit/committer/date").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string();
+    let url = body
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some(GithubCommitSummary {
+        sha,
+        message,
+        repo_full_name: repo_full_name.to_string(),
+        committed_at,
+        url,
+    })
 }
 
 fn parse_commit_item(item: &Value) -> Option<GithubCommitSummary> {
@@ -450,6 +694,29 @@ fn urlencoding_simple(s: &str) -> String {
     out
 }
 
+/// Pure helper for tests: validate search issueCount vs parsed identities.
+fn search_identities_or_err(issue_count: u64, nodes: &[Value]) -> Result<Vec<PrIdentity>, String> {
+    let identities = match parse_pr_identity_nodes(nodes) {
+        Ok(list) => list,
+        Err(e) => {
+            if issue_count > 0 {
+                return Err(format!(
+                    "GitHub search reported {issue_count} hit(s) but none could be parsed ({e}). \
+                     Check token scopes/SSO, or try again."
+                ));
+            }
+            return Err(e);
+        }
+    };
+    if issue_count > 0 && identities.is_empty() {
+        return Err(format!(
+            "GitHub search reported {issue_count} hit(s) but returned no usable pull requests. \
+             Check token scopes/SSO (Issues + Pull requests read), or authorize the token for org SSO."
+        ));
+    }
+    Ok(identities)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,6 +724,7 @@ mod tests {
     #[test]
     fn parse_pr_from_fixture() {
         let node = serde_json::json!({
+            "id": "PR_kwDO_test",
             "number": 42,
             "title": "Fix idle gap",
             "url": "https://github.com/acme/app/pull/42",
@@ -499,6 +767,38 @@ mod tests {
         assert_eq!(pr.requested_reviewer_logins, vec!["octocat".to_string()]);
         assert!(viewer_needs_review(&pr, "Octocat"));
         assert!(!viewer_needs_review(&pr, "alice"));
+    }
+
+    #[test]
+    fn parse_pr_identity_only() {
+        let node = serde_json::json!({
+            "id": "PR_kwDO_id",
+            "number": 9,
+            "title": "Slim",
+            "url": "https://github.com/acme/app/pull/9",
+            "createdAt": "2026-10-01T12:00:00Z",
+            "reviewDecision": "REVIEW_REQUIRED",
+            "repository": { "nameWithOwner": "acme/app" }
+        });
+        let id = parse_pr_identity(&node).unwrap();
+        assert_eq!(id.id, "PR_kwDO_id");
+        assert_eq!(id.summary.number, 9);
+        assert_eq!(id.summary.check_status, "");
+        assert_eq!(id.summary.reviews_summary, "No reviews");
+    }
+
+    #[test]
+    fn issue_count_with_null_nodes_is_error() {
+        let nodes = vec![Value::Null, Value::Null];
+        let err = search_identities_or_err(3, &nodes).unwrap_err();
+        assert!(err.contains("3 hit"));
+        assert!(err.contains("no usable") || err.contains("none could be parsed"));
+    }
+
+    #[test]
+    fn issue_count_zero_with_empty_nodes_ok() {
+        let ids = search_identities_or_err(0, &[]).unwrap();
+        assert!(ids.is_empty());
     }
 
     #[test]
@@ -547,6 +847,84 @@ mod tests {
     }
 
     #[test]
+    fn push_head_refs_from_modern_events() {
+        // Post–Oct 2025 Events API: no payload.commits; only head/before remain.
+        let events = json!([
+            {
+                "type": "WatchEvent",
+                "created_at": "2026-10-18T10:00:00Z",
+                "repo": { "name": "acme/other" },
+                "payload": {}
+            },
+            {
+                "type": "PushEvent",
+                "created_at": "2026-10-18T12:00:00Z",
+                "repo": { "name": "acme/app" },
+                "payload": {
+                    "ref": "refs/heads/main",
+                    "head": "bbb222",
+                    "before": "aaa111"
+                }
+            },
+            {
+                "type": "PushEvent",
+                "created_at": "2026-10-17T09:00:00Z",
+                "repo": { "name": "acme/app" },
+                "payload": {
+                    "ref": "refs/heads/main",
+                    "head": "bbb222",
+                    "before": "000000"
+                }
+            },
+            {
+                "type": "PushEvent",
+                "created_at": "2026-10-16T09:00:00Z",
+                "repo": { "name": "acme/app" },
+                "payload": {
+                    "ref": "refs/heads/feature",
+                    "head": "ccc333",
+                    "before": "bbb222"
+                }
+            }
+        ]);
+        let refs = push_head_refs_from_events(events.as_array().unwrap());
+        assert_eq!(
+            refs,
+            vec![
+                PushHeadRef {
+                    repo_full_name: "acme/app".into(),
+                    sha: "bbb222".into(),
+                },
+                PushHeadRef {
+                    repo_full_name: "acme/app".into(),
+                    sha: "ccc333".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_repo_commit_uses_html_url() {
+        let body = json!({
+            "sha": "abcdef0123456789",
+            "html_url": "https://company.ghe.com/acme/app/commit/abcdef0123456789",
+            "commit": {
+                "message": "Enterprise commit\n\nDetails",
+                "author": { "date": "2026-10-15T09:30:00Z" }
+            }
+        });
+        let c = parse_repo_commit(&body, "acme/app").unwrap();
+        assert_eq!(c.sha, "abcdef0123456789");
+        assert_eq!(c.message, "Enterprise commit");
+        assert_eq!(c.repo_full_name, "acme/app");
+        assert_eq!(c.committed_at, "2026-10-15T09:30:00Z");
+        assert_eq!(
+            c.url,
+            "https://company.ghe.com/acme/app/commit/abcdef0123456789"
+        );
+    }
+
+    #[test]
     fn summarize_empty_reviews() {
         assert_eq!(summarize_reviews(None), "No reviews");
         assert_eq!(summarize_reviews(Some(&json!([]))), "No reviews");
@@ -555,6 +933,7 @@ mod tests {
     #[test]
     fn parse_pr_missing_checks_is_empty_status() {
         let node = serde_json::json!({
+            "id": "PR_kwDO_docs",
             "number": 7,
             "title": "Docs",
             "url": "https://github.com/acme/app/pull/7",
