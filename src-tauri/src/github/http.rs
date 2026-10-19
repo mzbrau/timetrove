@@ -136,17 +136,50 @@ fn graphql_errors_message(value: &Value) -> Option<String> {
     })
 }
 
+/// Authenticated `/user` identity plus optional classic-PAT OAuth scopes header.
+#[derive(Debug, Clone)]
+pub struct AuthenticatedUser {
+    pub login: String,
+    /// Value of `X-OAuth-Scopes` when present (classic PATs); fine-grained tokens often omit it.
+    pub oauth_scopes: Option<String>,
+}
+
 pub fn fetch_authenticated_login(config: &GithubHttpConfig) -> Result<String, String> {
+    Ok(fetch_authenticated_user(config)?.login)
+}
+
+pub fn fetch_authenticated_user(config: &GithubHttpConfig) -> Result<AuthenticatedUser, String> {
     if config.api_token.trim().is_empty() {
         return Err("GitHub API token is required".into());
     }
     let base = api_base_url(&config.github_host)?;
     let agent = build_agent(&config.proxy_url)?;
-    let body = get_json(&agent, &format!("{base}/user"), &config.api_token)?;
-    body.get("login")
+    let url = format!("{base}/user");
+    let resp = agent
+        .get(&url)
+        .set("Authorization", &auth_header(&config.api_token))
+        .set("Accept", "application/vnd.github+json")
+        .set("X-GitHub-Api-Version", "2022-11-28")
+        .set("User-Agent", "TimeTrove")
+        .call()
+        .map_err(map_ureq_error)?;
+    if !(200..300).contains(&resp.status()) {
+        return Err(format!("GitHub returned HTTP {}", resp.status()));
+    }
+    let oauth_scopes = resp
+        .header("x-oauth-scopes")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let body: Value = resp.into_json().map_err(|e| e.to_string())?;
+    let login = body
+        .get("login")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .ok_or_else(|| "GitHub /user response missing login".into())
+        .ok_or_else(|| "GitHub /user response missing login".to_string())?;
+    Ok(AuthenticatedUser {
+        login,
+        oauth_scopes,
+    })
 }
 
 #[cfg(test)]

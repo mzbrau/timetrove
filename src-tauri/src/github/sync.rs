@@ -56,6 +56,7 @@ pub fn load_cached_digest(db: &Db) -> Result<Option<GithubActivityDigest>, Strin
             fetched_at: None,
             last_synced_at: settings.github_activity_last_synced_at,
             last_error: settings.github_activity_last_error,
+            diagnostics: vec![],
         });
     }
     Ok(digest)

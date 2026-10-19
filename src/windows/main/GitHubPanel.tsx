@@ -196,6 +196,7 @@ export function GitHubPanel() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copiedDiag, setCopiedDiag] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -252,6 +253,19 @@ export function GitHubPanel() {
   const review = digest?.reviewPrs ?? [];
   const commits = digest?.recentCommits ?? [];
   const needsCount = review.filter((p) => p.needsMyReview).length;
+  const diagnostics = digest?.diagnostics ?? [];
+  const listsEmpty = authored.length === 0 && review.length === 0 && commits.length === 0;
+
+  const copyDiagnostics = async () => {
+    if (diagnostics.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(diagnostics.join("\n"));
+      setCopiedDiag(true);
+      window.setTimeout(() => setCopiedDiag(false), 1500);
+    } catch {
+      setCopiedDiag(false);
+    }
+  };
 
   return (
     <div className="github">
@@ -274,6 +288,30 @@ export function GitHubPanel() {
       </div>
 
       {error && <p className="error-text">{error}</p>}
+
+      {diagnostics.length > 0 && (
+        <details
+          key={digest?.lastSyncedAt ?? digest?.fetchedAt ?? "diag"}
+          className="github-diagnostics"
+          defaultOpen={listsEmpty}
+        >
+          <summary className="github-diagnostics-summary">
+            <span>Fetch diagnostics</span>
+            <button
+              type="button"
+              className="btn github-diagnostics-copy"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void copyDiagnostics();
+              }}
+            >
+              {copiedDiag ? "Copied" : "Copy"}
+            </button>
+          </summary>
+          <pre className="github-diagnostics-log mono">{diagnostics.join("\n")}</pre>
+        </details>
+      )}
 
       {loading && !digest ? (
         <p className="github-empty">Loading GitHub activity…</p>
