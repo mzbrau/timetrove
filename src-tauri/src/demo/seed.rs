@@ -765,6 +765,7 @@ fn seed_github(db: &Db, now: DateTime<Utc>) -> Result<(), String> {
         fetched_at: Some((now - Duration::minutes(7)).to_rfc3339()),
         last_synced_at: None,
         last_error: None,
+        diagnostics: vec!["demo=true".into()],
     };
     db.set_github_activity_cache(&serde_json::to_string(&digest).map_err(|e| e.to_string())?)
 }
