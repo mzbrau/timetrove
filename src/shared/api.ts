@@ -16,7 +16,7 @@ import type {
   TrackerState,
 } from "./types";
 
-/** Retry while Tauri setup is still registering managed engine state. */
+/** Retry while setup is still registering managed engine state. */
 function invokeManaged<T>(
   cmd: string,
   args?: Record<string, unknown>,

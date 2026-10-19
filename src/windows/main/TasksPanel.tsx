@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../shared/api";
 import { formatHm, normalizeHexColor } from "../../shared/format";
+import { isUnmanagedStateError } from "../../shared/startupRetry";
 import { useDemoShot } from "../../shared/useDemoShot";
 import type {
   JiraIssueDetails,
@@ -121,7 +122,19 @@ export function TasksPanel({
   const load = async () => {
     const list = await api.listTasks(true);
     setTasks(list);
+    setError(null);
     if (!selectedId && list[0]) setSelectedId(list[0].id);
+  };
+
+  const loadOrSetError = async () => {
+    try {
+      await load();
+    } catch (e) {
+      // Startup race: do not sticky-show unmanaged errors; invokeManaged already retried.
+      if (!isUnmanagedStateError(e)) {
+        setError(String(e));
+      }
+    }
   };
 
   const [demoTaskName, setDemoTaskName] = useState<string | null>(null);
@@ -136,23 +149,28 @@ export function TasksPanel({
   }, [demoTaskName, tasks]);
 
   useEffect(() => {
-    load().catch((e) => setError(String(e)));
-    api
-      .getSettings()
-      .then((s) => setJiraEnabled(s.jiraEnabled))
-      .catch((e) => setError(String(e)));
-  }, []);
-
-  useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
-    listen<Settings>("settings-changed", (e) => {
-      setJiraEnabled(e.payload.jiraEnabled);
-    }).then((fn) => {
-      unlisten = fn;
-    });
+    void (async () => {
+      unlisten = await listen<Settings>("settings-changed", (e) => {
+        setJiraEnabled(e.payload.jiraEnabled);
+      });
+      if (cancelled) return;
+      await loadOrSetError();
+      try {
+        const s = await api.getSettings();
+        if (!cancelled) setJiraEnabled(s.jiraEnabled);
+      } catch (e) {
+        if (!cancelled && !isUnmanagedStateError(e)) {
+          setError(String(e));
+        }
+      }
+    })();
     return () => {
+      cancelled = true;
       unlisten?.();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only cold load
   }, []);
 
   const phaseKind = state?.phase.kind;
@@ -162,7 +180,7 @@ export function TasksPanel({
   // Refresh when switcher/create/start/stop changes tracker phase (not every idle poll).
   useEffect(() => {
     if (state) {
-      load().catch((e) => setError(String(e)));
+      void loadOrSetError();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scalars only; avoid phase object identity
   }, [phaseKind, trackingTaskId, state?.tracking]);

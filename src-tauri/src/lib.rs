@@ -70,6 +70,8 @@ pub fn run() {
         let engine = Engine::new(database);
         // Register before any further work so webview invokes can resolve State.
         app.manage(engine.clone());
+        // Webviews may already be invoking; signal that managed commands are safe.
+        let _ = app.emit("engine-ready", ());
         // Windows: keep HWND_TOPMOST while tracker is visible + AOT (other apps reorder band).
         spawn_tracker_topmost_guard(app.handle().clone());
 
@@ -243,6 +245,12 @@ pub fn run() {
         });
 
         engine.emit_state(app.handle());
+        // Recover feature-tab flags if the first getSettings raced manage().
+        // Re-emit engine-ready for listeners that registered after the first emit.
+        let _ = app.emit("engine-ready", ());
+        if let Ok(current) = engine.db().get_settings() {
+            let _ = app.emit("settings-changed", &current);
+        }
 
         // Apply tracker chrome after manage(); windows start hidden in tauri.conf.
         apply_tracker_always_on_top(app.handle(), settings.tracker_always_on_top);

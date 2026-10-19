@@ -55,23 +55,27 @@ export function MainApp() {
   }, []);
 
   useEffect(() => {
-    void api
-      .getSettings()
-      .then((s) => {
-        setCopilotEnabled(s.copilotEnabled);
-        setGithubActivityEnabled(s.githubActivityEnabled);
-        setJiraEnabled(s.jiraEnabled);
-      })
-      .catch(() => {});
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
-    listen<Settings>("settings-changed", (e) => {
-      setCopilotEnabled(e.payload.copilotEnabled);
-      setGithubActivityEnabled(e.payload.githubActivityEnabled);
-      setJiraEnabled(e.payload.jiraEnabled);
-    }).then((fn) => {
-      unlisten = fn;
-    });
+    const applyFlags = (s: Settings) => {
+      setCopilotEnabled(s.copilotEnabled);
+      setGithubActivityEnabled(s.githubActivityEnabled);
+      setJiraEnabled(s.jiraEnabled);
+    };
+    // Register settings-changed before getSettings so a late setup emit is not missed.
+    void (async () => {
+      unlisten = await listen<Settings>("settings-changed", (e) => {
+        applyFlags(e.payload);
+      });
+      if (cancelled) return;
+      try {
+        applyFlags(await api.getSettings());
+      } catch {
+        // invokeManaged already retried; setup also emits settings-changed.
+      }
+    })();
     return () => {
+      cancelled = true;
       unlisten?.();
     };
   }, []);
