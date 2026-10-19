@@ -540,66 +540,109 @@ fn fetch_commits_from_events(
     let events = body
         .as_array()
         .ok_or_else(|| "GitHub user events response is not an array".to_string())?;
-    Ok(commits_from_events(events))
+    // Events API no longer embeds commit summaries (Oct 2025); only head/before SHAs remain.
+    let refs = push_head_refs_from_events(events);
+    let mut out = Vec::with_capacity(refs.len());
+    for r in refs {
+        match fetch_repo_commit(agent, api_base, token, &r.repo_full_name, &r.sha) {
+            Ok(Some(commit)) => out.push(commit),
+            Ok(None) | Err(_) => {
+                // Skip private/inaccessible repos; keep collecting from later events.
+                continue;
+            }
+        }
+        if out.len() >= MAX_RECENT_COMMITS {
+            break;
+        }
+    }
+    Ok(out)
 }
 
-fn commits_from_events(events: &[Value]) -> Vec<GithubCommitSummary> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PushHeadRef {
+    repo_full_name: String,
+    sha: String,
+}
+
+/// Collect tip SHAs from modern PushEvent payloads (`payload.head`, not removed `payload.commits`).
+fn push_head_refs_from_events(events: &[Value]) -> Vec<PushHeadRef> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for event in events {
         if event.get("type").and_then(|v| v.as_str()) != Some("PushEvent") {
             continue;
         }
-        let repo_full_name = event
-            .pointer("/repo/name")
+        let Some(repo_full_name) = event.pointer("/repo/name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if repo_full_name.is_empty() || split_owner_repo(repo_full_name).is_none() {
+            continue;
+        }
+        let Some(sha) = event
+            .pointer("/payload/head")
             .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let created_at = event
-            .get("created_at")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let Some(commits) = event
-            .pointer("/payload/commits")
-            .and_then(|v| v.as_array())
+            .filter(|s| !s.is_empty())
         else {
             continue;
         };
-        // PushEvent lists oldest→newest; walk newest first.
-        for commit in commits.iter().rev() {
-            let Some(sha) = commit.get("sha").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            if !seen.insert(sha.to_string()) {
-                continue;
-            }
-            let message = commit
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .lines()
-                .next()
-                .unwrap_or("")
-                .to_string();
-            let url = if !repo_full_name.is_empty() {
-                format!("https://github.com/{repo_full_name}/commit/{sha}")
-            } else {
-                String::new()
-            };
-            out.push(GithubCommitSummary {
-                sha: sha.to_string(),
-                message,
-                repo_full_name: repo_full_name.clone(),
-                committed_at: created_at.clone(),
-                url,
-            });
-            if out.len() >= MAX_RECENT_COMMITS {
-                return out;
-            }
+        if !seen.insert(sha.to_string()) {
+            continue;
+        }
+        out.push(PushHeadRef {
+            repo_full_name: repo_full_name.to_string(),
+            sha: sha.to_string(),
+        });
+        if out.len() >= MAX_RECENT_COMMITS {
+            break;
         }
     }
     out
+}
+
+fn fetch_repo_commit(
+    agent: &ureq::Agent,
+    api_base: &str,
+    token: &str,
+    repo_full_name: &str,
+    sha: &str,
+) -> Result<Option<GithubCommitSummary>, String> {
+    let (owner, name) = split_owner_repo(repo_full_name).ok_or_else(|| {
+        format!("GitHub commit repo name is not owner/name: {repo_full_name}")
+    })?;
+    let url = format!("{api_base}/repos/{owner}/{name}/commits/{sha}");
+    let body = http::get_json(agent, &url, token)?;
+    Ok(parse_repo_commit(&body, repo_full_name))
+}
+
+/// Parse `GET /repos/{owner}/{repo}/commits/{ref}` — uses API `html_url` (host-correct for GHE).
+fn parse_repo_commit(body: &Value, repo_full_name: &str) -> Option<GithubCommitSummary> {
+    let sha = body.get("sha")?.as_str()?.to_string();
+    let message = body
+        .pointer("/commit/message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    let committed_at = body
+        .pointer("/commit/author/date")
+        .and_then(|v| v.as_str())
+        .or_else(|| body.pointer("/commit/committer/date").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string();
+    let url = body
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some(GithubCommitSummary {
+        sha,
+        message,
+        repo_full_name: repo_full_name.to_string(),
+        committed_at,
+        url,
+    })
 }
 
 fn parse_commit_item(item: &Value) -> Option<GithubCommitSummary> {
@@ -804,7 +847,8 @@ mod tests {
     }
 
     #[test]
-    fn commits_from_push_events() {
+    fn push_head_refs_from_modern_events() {
+        // Post–Oct 2025 Events API: no payload.commits; only head/before remain.
         let events = json!([
             {
                 "type": "WatchEvent",
@@ -817,10 +861,9 @@ mod tests {
                 "created_at": "2026-10-18T12:00:00Z",
                 "repo": { "name": "acme/app" },
                 "payload": {
-                    "commits": [
-                        { "sha": "aaa111", "message": "Oldest in push" },
-                        { "sha": "bbb222", "message": "Newest in push\n\nbody" }
-                    ]
+                    "ref": "refs/heads/main",
+                    "head": "bbb222",
+                    "before": "aaa111"
                 }
             },
             {
@@ -828,24 +871,57 @@ mod tests {
                 "created_at": "2026-10-17T09:00:00Z",
                 "repo": { "name": "acme/app" },
                 "payload": {
-                    "commits": [
-                        { "sha": "bbb222", "message": "duplicate sha ignored" },
-                        { "sha": "ccc333", "message": "Earlier push" }
-                    ]
+                    "ref": "refs/heads/main",
+                    "head": "bbb222",
+                    "before": "000000"
+                }
+            },
+            {
+                "type": "PushEvent",
+                "created_at": "2026-10-16T09:00:00Z",
+                "repo": { "name": "acme/app" },
+                "payload": {
+                    "ref": "refs/heads/feature",
+                    "head": "ccc333",
+                    "before": "bbb222"
                 }
             }
         ]);
-        let commits = commits_from_events(events.as_array().unwrap());
-        assert_eq!(commits.len(), 3);
-        assert_eq!(commits[0].sha, "bbb222");
-        assert_eq!(commits[0].message, "Newest in push");
-        assert_eq!(commits[0].repo_full_name, "acme/app");
+        let refs = push_head_refs_from_events(events.as_array().unwrap());
         assert_eq!(
-            commits[0].url,
-            "https://github.com/acme/app/commit/bbb222"
+            refs,
+            vec![
+                PushHeadRef {
+                    repo_full_name: "acme/app".into(),
+                    sha: "bbb222".into(),
+                },
+                PushHeadRef {
+                    repo_full_name: "acme/app".into(),
+                    sha: "ccc333".into(),
+                },
+            ]
         );
-        assert_eq!(commits[1].sha, "aaa111");
-        assert_eq!(commits[2].sha, "ccc333");
+    }
+
+    #[test]
+    fn parse_repo_commit_uses_html_url() {
+        let body = json!({
+            "sha": "abcdef0123456789",
+            "html_url": "https://company.ghe.com/acme/app/commit/abcdef0123456789",
+            "commit": {
+                "message": "Enterprise commit\n\nDetails",
+                "author": { "date": "2026-10-15T09:30:00Z" }
+            }
+        });
+        let c = parse_repo_commit(&body, "acme/app").unwrap();
+        assert_eq!(c.sha, "abcdef0123456789");
+        assert_eq!(c.message, "Enterprise commit");
+        assert_eq!(c.repo_full_name, "acme/app");
+        assert_eq!(c.committed_at, "2026-10-15T09:30:00Z");
+        assert_eq!(
+            c.url,
+            "https://company.ghe.com/acme/app/commit/abcdef0123456789"
+        );
     }
 
     #[test]
