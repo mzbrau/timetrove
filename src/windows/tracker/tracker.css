@@ -33,6 +33,16 @@ body,
   min-width: 0;
   flex: 1;
   cursor: pointer;
+  border-radius: 6px;
+}
+
+.tracker-main:focus {
+  outline: none;
+}
+
+.tracker-main:focus-visible {
+  outline: 2px solid rgba(232, 238, 242, 0.45);
+  outline-offset: 2px;
 }
 
 .dot {
