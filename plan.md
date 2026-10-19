@@ -110,9 +110,17 @@ Shows:
 - Daily total as `HH:MM` (e.g. `05:23`)
 - Daily total color: under goal vs at/over goal (default goal **8 hours**, configurable)
 
+Mouse on the task name / “Not tracking” area:
+
+- Single-click → open the task switcher
+- Double-click → open the main window
+- Click-and-drag → move the bar
+
+The daily-total (clock) control also opens the switcher.
+
 ### Task switcher (global shortcut)
 
-1. Shortcut opens a compact search palette (filtered list below)
+1. Shortcut, tracker task-name click, or clock click opens a compact search palette (filtered list below)
 2. Typing filters by task name (active/non-archived only)
 3. Enter on a match → switch now (close current slice, start chosen task)
 4. Enter on no match → **confirmation** (“Create task …?”), then create with auto color + start
