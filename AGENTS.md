@@ -138,7 +138,7 @@ See [`engine/mod.rs`](src-tauri/src/engine/mod.rs) (`checkpoint_if_due`, `reconc
 
 ## UX rules agents should preserve
 
-- Always-visible tracker: color + task name when tracking (dot pulses while active); unmistakable **not tracking** when stopped; daily total defaults to `HH:MM`; color flips at daily goal (default 8h); hover reveals a stop control left of the time
+- Always-visible tracker: color + task name when tracking (dot pulses while active); unmistakable **not tracking** when stopped; daily total defaults to `HH:MM`; color flips at daily goal (default 8h); hover reveals a stop control left of the time; single-click task name / “Not tracking” opens the switcher; double-click opens the main window; click-and-drag still moves the bar (clock click also opens the switcher)
 - Main window daily total: live `HH:MM:SS` via client interpolation; reset `receivedAt` **during render** when tracker state identity changes (avoid the every-~5s jump/snap from a lagging `useEffect`)
 - Tracker chrome defaults to `HH:MM` (server display / poll cadence); optional live `HH:MM:SS` via `trackerShowSeconds` setting (same client interpolation pattern as main)
 - Gap dialog: large duration, short labels, keyboard-first

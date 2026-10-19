@@ -24,7 +24,7 @@ Local-first time tracking for developers. A small always-on bar, honest idle pro
 
 - **Always in view** — compact tracker bar with task colour, name, and daily total
 - **Gap attribution** — idle, sleep, and startup gaps ask where the time should go (keep, move, or discard)
-- **Quick switch** — `Cmd/Ctrl+Shift+T` to search or create a task from anywhere
+- **Quick switch** — `Cmd/Ctrl+Shift+T`, or click the task name on the tracker bar, to search or create a task
 - **Timesheet** — Monday-start weekly grid with CSV export
 - **Insights** — week, month, and year views of how your time was spent
 - **Local only** — no account, no cloud sync; one `timetrove.db` you can back up or delete

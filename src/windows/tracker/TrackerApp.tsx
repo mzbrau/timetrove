@@ -53,8 +53,23 @@ export function TrackerApp() {
   const lastMainClickRef = useRef<{ t: number; x: number; y: number } | null>(
     null,
   );
+  const pendingSwitcherTimerRef = useRef<number | null>(null);
   const [demoHover, setDemoHover] = useState(false);
   useDemoShot((shot) => setDemoHover(Boolean(shot.hover)));
+
+  const clearPendingSwitcher = () => {
+    if (pendingSwitcherTimerRef.current != null) {
+      window.clearTimeout(pendingSwitcherTimerRef.current);
+      pendingSwitcherTimerRef.current = null;
+    }
+  };
+
+  const cancelMainGesture = () => {
+    clearPendingSwitcher();
+    lastMainClickRef.current = null;
+  };
+
+  useEffect(() => () => clearPendingSwitcher(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,13 +147,17 @@ export function TrackerApp() {
     return formatHms(ms);
   })();
 
-  const onMouseDown = async (e: React.MouseEvent) => {
+  const onMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
-    if (target.closest("button")) return;
+    if (target.closest("button")) {
+      // Stop/Jira/clock/Copilot must not leave a delayed switcher open.
+      cancelMainGesture();
+      return;
+    }
 
-    // startDragging() swallows the click sequence, so detect double-click here
-    // before beginning a drag on the task/dot area.
+    // tracker-main: single-click → switcher, double-click → main, drag → move.
+    // Defer startDragging until a move threshold so a plain click still fires.
     if (target.closest(".tracker-main")) {
       const now = Date.now();
       const prev = lastMainClickRef.current;
@@ -148,16 +167,60 @@ export function TrackerApp() {
         Math.abs(e.clientX - prev.x) < 8 &&
         Math.abs(e.clientY - prev.y) < 8;
       if (near) {
-        lastMainClickRef.current = null;
+        cancelMainGesture();
         void api.openMainWindow();
         return;
       }
+      // New press: drop any prior delayed open so a slow second click restarts cleanly.
+      clearPendingSwitcher();
       lastMainClickRef.current = { t: now, x: e.clientX, y: e.clientY };
-    } else {
-      lastMainClickRef.current = null;
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+      let dragged = false;
+
+      const onMove = (ev: MouseEvent) => {
+        if (dragged) return;
+        if (Math.abs(ev.clientX - startX) < 8 && Math.abs(ev.clientY - startY) < 8) {
+          return;
+        }
+        dragged = true;
+        clearPendingSwitcher();
+        cleanup();
+        void getCurrentWebviewWindow().startDragging();
+      };
+
+      const onUp = () => {
+        cleanup();
+        if (dragged) return;
+        clearPendingSwitcher();
+        // Wait out the double-click window so a second click opens main only.
+        pendingSwitcherTimerRef.current = window.setTimeout(() => {
+          pendingSwitcherTimerRef.current = null;
+          lastMainClickRef.current = null;
+          void api.openSwitcher();
+        }, 350);
+      };
+
+      const cleanup = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+      return;
     }
 
-    await getCurrentWebviewWindow().startDragging();
+    cancelMainGesture();
+    void getCurrentWebviewWindow().startDragging();
+  };
+
+  const onMainKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    cancelMainGesture();
+    void api.openSwitcher();
   };
 
   const onContextMenu = async (e: React.MouseEvent) => {
@@ -284,21 +347,40 @@ export function TrackerApp() {
   }
 
   const snoozing = Boolean(state.snoozeUntil);
+  const taskName =
+    state.tracking && state.currentTask ? state.currentTask.name : "Not tracking";
+  const switchTaskLabel = state.tracking
+    ? `Switch task (current: ${taskName})`
+    : "Switch task";
 
   return (
     <div
       className={`tracker ${state.tracking ? "tracking" : "idle"}${snoozing ? " snoozing" : ""}${demoHover ? " demo-hover" : ""}`}
       onMouseDown={onMouseDown}
+      onClickCapture={(e) => {
+        // Keyboard-activated buttons fire click without our mousedown path.
+        if ((e.target as HTMLElement).closest("button")) {
+          cancelMainGesture();
+        }
+      }}
       onContextMenu={(e) => {
         void onContextMenu(e);
       }}
     >
-      <div className="tracker-main">
+      <div
+        className="tracker-main"
+        role="button"
+        tabIndex={0}
+        aria-label={switchTaskLabel}
+        title="Switch task"
+        onKeyDown={onMainKeyDown}
+      >
         {state.tracking && state.currentTask ? (
           <>
             <span
               className="dot"
               style={{ background: state.currentTask.color }}
+              aria-hidden
             />
             <span className="name">{state.currentTask.name}</span>
             {snoozing && (
@@ -309,6 +391,7 @@ export function TrackerApp() {
                     ? `Snoozing until ${formatSnoozeUntil(state.snoozeUntil)}`
                     : "Snoozing"
                 }
+                aria-hidden
               >
                 zᴢ
               </span>
