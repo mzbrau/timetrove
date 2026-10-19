@@ -23,6 +23,7 @@ query($q: String!) {
         }
         reviewThreads(first: 100) {
           nodes { isResolved }
+          pageInfo { hasNextPage endCursor }
         }
         latestReviews(first: 100) {
           nodes {
@@ -42,6 +43,22 @@ query($q: String!) {
   }
 }
 "#;
+
+const REVIEW_THREADS_PAGE_QUERY: &str = r#"
+query($owner: String!, $name: String!, $number: Int!, $after: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $after) {
+        nodes { isResolved }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}
+"#;
+
+/// Cap follow-up thread pages so a pathological PR cannot loop forever (100 × 50 = 5000 threads).
+const MAX_REVIEW_THREAD_PAGES: usize = 50;
 
 /// Fetch authored PRs, reviewer PRs, and recent commits for the authenticated user.
 pub fn fetch_activity(
@@ -129,7 +146,23 @@ fn search_prs(
         .pointer("/data/search/nodes")
         .and_then(|v| v.as_array())
         .ok_or_else(|| "GitHub GraphQL search response missing nodes".to_string())?;
-    Ok(nodes.iter().filter_map(parse_pr_node).collect())
+    let mut out = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let Some(mut pr) = parse_pr_node(node) else {
+            continue;
+        };
+        let first_page = node
+            .get("reviewThreads")
+            .cloned()
+            .unwrap_or_else(|| json!({ "nodes": [] }));
+        let repo = pr.repo_full_name.clone();
+        let number = pr.number;
+        pr.unresolved_comment_count = count_unresolved_across_pages(&first_page, |after| {
+            fetch_review_threads_page(agent, api_base, token, &repo, number, after)
+        })?;
+        out.push(pr);
+    }
+    Ok(out)
 }
 
 fn parse_pr_node(node: &Value) -> Option<GithubPrSummary> {
@@ -160,16 +193,10 @@ fn parse_pr_node(node: &Value) -> Option<GithubPrSummary> {
         .unwrap_or("")
         .to_string();
 
-    let unresolved = node
-        .pointer("/reviewThreads/nodes")
-        .and_then(|v| v.as_array())
-        .map(|threads| {
-            threads
-                .iter()
-                .filter(|t| t.get("isResolved").and_then(|v| v.as_bool()) == Some(false))
-                .count() as u32
-        })
-        .unwrap_or(0);
+    let unresolved = count_unresolved_in_thread_nodes(
+        node.pointer("/reviewThreads/nodes")
+            .and_then(|v| v.as_array()),
+    );
 
     let reviews_summary = summarize_reviews(node.pointer("/latestReviews/nodes"));
 
@@ -198,6 +225,92 @@ fn parse_pr_node(node: &Value) -> Option<GithubPrSummary> {
         needs_my_review: false,
         requested_reviewer_logins: requested_logins,
     })
+}
+
+fn count_unresolved_in_thread_nodes(nodes: Option<&Vec<Value>>) -> u32 {
+    nodes
+        .map(|threads| {
+            threads
+                .iter()
+                .filter(|t| t.get("isResolved").and_then(|v| v.as_bool()) == Some(false))
+                .count() as u32
+        })
+        .unwrap_or(0)
+}
+
+fn next_thread_cursor(page: &Value) -> Option<String> {
+    let has_next = page
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(|v| v.as_bool())
+        == Some(true);
+    if !has_next {
+        return None;
+    }
+    page.pointer("/pageInfo/endCursor")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Count unresolved review threads across the first connection page and any follow-up pages.
+fn count_unresolved_across_pages<F>(first_page: &Value, mut fetch_next: F) -> Result<u32, String>
+where
+    F: FnMut(&str) -> Result<Value, String>,
+{
+    let mut total = count_unresolved_in_thread_nodes(
+        first_page
+            .get("nodes")
+            .and_then(|v| v.as_array()),
+    );
+    let mut cursor = next_thread_cursor(first_page);
+    let mut pages = 1usize;
+    while let Some(after) = cursor {
+        if pages >= MAX_REVIEW_THREAD_PAGES {
+            break;
+        }
+        let page = fetch_next(&after)?;
+        total += count_unresolved_in_thread_nodes(page.get("nodes").and_then(|v| v.as_array()));
+        cursor = next_thread_cursor(&page);
+        pages += 1;
+    }
+    Ok(total)
+}
+
+fn split_owner_repo(full: &str) -> Option<(&str, &str)> {
+    let (owner, name) = full.split_once('/')?;
+    if owner.is_empty() || name.is_empty() || name.contains('/') {
+        None
+    } else {
+        Some((owner, name))
+    }
+}
+
+fn fetch_review_threads_page(
+    agent: &ureq::Agent,
+    api_base: &str,
+    token: &str,
+    repo_full_name: &str,
+    number: i32,
+    after: &str,
+) -> Result<Value, String> {
+    let (owner, name) = split_owner_repo(repo_full_name).ok_or_else(|| {
+        format!("GitHub PR repo name is not owner/name: {repo_full_name}")
+    })?;
+    let body = http::post_graphql(
+        agent,
+        api_base,
+        token,
+        REVIEW_THREADS_PAGE_QUERY,
+        json!({
+            "owner": owner,
+            "name": name,
+            "number": number,
+            "after": after,
+        }),
+    )?;
+    body.pointer("/data/repository/pullRequest/reviewThreads")
+        .cloned()
+        .ok_or_else(|| "GitHub GraphQL reviewThreads page missing connection".to_string())
 }
 
 fn summarize_reviews(nodes: Option<&Value>) -> String {
@@ -362,7 +475,8 @@ mod tests {
                     { "isResolved": false },
                     { "isResolved": true },
                     { "isResolved": false }
-                ]
+                ],
+                "pageInfo": { "hasNextPage": false, "endCursor": null }
             },
             "latestReviews": {
                 "nodes": [
@@ -385,6 +499,33 @@ mod tests {
         assert_eq!(pr.requested_reviewer_logins, vec!["octocat".to_string()]);
         assert!(viewer_needs_review(&pr, "Octocat"));
         assert!(!viewer_needs_review(&pr, "alice"));
+    }
+
+    #[test]
+    fn counts_unresolved_thread_on_later_page() {
+        // First page is full of resolved threads; the only open thread is on page 2.
+        let page1_nodes: Vec<Value> = (0..100).map(|_| json!({ "isResolved": true })).collect();
+        let page1 = json!({
+            "nodes": page1_nodes,
+            "pageInfo": { "hasNextPage": true, "endCursor": "cursor-page-1" }
+        });
+        let page2 = json!({
+            "nodes": [
+                { "isResolved": false },
+                { "isResolved": true }
+            ],
+            "pageInfo": { "hasNextPage": false, "endCursor": "cursor-page-2" }
+        });
+        let mut remaining = vec![page2];
+        let count = count_unresolved_across_pages(&page1, |after| {
+            assert_eq!(after, "cursor-page-1");
+            remaining
+                .pop()
+                .ok_or_else(|| "unexpected extra page fetch".into())
+        })
+        .unwrap();
+        assert_eq!(count, 1);
+        assert!(remaining.is_empty());
     }
 
     #[test]
@@ -427,7 +568,10 @@ mod tests {
                     }
                 }]
             },
-            "reviewThreads": { "nodes": [] },
+            "reviewThreads": {
+                "nodes": [],
+                "pageInfo": { "hasNextPage": false, "endCursor": null }
+            },
             "latestReviews": { "nodes": [] },
             "reviewRequests": { "nodes": [] }
         });
