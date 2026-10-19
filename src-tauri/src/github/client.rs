@@ -21,8 +21,8 @@ query($q: String!) {
             }
           }
         }
-        reviewThreads(first: 1, filterBy: { resolved: false }) {
-          totalCount
+        reviewThreads(first: 100) {
+          nodes { isResolved }
         }
         latestReviews(first: 100) {
           nodes {
@@ -161,9 +161,15 @@ fn parse_pr_node(node: &Value) -> Option<GithubPrSummary> {
         .to_string();
 
     let unresolved = node
-        .pointer("/reviewThreads/totalCount")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+        .pointer("/reviewThreads/nodes")
+        .and_then(|v| v.as_array())
+        .map(|threads| {
+            threads
+                .iter()
+                .filter(|t| t.get("isResolved").and_then(|v| v.as_bool()) == Some(false))
+                .count() as u32
+        })
+        .unwrap_or(0);
 
     let reviews_summary = summarize_reviews(node.pointer("/latestReviews/nodes"));
 
@@ -352,7 +358,11 @@ mod tests {
                 }]
             },
             "reviewThreads": {
-                "totalCount": 2
+                "nodes": [
+                    { "isResolved": false },
+                    { "isResolved": true },
+                    { "isResolved": false }
+                ]
             },
             "latestReviews": {
                 "nodes": [
@@ -417,7 +427,7 @@ mod tests {
                     }
                 }]
             },
-            "reviewThreads": { "totalCount": 0 },
+            "reviewThreads": { "nodes": [] },
             "latestReviews": { "nodes": [] },
             "reviewRequests": { "nodes": [] }
         });
