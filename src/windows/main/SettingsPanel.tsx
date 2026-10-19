@@ -504,10 +504,11 @@ export function SettingsPanel() {
                   />
                   <span className="hint">
                     For Copilot: fine-grained PAT with Copilot Requests, or an
-                    OAuth/`gh` token. For the activity page: also need Pull
-                    requests, Contents, Metadata, and Checks read (classic
-                    `repo` covers private repos). Stored only in your local
-                    database.
+                    OAuth/`gh` token. For the activity page: Pull requests,
+                    Contents, Metadata, Checks, and Issues read on the repos you
+                    use (classic `repo` covers private repos). Classic PATs for
+                    private org activity also need SSO Authorize on each org.
+                    Stored only in your local database.
                   </span>
                 </label>
                 <label>
