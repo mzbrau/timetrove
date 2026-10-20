@@ -87,6 +87,7 @@
   "bundle": {
     "active": true,
     "targets": ["dmg", "nsis"],
+    "resources": ["resources/notify/*"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

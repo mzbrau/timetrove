@@ -38,7 +38,13 @@ pub fn check_daily_goal(app: &AppHandle, db: &Db, state: &TrackerState) {
             settings.daily_goal_mins
         )
     };
-    show(app, "Daily goal reached", &body, ClickAction::Main);
+    show(
+        app,
+        "Daily goal reached",
+        &body,
+        ClickAction::Main,
+        super::NotifyKind::Goal,
+    );
     let _ = set_setting_string(db, KEY_DATE, &today);
 }
 

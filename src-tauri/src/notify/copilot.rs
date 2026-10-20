@@ -114,6 +114,7 @@ pub fn check_copilot_usage(app: &AppHandle, db: &Db, percent_used: f64) {
         ClickAction::Tab {
             tab: "copilot".into(),
         },
+        super::NotifyKind::Copilot,
     );
 
     let base = if stored_month.as_deref() == Some(month.as_str()) {

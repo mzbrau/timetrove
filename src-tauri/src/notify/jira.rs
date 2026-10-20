@@ -162,7 +162,7 @@ pub fn check_jira_assigned(
         for cat in diff_jira(&prev, &next) {
             let body = format_item_body(&cat.labels);
             let action = click_for_items(&cat.urls, "jira");
-            show(app, &cat.title, &body, action);
+            show(app, &cat.title, &body, action, super::NotifyKind::Jira);
         }
     }
 
