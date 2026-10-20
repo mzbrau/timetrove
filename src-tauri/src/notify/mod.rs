@@ -14,13 +14,31 @@ use crate::db::Db;
 use crate::domain::Settings;
 use crate::engine::show_main;
 use serde::Serialize;
-use std::sync::atomic::{AtomicI32, Ordering};
-use tauri::{AppHandle, Emitter};
+use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
-static NEXT_NOTIFICATION_ID: AtomicI32 = AtomicI32::new(1);
+/// Which integration fired the notification — selects the toast image.
+#[derive(Debug, Clone, Copy)]
+pub enum NotifyKind {
+    Goal,
+    Github,
+    Jira,
+    Copilot,
+}
 
-/// Click payload stored in notification `extra`.
+impl NotifyKind {
+    fn icon_file(self) -> &'static str {
+        match self {
+            NotifyKind::Goal => "goal.png",
+            NotifyKind::Github => "github.png",
+            NotifyKind::Jira => "jira.png",
+            NotifyKind::Copilot => "copilot.png",
+        }
+    }
+}
+
+/// Click payload for notification taps.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ClickAction {
@@ -81,7 +99,7 @@ pub fn request_permission_if_needed(app: &AppHandle) {
     let _ = app.notification().request_permission();
 }
 
-/// Register the tap handler once during app setup.
+/// Register the tap handler once during app setup (plugin lifecycle; own toasts use perform_click).
 pub fn register_action_handler(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.notification().on_action(move |performed| {
@@ -123,28 +141,97 @@ pub fn register_action_handler(app: &AppHandle) {
     });
 }
 
-pub fn show(app: &AppHandle, title: &str, body: &str, action: ClickAction) {
-    let id = NEXT_NOTIFICATION_ID.fetch_add(1, Ordering::Relaxed);
-    let mut builder = app
-        .notification()
-        .builder()
-        .id(id)
-        .title(title)
-        .body(body);
-
-    match &action {
+fn perform_click(app: &AppHandle, action: &ClickAction) {
+    match action {
         ClickAction::Main => {
-            builder = builder.extra("kind", "main");
+            show_main(app);
         }
         ClickAction::Url { url } => {
-            builder = builder.extra("kind", "url").extra("url", url);
+            let trimmed = url.trim();
+            if !trimmed.is_empty() {
+                let _ = tauri_plugin_opener::open_url(trimmed, None::<&str>);
+            } else {
+                show_main(app);
+            }
         }
         ClickAction::Tab { tab } => {
-            builder = builder.extra("kind", "tab").extra("tab", tab);
+            show_main(app);
+            let _ = app.emit("navigate-main-tab", tab.as_str());
         }
     }
+}
 
-    let _ = builder.show();
+fn resolve_icon_path(app: &AppHandle, kind: NotifyKind) -> Option<PathBuf> {
+    let file = kind.icon_file();
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        // Bundled layout: resources/notify/<file> (preserving src-tauri relative path)
+        candidates.push(resource_dir.join("resources").join("notify").join(file));
+        // Flat resource dir copy of the glob matches
+        candidates.push(resource_dir.join(file));
+        candidates.push(resource_dir.join("notify").join(file));
+    }
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("notify")
+            .join(file),
+    );
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+#[allow(unused_variables)]
+fn configure_platform(notification: &mut notify_rust::Notification, app: &AppHandle) {
+    #[cfg(windows)]
+    {
+        let identifier = app.config().identifier.clone();
+        let sep = std::path::MAIN_SEPARATOR;
+        if let Ok(exe) = tauri::utils::platform::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                let curr_dir = exe_dir.display().to_string();
+                let debug_suffix = format!("{sep}target{sep}debug");
+                let release_suffix = format!("{sep}target{sep}release");
+                if !(curr_dir.ends_with(&debug_suffix) || curr_dir.ends_with(&release_suffix)) {
+                    notification.app_id(&identifier);
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let identifier = app.config().identifier.clone();
+        let _ = notify_rust::set_application(if tauri::is_dev() {
+            "com.apple.Terminal"
+        } else {
+            &identifier
+        });
+    }
+}
+
+/// Show an OS notification with a per-kind image (via notify-rust `image_path`).
+pub fn show(app: &AppHandle, title: &str, body: &str, action: ClickAction, kind: NotifyKind) {
+    let mut notification = notify_rust::Notification::new();
+    notification.summary(title).body(body);
+    if let Some(path) = resolve_icon_path(app, kind) {
+        if let Some(s) = path.to_str() {
+            notification.image_path(s);
+        }
+    }
+    configure_platform(&mut notification, app);
+
+    let handle = app.clone();
+    let _ = std::thread::Builder::new()
+        .name("timetrove-notify".into())
+        .spawn(move || {
+            let Ok(shown) = notification.show() else {
+                return;
+            };
+            let _ = shown.wait_for_response(|response: &notify_rust::NotificationResponse| {
+                if matches!(response, notify_rust::NotificationResponse::Default) {
+                    perform_click(&handle, &action);
+                }
+            });
+        });
 }
 
 /// Format a list of item labels for a notification body.
@@ -181,4 +268,38 @@ pub(crate) fn get_setting_string(db: &crate::db::Db, key: &str) -> Result<Option
 
 pub(crate) fn set_setting_string(db: &crate::db::Db, key: &str, value: &str) -> Result<(), String> {
     db.set_setting_value(key, value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icon_files_exist_in_manifest_resources() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join("notify");
+        for kind in [
+            NotifyKind::Goal,
+            NotifyKind::Github,
+            NotifyKind::Jira,
+            NotifyKind::Copilot,
+        ] {
+            let path = root.join(kind.icon_file());
+            assert!(
+                path.is_file(),
+                "missing notify icon {}",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_falls_back_to_manifest_dir() {
+        // Without an AppHandle we only check the on-disk layout used in tauri dev.
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("notify")
+            .join(NotifyKind::Goal.icon_file());
+        assert!(path.is_file());
+        assert!(Path::new(&path).extension().is_some_and(|e| e == "png"));
+    }
 }

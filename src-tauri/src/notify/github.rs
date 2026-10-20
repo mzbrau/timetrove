@@ -159,7 +159,7 @@ pub fn check_github_activity(app: &AppHandle, db: &Db, digest: &GithubActivityDi
         for cat in diff_github(&prev, &next) {
             let body = format_item_body(&cat.labels);
             let action = click_for_items(&cat.urls, "github");
-            show(app, &cat.title, &body, action);
+            show(app, &cat.title, &body, action, super::NotifyKind::Github);
         }
     }
 
