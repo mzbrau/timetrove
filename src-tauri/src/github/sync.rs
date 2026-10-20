@@ -91,13 +91,19 @@ fn config_still_matches(db: &Db, started: &GithubHttpConfig) -> Result<bool, Str
     }
 }
 
-pub fn poll_once(db: &Db) -> Result<Option<GithubActivityDigest>, String> {
-    if crate::demo::enabled() {
-        return load_cached_digest(db);
-    }
+/// Fetch, persist, and advance GitHub notifications under one mutex.
+/// Manual refresh and background polls share this path so snapshots cannot race.
+pub fn poll_once(db: &Db, app: Option<&AppHandle>) -> Result<Option<GithubActivityDigest>, String> {
     let _guard = POLL_MUTEX
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if crate::demo::enabled() {
+        let digest = load_cached_digest(db)?;
+        if let (Some(app), Some(ref d)) = (app, &digest) {
+            crate::notify::check_github_activity(app, db, d);
+        }
+        return Ok(digest);
+    }
     let Some((creds, username)) = credentials_from_db(db)? else {
         return Ok(None);
     };
@@ -106,7 +112,11 @@ pub fn poll_once(db: &Db) -> Result<Option<GithubActivityDigest>, String> {
             if !config_still_matches(db, &creds)? {
                 return Ok(None);
             }
-            Ok(Some(persist_success(db, digest)?))
+            let digest = persist_success(db, digest)?;
+            if let Some(app) = app {
+                crate::notify::check_github_activity(app, db, &digest);
+            }
+            Ok(Some(digest))
         }
         Err(e) => {
             if !config_still_matches(db, &creds)? {
@@ -128,12 +138,7 @@ pub fn spawn_poll(db: Arc<Db>, app: AppHandle, on_done: impl FnOnce() + Send + '
     }
     std::thread::spawn(move || {
         'poll: loop {
-            match poll_once(&db) {
-                Ok(Some(digest)) => {
-                    crate::notify::check_github_activity(&app, &db, &digest);
-                }
-                _ => {}
-            }
+            let _ = poll_once(&db, Some(&app));
             if POLL_QUEUED.swap(false, Ordering::SeqCst) {
                 continue;
             }

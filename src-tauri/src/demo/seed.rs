@@ -707,6 +707,7 @@ fn seed_github(db: &Db, now: DateTime<Utc>) -> Result<(), String> {
             reviews_summary: reviews.into(),
             needs_my_review: needs,
             requested_reviewer_logins: vec![],
+            reviews_fingerprint: String::new(),
         }
     };
     let authored = vec![

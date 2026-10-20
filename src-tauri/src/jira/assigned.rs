@@ -247,13 +247,23 @@ pub fn list_assigned_at(
     }
 }
 
-/// Snapshot of cached assigned issues for notification diffing (includes comment fingerprints).
-pub fn assigned_issues_for_notify() -> Option<(String, Vec<JiraIssueDetails>)> {
+/// Identity-matched cache snapshot for notification diffing (includes comment fingerprints).
+/// Returns `None` when credentials are missing or the cache belongs to another account/site.
+pub fn assigned_issues_for_notify(db: &Db) -> Option<(String, Vec<JiraIssueDetails>, bool)> {
+    let creds = credentials_if_ready(db).ok().flatten()?;
+    let account_id = normalize_account_id(&creds.email);
     let cache = CACHE.lock().ok()?;
     if cache.site_url.is_empty() {
         return None;
     }
-    Some((cache.site_url.clone(), cache.issues.clone()))
+    if !cache_matches_identity(&cache, &creds.site_url, &account_id) {
+        return None;
+    }
+    Some((
+        cache.site_url.clone(),
+        cache.issues.clone(),
+        cache.truncated,
+    ))
 }
 
 /// Clear the assigned-issues cache (tests).

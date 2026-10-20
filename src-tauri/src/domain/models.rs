@@ -334,6 +334,9 @@ pub struct GithubPrSummary {
     /// Internal: logins currently requested as reviewers (not sent to UI).
     #[serde(default, skip_serializing)]
     pub requested_reviewer_logins: Vec<String>,
+    /// Internal: sorted latest-review node IDs for notification diffing.
+    #[serde(default, skip_serializing)]
+    pub reviews_fingerprint: String,
 }
 
 /// Recent commit by the authenticated user.

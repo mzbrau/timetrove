@@ -3,12 +3,14 @@ use crate::db::Db;
 use crate::domain::{CopilotUsageHistoryPoint, CopilotUsageSummary};
 use chrono::Utc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
 use uuid::Uuid;
 
 static POLL_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static POLL_QUEUED: AtomicBool = AtomicBool::new(false);
+/// Serializes fetch+persist+notify so manual refresh and background polls cannot race.
+static POLL_MUTEX: Mutex<()> = Mutex::new(());
 
 pub fn credentials_from_db(db: &Db) -> Result<Option<CopilotCredentials>, String> {
     let settings = db.get_settings()?;
@@ -144,10 +146,17 @@ fn with_current_override(db: &Db, summary: CopilotUsageSummary) -> Result<Copilo
     ))
 }
 
-/// Fetch and persist; returns the updated summary (with current override applied for display).
-pub fn poll_once(db: &Db) -> Result<Option<CopilotUsageSummary>, String> {
+/// Fetch, persist, and advance Copilot usage notifications under one mutex.
+pub fn poll_once(db: &Db, app: Option<&AppHandle>) -> Result<Option<CopilotUsageSummary>, String> {
+    let _guard = POLL_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if crate::demo::enabled() {
-        return load_cached_summary(db);
+        let summary = load_cached_summary(db)?;
+        if let (Some(app), Some(ref s)) = (app, &summary) {
+            crate::notify::check_copilot_usage(app, db, s.percent_used);
+        }
+        return Ok(summary);
     }
     let Some(creds) = credentials_from_db(db)? else {
         return Ok(None);
@@ -159,7 +168,11 @@ pub fn poll_once(db: &Db) -> Result<Option<CopilotUsageSummary>, String> {
                 return Ok(None);
             }
             let saved = persist_success(db, summary, &raw)?;
-            Ok(Some(with_current_override(db, saved)?))
+            let display = with_current_override(db, saved)?;
+            if let Some(app) = app {
+                crate::notify::check_copilot_usage(app, db, display.percent_used);
+            }
+            Ok(Some(display))
         }
         Err(e) => {
             if !config_still_matches(db, &creds)? {
@@ -181,12 +194,7 @@ pub fn spawn_poll(db: Arc<Db>, app: AppHandle, on_done: impl FnOnce() + Send + '
     }
     std::thread::spawn(move || {
         'poll: loop {
-            match poll_once(&db) {
-                Ok(Some(summary)) => {
-                    crate::notify::check_copilot_usage(&app, &db, summary.percent_used);
-                }
-                _ => {}
-            }
+            let _ = poll_once(&db, Some(&app));
             if POLL_QUEUED.swap(false, Ordering::SeqCst) {
                 // Run again with fresh credentials from the queue request.
                 continue;

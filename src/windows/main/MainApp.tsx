@@ -92,33 +92,6 @@ export function MainApp() {
     }
   }, [copilotEnabled, githubActivityEnabled, jiraEnabled, tab]);
 
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    void (async () => {
-      unlisten = await listen<string>("navigate-main-tab", (e) => {
-        const next = e.payload as Tab;
-        if (
-          next === "github" ||
-          next === "jira" ||
-          next === "copilot" ||
-          next === "tasks" ||
-          next === "timesheet" ||
-          next === "insights" ||
-          next === "entries" ||
-          next === "settings"
-        ) {
-          setTab(next);
-        }
-      });
-      if (cancelled) unlisten?.();
-    })();
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
   const bannerError = error || state?.dbError || null;
   const showBanner = Boolean(bannerError && bannerError !== dismissedError);
 
@@ -148,14 +121,44 @@ export function MainApp() {
     setTasksDirty(dirty);
   }, []);
 
-  const requestTab = (next: Tab) => {
-    if (next === tab) return;
-    if (tab === "tasks" && tasksDirty) {
-      setPendingTab(next);
-      return;
-    }
-    setTab(next);
-  };
+  const requestTab = useCallback(
+    (next: Tab) => {
+      if (next === tab) return;
+      if (tab === "tasks" && tasksDirty) {
+        setPendingTab(next);
+        return;
+      }
+      setTab(next);
+    },
+    [tab, tasksDirty],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      unlisten = await listen<string>("navigate-main-tab", (e) => {
+        const next = e.payload as Tab;
+        if (
+          next === "github" ||
+          next === "jira" ||
+          next === "copilot" ||
+          next === "tasks" ||
+          next === "timesheet" ||
+          next === "insights" ||
+          next === "entries" ||
+          next === "settings"
+        ) {
+          requestTab(next);
+        }
+      });
+      if (cancelled) unlisten?.();
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [requestTab]);
 
   return (
     <div className="main-app">

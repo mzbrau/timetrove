@@ -54,6 +54,11 @@ pub fn merge_fired(previous: &[u32], newly: &[u32], percent_used: f64) -> Vec<u3
     out
 }
 
+pub fn clear_fired(db: &Db) {
+    let _ = set_setting_string(db, KEY_MONTH, "");
+    let _ = set_setting_string(db, KEY_FIRED, "");
+}
+
 pub fn check_copilot_usage(app: &AppHandle, db: &Db, percent_used: f64) {
     let Ok(settings) = db.get_settings() else {
         return;

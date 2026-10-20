@@ -10,6 +10,8 @@ pub use github::check_github_activity;
 pub use goal::check_daily_goal;
 pub use jira::{jira_poll_interval_secs, spawn_jira_notify_poll};
 
+use crate::db::Db;
+use crate::domain::Settings;
 use crate::engine::show_main;
 use serde::Serialize;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -30,11 +32,49 @@ pub enum ClickAction {
     Tab { tab: String },
 }
 
-pub fn any_notify_enabled(settings: &crate::domain::Settings) -> bool {
+pub fn any_notify_enabled(settings: &Settings) -> bool {
     settings.notify_daily_goal
         || settings.notify_github_pr
         || settings.notify_jira_assigned
         || settings.notify_copilot_usage
+}
+
+fn trim_eq_ci(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
+}
+
+fn trim_eq(a: &str, b: &str) -> bool {
+    a.trim() == b.trim()
+}
+
+/// Clear notification baselines when alerts are re-enabled or integration identity changes,
+/// so the next poll silently re-baselines instead of replaying offline deltas.
+pub fn reset_snapshots_for_settings(db: &Db, prev: &Settings, next: &Settings) {
+    let github_identity_changed = !trim_eq_ci(&prev.copilot_github_host, &next.copilot_github_host)
+        || !trim_eq(&prev.copilot_api_token, &next.copilot_api_token)
+        || !trim_eq(&prev.copilot_proxy_url, &next.copilot_proxy_url)
+        || !trim_eq_ci(&prev.copilot_username, &next.copilot_username);
+    let github_reenabled = (!prev.github_activity_enabled && next.github_activity_enabled)
+        || (!prev.notify_github_pr && next.notify_github_pr);
+    if github_reenabled || (next.notify_github_pr && github_identity_changed) {
+        github::clear_snapshot(db);
+    }
+
+    let jira_identity_changed = !trim_eq_ci(&prev.jira_site_url, &next.jira_site_url)
+        || !trim_eq_ci(&prev.jira_email, &next.jira_email)
+        || !trim_eq(&prev.jira_api_token, &next.jira_api_token);
+    let jira_reenabled = (!prev.jira_enabled && next.jira_enabled)
+        || (!prev.notify_jira_assigned && next.notify_jira_assigned);
+    if jira_reenabled || (next.notify_jira_assigned && jira_identity_changed) {
+        jira::clear_snapshot(db);
+    }
+
+    let copilot_identity_changed = github_identity_changed; // shares host/token/proxy/username
+    let copilot_reenabled = (!prev.copilot_enabled && next.copilot_enabled)
+        || (!prev.notify_copilot_usage && next.notify_copilot_usage);
+    if copilot_reenabled || (next.notify_copilot_usage && copilot_identity_changed) {
+        copilot::clear_fired(db);
+    }
 }
 
 pub fn request_permission_if_needed(app: &AppHandle) {

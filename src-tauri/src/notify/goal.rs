@@ -2,9 +2,13 @@ use super::{get_setting_string, set_setting_string, show, ClickAction};
 use crate::db::Db;
 use crate::domain::TrackerState;
 use chrono::Local;
+use std::sync::Mutex;
 use tauri::AppHandle;
 
 const KEY_DATE: &str = "notify_daily_goal_date";
+
+/// Serializes check → show → write so concurrent emit_state cannot double-toast.
+static GOAL_MUTEX: Mutex<()> = Mutex::new(());
 
 /// Fire once per local day when the daily goal is first met.
 pub fn check_daily_goal(app: &AppHandle, db: &Db, state: &TrackerState) {
@@ -14,6 +18,9 @@ pub fn check_daily_goal(app: &AppHandle, db: &Db, state: &TrackerState) {
     if !settings.notify_daily_goal || !state.goal_met {
         return;
     }
+    let _guard = GOAL_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
     let already = get_setting_string(db, KEY_DATE)
         .ok()
@@ -26,7 +33,10 @@ pub fn check_daily_goal(app: &AppHandle, db: &Db, state: &TrackerState) {
     let body = if hours.fract() == 0.0 {
         format!("You've hit {} hours today.", hours as u32)
     } else {
-        format!("You've hit your daily goal ({} minutes).", settings.daily_goal_mins)
+        format!(
+            "You've hit your daily goal ({} minutes).",
+            settings.daily_goal_mins
+        )
     };
     show(app, "Daily goal reached", &body, ClickAction::Main);
     let _ = set_setting_string(db, KEY_DATE, &today);

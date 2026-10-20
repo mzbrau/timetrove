@@ -385,7 +385,8 @@ pub fn update_settings(
     }
     // Visibility is controlled by tray / tracker Close — don't clobber from Settings UI.
     let mut settings = settings;
-    if let Ok(current) = engine.db().get_settings() {
+    let previous = engine.db().get_settings().ok();
+    if let Some(ref current) = previous {
         settings.tracker_visible = current.tracker_visible;
     }
     settings.copilot_poll_interval_mins = settings.copilot_poll_interval_mins.clamp(5, 120);
@@ -395,6 +396,9 @@ pub fn update_settings(
         settings.copilot_github_host = "github.com".into();
     }
     engine.db().update_settings(&settings)?;
+    if let Some(ref prev) = previous {
+        crate::notify::reset_snapshots_for_settings(engine.db(), prev, &settings);
+    }
     if crate::demo::enabled() {
         // Demo DB must not touch the real login item (same bundle identifier).
     } else if settings.autostart {
@@ -487,11 +491,7 @@ pub async fn refresh_copilot_usage(
     let eng = engine.inner().clone();
     let app_n = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let out = crate::copilot::poll_once(&db)?;
-        if let Some(ref summary) = out {
-            crate::notify::check_copilot_usage(&app_n, &db, summary.percent_used);
-        }
-        Ok(out)
+        crate::copilot::poll_once(&db, Some(&app_n))
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -518,11 +518,7 @@ pub async fn refresh_github_activity(
     let db = engine.db().clone();
     let app_n = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let out = crate::github::poll_once(&db)?;
-        if let Some(ref digest) = out {
-            crate::notify::check_github_activity(&app_n, &db, digest);
-        }
-        Ok(out)
+        crate::github::poll_once(&db, Some(&app_n))
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -587,7 +583,7 @@ pub fn start_copilot_connection_test(
         match crate::copilot::test_connection(&creds) {
             Ok(msg) => {
                 emit_copilot_test(&app, "verifying", "Fetching Copilot quota…");
-                match crate::copilot::poll_once(&db) {
+                match crate::copilot::poll_once(&db, Some(&app)) {
                     Ok(_) => {
                         eng.emit_state(&app);
                         finish("succeeded", msg);

@@ -27,6 +27,9 @@ pub struct JiraIssueSnap {
 #[serde(rename_all = "camelCase")]
 pub struct JiraNotifySnapshot {
     pub issues: HashMap<String, JiraIssueSnap>,
+    /// True when the assigned search result was capped (incomplete queue).
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +47,11 @@ fn issue_label(key: &str, summary: &str) -> String {
     }
 }
 
-pub fn snapshot_from_issues(issues: &[JiraIssueDetails], site_url: &str) -> JiraNotifySnapshot {
+pub fn snapshot_from_issues(
+    issues: &[JiraIssueDetails],
+    site_url: &str,
+    truncated: bool,
+) -> JiraNotifySnapshot {
     let mut map = HashMap::new();
     for issue in issues {
         let browse = browse_url(site_url, &issue.issue_key).unwrap_or_default();
@@ -59,7 +66,10 @@ pub fn snapshot_from_issues(issues: &[JiraIssueDetails], site_url: &str) -> Jira
             },
         );
     }
-    JiraNotifySnapshot { issues: map }
+    JiraNotifySnapshot {
+        issues: map,
+        truncated,
+    }
 }
 
 pub fn diff_jira(prev: &JiraNotifySnapshot, next: &JiraNotifySnapshot) -> Vec<JiraChangeCategory> {
@@ -68,27 +78,34 @@ pub fn diff_jira(prev: &JiraNotifySnapshot, next: &JiraNotifySnapshot) -> Vec<Ji
     let mut comments: Vec<(String, String)> = Vec::new();
     let mut left: Vec<(String, String)> = Vec::new();
 
+    // Incomplete pages rotate membership; do not infer join/leave from them.
+    let skip_membership = prev.truncated || next.truncated;
+
     for (key, cur) in &next.issues {
         let label = issue_label(key, &cur.summary);
         match prev.issues.get(key) {
-            None => assigned.push((label, cur.browse_url.clone())),
+            None => {
+                if !skip_membership {
+                    assigned.push((label, cur.browse_url.clone()));
+                }
+            }
             Some(old) => {
                 if old.status != cur.status {
                     status.push((label.clone(), cur.browse_url.clone()));
                 }
-                let comment_grew = cur.comment_total > old.comment_total
-                    || (!cur.latest_comment_id.is_empty()
-                        && cur.latest_comment_id != old.latest_comment_id);
-                if comment_grew {
+                // Only count genuine additions (not deletions that change latest id).
+                if cur.comment_total > old.comment_total {
                     comments.push((label, cur.browse_url.clone()));
                 }
             }
         }
     }
 
-    for (key, old) in &prev.issues {
-        if !next.issues.contains_key(key) {
-            left.push((issue_label(key, &old.summary), old.browse_url.clone()));
+    if !skip_membership {
+        for (key, old) in &prev.issues {
+            if !next.issues.contains_key(key) {
+                left.push((issue_label(key, &old.summary), old.browse_url.clone()));
+            }
         }
     }
 
@@ -111,7 +128,17 @@ pub fn diff_jira(prev: &JiraNotifySnapshot, next: &JiraNotifySnapshot) -> Vec<Ji
     out
 }
 
-pub fn check_jira_assigned(app: &AppHandle, db: &Db, issues: &[JiraIssueDetails], site_url: &str) {
+pub fn clear_snapshot(db: &Db) {
+    let _ = set_setting_string(db, KEY_SNAPSHOT, "");
+}
+
+pub fn check_jira_assigned(
+    app: &AppHandle,
+    db: &Db,
+    issues: &[JiraIssueDetails],
+    site_url: &str,
+    truncated: bool,
+) {
     let Ok(settings) = db.get_settings() else {
         return;
     };
@@ -119,7 +146,7 @@ pub fn check_jira_assigned(app: &AppHandle, db: &Db, issues: &[JiraIssueDetails]
         return;
     }
 
-    let next = snapshot_from_issues(issues, site_url);
+    let next = snapshot_from_issues(issues, site_url, truncated);
     let prev_json = get_setting_string(db, KEY_SNAPSHOT)
         .ok()
         .flatten()
@@ -163,17 +190,12 @@ pub fn poll_jira_notify_once(app: &AppHandle, db: &Db) {
         return;
     }
 
-    // Refresh shared cache (UI) and read issues with comment fingerprints.
+    // Refresh shared cache (UI); identity-checked details come from the same refresh.
     let _ = crate::jira::list_assigned(db, true);
-    let Some((site_url, issues)) = crate::jira::assigned_issues_for_notify() else {
-        if crate::demo::enabled() {
-            let fixture = crate::demo::jira_fixture();
-            check_jira_assigned(app, db, &fixture, &settings.jira_site_url);
-            let _ = app.emit("jira-assigned-updated", ());
-        }
+    let Some((site_url, issues, truncated)) = crate::jira::assigned_issues_for_notify(db) else {
         return;
     };
-    check_jira_assigned(app, db, &issues, &site_url);
+    check_jira_assigned(app, db, &issues, &site_url, truncated);
     let _ = app.emit("jira-assigned-updated", ());
 }
 
@@ -216,6 +238,23 @@ mod tests {
     }
 
     #[test]
+    fn skips_membership_when_truncated() {
+        let mut prev = JiraNotifySnapshot {
+            truncated: true,
+            ..Default::default()
+        };
+        prev.issues.insert("A-1".into(), snap("To Do", 0, ""));
+        let mut next = JiraNotifySnapshot {
+            truncated: true,
+            ..Default::default()
+        };
+        next.issues.insert("B-2".into(), snap("To Do", 0, ""));
+        let cats = diff_jira(&prev, &next);
+        assert!(!cats.iter().any(|c| c.title.contains("New")));
+        assert!(!cats.iter().any(|c| c.title.contains("left")));
+    }
+
+    #[test]
     fn detects_status_and_comment() {
         let mut prev = JiraNotifySnapshot::default();
         prev.issues.insert("A-1".into(), snap("To Do", 1, "10"));
@@ -226,5 +265,16 @@ mod tests {
         assert_eq!(cats.len(), 2);
         assert!(cats.iter().any(|c| c.title.contains("status")));
         assert!(cats.iter().any(|c| c.title.contains("comments")));
+    }
+
+    #[test]
+    fn ignores_comment_id_change_without_count_growth() {
+        let mut prev = JiraNotifySnapshot::default();
+        prev.issues.insert("A-1".into(), snap("To Do", 2, "11"));
+        let mut next = JiraNotifySnapshot::default();
+        // Deletion: total down or flat, latest id changed to older remaining.
+        next.issues.insert("A-1".into(), snap("To Do", 1, "10"));
+        let cats = diff_jira(&prev, &next);
+        assert!(!cats.iter().any(|c| c.title.contains("comments")));
     }
 }
