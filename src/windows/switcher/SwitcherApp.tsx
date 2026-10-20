@@ -321,21 +321,35 @@ export function SwitcherApp() {
       if (mode === "switch") {
         if (e.key === "ArrowDown") {
           e.preventDefault();
-          setSelected((s) => Math.min(s + 1, Math.max(filtered.length - 1, 0)));
+          setSelected((s) => {
+            const n = filtered.length;
+            if (n === 0) return 0;
+            return (s + 1) % n;
+          });
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
-          setSelected((s) => Math.max(s - 1, 0));
+          setSelected((s) => {
+            const n = filtered.length;
+            if (n === 0) return 0;
+            return (s - 1 + n) % n;
+          });
         }
       }
       if (mode === "link" && !pendingLink) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
-          setSelected((s) =>
-            Math.min(s + 1, Math.max(filteredIssues.length - 1, 0)),
-          );
+          setSelected((s) => {
+            const n = filteredIssues.length;
+            if (n === 0) return 0;
+            return (s + 1) % n;
+          });
         } else if (e.key === "ArrowUp") {
           e.preventDefault();
-          setSelected((s) => Math.max(s - 1, 0));
+          setSelected((s) => {
+            const n = filteredIssues.length;
+            if (n === 0) return 0;
+            return (s - 1 + n) % n;
+          });
         }
       }
     };
