@@ -1246,6 +1246,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--s4);
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
 }
 
 .copilot-toolbar {
@@ -1557,6 +1560,9 @@ button.linkish:disabled {
   display: flex;
   flex-direction: column;
   gap: var(--s4);
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
 }
 
 .github-toolbar {
@@ -1577,13 +1583,24 @@ button.linkish:disabled {
   font-size: 12px;
 }
 
-.github-section h3 {
+.github-section {
+  margin: 0;
+}
+
+.github-section-summary {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--s2);
   margin: 0 0 var(--s2);
   font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.github-section-summary::-webkit-details-marker {
+  display: none;
 }
 
 .github-count {
@@ -1606,51 +1623,6 @@ button.linkish:disabled {
   background: var(--bg-elevated);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-}
-
-.github-diagnostics {
-  margin: 0;
-  padding: var(--s2) var(--s3);
-  background: var(--bg-elevated);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-.github-diagnostics-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s2);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  list-style: none;
-}
-
-.github-diagnostics-summary::-webkit-details-marker {
-  display: none;
-}
-
-.github-diagnostics-copy {
-  flex-shrink: 0;
-  font-size: 11px;
-  padding: 2px 8px;
-}
-
-.github-diagnostics-log {
-  margin: var(--s2) 0 0;
-  padding: var(--s2);
-  max-height: 220px;
-  overflow: auto;
-  font-size: 11px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: calc(var(--radius) - 2px);
 }
 
 .github-list {

@@ -98,7 +98,7 @@ const MAX_RECENT_COMMITS: usize = 20;
 /// Fetch authored PRs, reviewer PRs, and recent commits for the authenticated user.
 pub fn fetch_activity(
     config: &GithubHttpConfig,
-    username_hint: &str,
+    _username_hint: &str,
 ) -> Result<GithubActivityDigest, String> {
     if config.api_token.trim().is_empty() {
         return Err("GitHub API token is required".into());
@@ -106,30 +106,10 @@ pub fn fetch_activity(
     let base = http::api_base_url(&config.github_host)?;
     let agent = http::build_agent(&config.proxy_url)?;
 
-    let mut diagnostics = Vec::new();
-    diagnostics.push(format!("apiBase={base}"));
-
     // Always bind to the token — Settings username is not used for queries.
-    let user = http::fetch_authenticated_user(config)?;
-    let login = user.login;
-    diagnostics.push(format!("tokenLogin={login}"));
-    let hint = username_hint.trim();
-    diagnostics.push(if hint.is_empty() {
-        "settingsUsername=(blank)".into()
-    } else {
-        format!("settingsUsername={hint}")
-    });
-    diagnostics.push(format!(
-        "usernameMatch={}",
-        username_match_label(hint, &login)
-    ));
-    match &user.oauth_scopes {
-        Some(scopes) => diagnostics.push(format!("oauthScopes={scopes}")),
-        None => diagnostics.push("oauthScopes=unavailable".into()),
-    }
+    let login = http::fetch_authenticated_login(config)?;
 
-    let mut authored_prs =
-        fetch_viewer_authored_prs(&agent, &base, &config.api_token, &mut diagnostics)?;
+    let mut authored_prs = fetch_viewer_authored_prs(&agent, &base, &config.api_token)?;
     for pr in &mut authored_prs {
         pr.needs_my_review = false;
     }
@@ -140,16 +120,12 @@ pub fn fetch_activity(
         &base,
         &config.api_token,
         "is:open is:pr review-requested:@me",
-        "reviewRequested",
-        &mut diagnostics,
     )?;
     let reviewed = search_prs(
         &agent,
         &base,
         &config.api_token,
         "is:open is:pr reviewed-by:@me",
-        "reviewedBy",
-        &mut diagnostics,
     )?;
 
     let mut review_map: HashMap<String, GithubPrSummary> = HashMap::new();
@@ -175,19 +151,8 @@ pub fn fetch_activity(
             .cmp(&a.needs_my_review)
             .then_with(|| b.created_at.cmp(&a.created_at))
     });
-    let needs_me = review_prs.iter().filter(|p| p.needs_my_review).count();
-    diagnostics.push(format!("reviewMergedUnique={}", review_prs.len()));
-    diagnostics.push(format!("reviewNeedsMe={needs_me}"));
 
-    let recent_commits =
-        fetch_recent_commits(&agent, &base, &config.api_token, &login, &mut diagnostics)?;
-
-    diagnostics.push(format!(
-        "final authored={} review={} commits={}",
-        authored_prs.len(),
-        review_prs.len(),
-        recent_commits.len()
-    ));
+    let recent_commits = fetch_recent_commits(&agent, &base, &config.api_token, &login)?;
 
     Ok(GithubActivityDigest {
         authored_prs,
@@ -197,57 +162,21 @@ pub fn fetch_activity(
         last_synced_at: None,
         last_error: None,
         username: login,
-        diagnostics,
     })
-}
-
-/// Compare Settings username hint to token login for diagnostics.
-fn username_match_label(settings_username: &str, token_login: &str) -> &'static str {
-    let hint = settings_username.trim();
-    if hint.is_empty() {
-        "blank"
-    } else if hint.eq_ignore_ascii_case(token_login) {
-        "yes"
-    } else {
-        "no"
-    }
-}
-
-fn format_search_diag(
-    label: &str,
-    issue_count: u64,
-    nodes_len: usize,
-    null_nodes: usize,
-    parsed: usize,
-    after_hydrate: usize,
-) -> String {
-    format!(
-        "{label}: issueCount={issue_count} nodesLen={nodes_len} nullNodes={null_nodes} \
-         parsed={parsed} afterHydrate={after_hydrate}"
-    )
 }
 
 fn fetch_viewer_authored_prs(
     agent: &ureq::Agent,
     api_base: &str,
     token: &str,
-    diagnostics: &mut Vec<String>,
 ) -> Result<Vec<GithubPrSummary>, String> {
     let body = http::post_graphql(agent, api_base, token, VIEWER_AUTHORED_PRS_QUERY, json!({}))?;
     let nodes = body
         .pointer("/data/viewer/pullRequests/nodes")
         .and_then(|v| v.as_array())
         .ok_or_else(|| "GitHub GraphQL viewer.pullRequests missing nodes".to_string())?;
-    let nodes_len = nodes.len();
-    let null_nodes = nodes.iter().filter(|n| n.is_null()).count();
     let identities = parse_pr_identity_nodes(nodes)?;
-    let parsed = identities.len();
-    diagnostics.push(format!(
-        "authoredViewerNodes={nodes_len} nullNodes={null_nodes} parsed={parsed}"
-    ));
-    let prs = hydrate_prs(agent, api_base, token, identities)?;
-    diagnostics.push(format!("authoredAfterHydrate={}", prs.len()));
-    Ok(prs)
+    hydrate_prs(agent, api_base, token, identities)
 }
 
 fn search_prs(
@@ -255,8 +184,6 @@ fn search_prs(
     api_base: &str,
     token: &str,
     query: &str,
-    label: &str,
-    diagnostics: &mut Vec<String>,
 ) -> Result<Vec<GithubPrSummary>, String> {
     let body = http::post_graphql(agent, api_base, token, PR_SEARCH_QUERY, json!({ "q": query }))?;
     let issue_count = body
@@ -267,20 +194,8 @@ fn search_prs(
         .pointer("/data/search/nodes")
         .and_then(|v| v.as_array())
         .ok_or_else(|| "GitHub GraphQL search response missing nodes".to_string())?;
-    let nodes_len = nodes.len();
-    let null_nodes = nodes.iter().filter(|n| n.is_null()).count();
     let identities = search_identities_or_err(issue_count, nodes)?;
-    let parsed = identities.len();
-    let prs = hydrate_prs(agent, api_base, token, identities)?;
-    diagnostics.push(format_search_diag(
-        label,
-        issue_count,
-        nodes_len,
-        null_nodes,
-        parsed,
-        prs.len(),
-    ));
-    Ok(prs)
+    hydrate_prs(agent, api_base, token, identities)
 }
 
 #[derive(Debug)]
@@ -617,7 +532,6 @@ fn fetch_recent_commits(
     api_base: &str,
     token: &str,
     login: &str,
-    diagnostics: &mut Vec<String>,
 ) -> Result<Vec<GithubCommitSummary>, String> {
     let q = urlencoding_simple(&format!("author:{login}"));
     let url = format!(
@@ -637,20 +551,14 @@ fn fetch_recent_commits(
         .and_then(|v| v.as_array())
         .ok_or_else(|| "GitHub commit search response missing items".to_string())?;
 
-    let search_items = items.len();
-    diagnostics.push(format!("commitSearchItems={search_items}"));
-
     let from_search: Vec<GithubCommitSummary> =
         items.iter().filter_map(parse_commit_item).collect();
     if !from_search.is_empty() {
-        diagnostics.push("commitsSource=search".into());
-        diagnostics.push(format!("commitsHydrated={}", from_search.len()));
         return Ok(from_search);
     }
 
     // Search often returns empty for fine-grained PATs / SSO; fall back to public events.
-    diagnostics.push("commitsSource=events".into());
-    fetch_commits_from_events(agent, api_base, token, login, diagnostics)
+    fetch_commits_from_events(agent, api_base, token, login)
 }
 
 fn fetch_commits_from_events(
@@ -658,7 +566,6 @@ fn fetch_commits_from_events(
     api_base: &str,
     token: &str,
     login: &str,
-    diagnostics: &mut Vec<String>,
 ) -> Result<Vec<GithubCommitSummary>, String> {
     let url = format!("{api_base}/users/{login}/events?per_page=100");
     let body = http::get_json(agent, &url, token)?;
@@ -667,15 +574,12 @@ fn fetch_commits_from_events(
         .ok_or_else(|| "GitHub user events response is not an array".to_string())?;
     // Events API no longer embeds commit summaries (Oct 2025); only head/before SHAs remain.
     let refs = push_head_refs_from_events(events);
-    diagnostics.push(format!("eventPushHeads={}", refs.len()));
     let mut out = Vec::with_capacity(refs.len());
-    let mut skipped = 0usize;
     for r in refs {
         match fetch_repo_commit(agent, api_base, token, &r.repo_full_name, &r.sha) {
             Ok(Some(commit)) => out.push(commit),
             Ok(None) | Err(_) => {
                 // Skip private/inaccessible repos; keep collecting from later events.
-                skipped += 1;
                 continue;
             }
         }
@@ -683,8 +587,6 @@ fn fetch_commits_from_events(
             break;
         }
     }
-    diagnostics.push(format!("commitsHydrated={}", out.len()));
-    diagnostics.push(format!("commitsSkipped={skipped}"));
     Ok(out)
 }
 
@@ -1058,41 +960,6 @@ mod tests {
     fn summarize_empty_reviews() {
         assert_eq!(summarize_reviews(None), "No reviews");
         assert_eq!(summarize_reviews(Some(&json!([]))), "No reviews");
-    }
-
-    #[test]
-    fn username_match_labels() {
-        assert_eq!(username_match_label("", "octocat"), "blank");
-        assert_eq!(username_match_label("  ", "octocat"), "blank");
-        assert_eq!(username_match_label("Octocat", "octocat"), "yes");
-        assert_eq!(username_match_label("other", "octocat"), "no");
-    }
-
-    #[test]
-    fn search_diag_line_format() {
-        let line = format_search_diag("reviewRequested", 3, 3, 1, 2, 2);
-        assert!(line.contains("reviewRequested:"));
-        assert!(line.contains("issueCount=3"));
-        assert!(line.contains("nodesLen=3"));
-        assert!(line.contains("nullNodes=1"));
-        assert!(line.contains("parsed=2"));
-        assert!(line.contains("afterHydrate=2"));
-    }
-
-    #[test]
-    fn digest_diagnostics_default_deserializes() {
-        let json = r#"{
-            "authoredPrs": [],
-            "reviewPrs": [],
-            "recentCommits": [],
-            "username": "octocat",
-            "fetchedAt": null,
-            "lastSyncedAt": null,
-            "lastError": null
-        }"#;
-        let d: GithubActivityDigest = serde_json::from_str(json).unwrap();
-        assert!(d.diagnostics.is_empty());
-        assert_eq!(d.username, "octocat");
     }
 
     #[test]

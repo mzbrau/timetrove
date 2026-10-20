@@ -196,7 +196,6 @@ export function GitHubPanel() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copiedDiag, setCopiedDiag] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -253,19 +252,6 @@ export function GitHubPanel() {
   const review = digest?.reviewPrs ?? [];
   const commits = digest?.recentCommits ?? [];
   const needsCount = review.filter((p) => p.needsMyReview).length;
-  const diagnostics = digest?.diagnostics ?? [];
-  const listsEmpty = authored.length === 0 && review.length === 0 && commits.length === 0;
-
-  const copyDiagnostics = async () => {
-    if (diagnostics.length === 0) return;
-    try {
-      await navigator.clipboard.writeText(diagnostics.join("\n"));
-      setCopiedDiag(true);
-      window.setTimeout(() => setCopiedDiag(false), 1500);
-    } catch {
-      setCopiedDiag(false);
-    }
-  };
 
   return (
     <div className="github">
@@ -289,39 +275,15 @@ export function GitHubPanel() {
 
       {error && <p className="error-text">{error}</p>}
 
-      {diagnostics.length > 0 && (
-        <details
-          key={digest?.lastSyncedAt ?? digest?.fetchedAt ?? "diag"}
-          className="github-diagnostics"
-          open={listsEmpty}
-        >
-          <summary className="github-diagnostics-summary">
-            <span>Fetch diagnostics</span>
-            <button
-              type="button"
-              className="btn github-diagnostics-copy"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                void copyDiagnostics();
-              }}
-            >
-              {copiedDiag ? "Copied" : "Copy"}
-            </button>
-          </summary>
-          <pre className="github-diagnostics-log mono">{diagnostics.join("\n")}</pre>
-        </details>
-      )}
-
       {loading && !digest ? (
         <p className="github-empty">Loading GitHub activity…</p>
       ) : (
         <>
-          <section className="github-section">
-            <h3>
+          <details className="github-section" open>
+            <summary className="github-section-summary">
               PRs you opened
               <span className="github-count mono muted">{authored.length}</span>
-            </h3>
+            </summary>
             {authored.length === 0 ? (
               <p className="github-empty">No open pull requests authored by you.</p>
             ) : (
@@ -331,16 +293,16 @@ export function GitHubPanel() {
                 ))}
               </div>
             )}
-          </section>
+          </details>
 
-          <section className="github-section">
-            <h3>
+          <details className="github-section" open>
+            <summary className="github-section-summary">
               PRs to review
               <span className="github-count mono muted">{review.length}</span>
               {needsCount > 0 && (
                 <span className="github-needs-count">{needsCount} need you</span>
               )}
-            </h3>
+            </summary>
             {review.length === 0 ? (
               <p className="github-empty">No open pull requests awaiting you as reviewer.</p>
             ) : (
@@ -350,13 +312,13 @@ export function GitHubPanel() {
                 ))}
               </div>
             )}
-          </section>
+          </details>
 
-          <section className="github-section">
-            <h3>
+          <details className="github-section" open>
+            <summary className="github-section-summary">
               Recent commits
               <span className="github-count mono muted">{commits.length}</span>
-            </h3>
+            </summary>
             {commits.length === 0 ? (
               <p className="github-empty">No recent commits found for your account.</p>
             ) : (
@@ -366,7 +328,7 @@ export function GitHubPanel() {
                 ))}
               </div>
             )}
-          </section>
+          </details>
         </>
       )}
     </div>
