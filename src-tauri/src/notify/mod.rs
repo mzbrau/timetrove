@@ -212,6 +212,10 @@ fn configure_platform(notification: &mut notify_rust::Notification, app: &AppHan
 pub fn show(app: &AppHandle, title: &str, body: &str, action: ClickAction, kind: NotifyKind) {
     let mut notification = notify_rust::Notification::new();
     notification.summary(title).body(body);
+    // macOS NSUserNotification only waits for a response when there is a main/close
+    // button or wait_for_click; without this, wait_for_response returns Closed(Expired)
+    // immediately and banner taps never reach perform_click.
+    notification.action("default", "Open");
     if let Some(path) = resolve_icon_path(app, kind) {
         if let Some(s) = path.to_str() {
             notification.image_path(s);
@@ -227,8 +231,14 @@ pub fn show(app: &AppHandle, title: &str, body: &str, action: ClickAction, kind:
                 return;
             };
             let _ = shown.wait_for_response(|response: &notify_rust::NotificationResponse| {
-                if matches!(response, notify_rust::NotificationResponse::Default) {
-                    perform_click(&handle, &action);
+                match response {
+                    notify_rust::NotificationResponse::Default => {
+                        perform_click(&handle, &action);
+                    }
+                    notify_rust::NotificationResponse::Action(id) if id == "default" => {
+                        perform_click(&handle, &action);
+                    }
+                    _ => {}
                 }
             });
         });
