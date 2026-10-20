@@ -27,6 +27,18 @@ export function formatHms(ms: number) {
   return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
+/**
+ * Duration as decimal hours, floored to whole minutes (matches Rust `format_hhmm`).
+ * Up to 2 decimals; trailing zeros trimmed (`3.5`, `3.33`, `3`).
+ */
+export function formatDecimalHours(ms: number) {
+  if (!Number.isFinite(ms) || ms <= 0) return "0";
+  const totalMins = Math.floor(ms / 60_000);
+  const hours = totalMins / 60;
+  const fixed = hours.toFixed(2);
+  return fixed.replace(/\.?0+$/, "");
+}
+
 /** Normalize to `#rrggbb` for color inputs / swatches; falls back if invalid. */
 export function normalizeHexColor(value: string, fallback = "#0f766e"): string {
   const v = value.trim();

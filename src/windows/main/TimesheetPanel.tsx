@@ -4,10 +4,31 @@ import {
   dayHeaderLabel,
   isoWeekParts,
   mondayOfIsoWeek,
+  parseDay,
 } from "../../shared/datetime";
+import { formatDecimalHours } from "../../shared/format";
 import type { Task, TimeSlice, Timesheet } from "../../shared/types";
 import { useDemoShot } from "../../shared/useDemoShot";
 import { DayTimeline } from "./DayTimeline";
+
+type TimesheetTimeFormat = "hhmm" | "decimal";
+
+const TIME_FORMAT_KEY = "timetrove.timesheetTimeFormat";
+
+function loadTimeFormat(): TimesheetTimeFormat {
+  try {
+    const v = localStorage.getItem(TIME_FORMAT_KEY);
+    if (v === "decimal" || v === "hhmm") return v;
+  } catch {
+    /* ignore */
+  }
+  return "hhmm";
+}
+
+function isWeekendDay(day: string): boolean {
+  const dow = parseDay(day).getDay(); // 0=Sun … 6=Sat
+  return dow === 0 || dow === 6;
+}
 
 export function TimesheetPanel() {
   const [weekStart, setWeekStart] = useState<string>("");
@@ -20,6 +41,8 @@ export function TimesheetPanel() {
   const [weekInput, setWeekInput] = useState("");
   const [yearInput, setYearInput] = useState("");
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [timeFormat, setTimeFormat] = useState<TimesheetTimeFormat>(loadTimeFormat);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   const load = async (start?: string) => {
     const ws = start ?? (await api.currentWeekStart());
@@ -78,6 +101,18 @@ export function TimesheetPanel() {
       document.removeEventListener("visibilitychange", syncInterval);
     };
   }, []);
+
+  const setFormat = (next: TimesheetTimeFormat) => {
+    setTimeFormat(next);
+    try {
+      localStorage.setItem(TIME_FORMAT_KEY, next);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const fmt = (ms: number, hhmm: string) =>
+    timeFormat === "decimal" ? formatDecimalHours(ms) : hhmm;
 
   const jumpToWeekYear = async () => {
     const week = Number(weekInput);
@@ -168,6 +203,22 @@ export function TimesheetPanel() {
               }}
             />
           </label>
+          <div className="timesheet-format-toggle" role="group" aria-label="Time format">
+            <button
+              type="button"
+              className={timeFormat === "hhmm" ? "active" : undefined}
+              onClick={() => setFormat("hhmm")}
+            >
+              HH:MM
+            </button>
+            <button
+              type="button"
+              className={timeFormat === "decimal" ? "active" : undefined}
+              onClick={() => setFormat("decimal")}
+            >
+              Decimal
+            </button>
+          </div>
         </div>
         <div className="row-actions">
           <button type="button" onClick={() => void copy()}>
@@ -186,62 +237,92 @@ export function TimesheetPanel() {
               <tr>
                 <th>Task</th>
                 {sheet.days.map((d) => (
-                  <th key={d}>{dayHeaderLabel(d)}</th>
+                  <th
+                    key={d}
+                    className={isWeekendDay(d) ? "timesheet-weekend" : undefined}
+                  >
+                    {dayHeaderLabel(d)}
+                  </th>
                 ))}
                 <th className="total-cell">Total</th>
               </tr>
             </thead>
             <tbody>
-              {sheet.rows.map((row) => (
-                <tr key={row.task.id}>
-                  <td>
-                    <div className="task-cell">
-                      <span
-                        className="dot"
-                        style={{ background: row.task.color }}
-                      />
-                      {row.task.name}
-                    </div>
-                  </td>
-                  {row.cells.map((c) => {
-                    const hasNotes = Boolean(c.notes?.trim());
-                    return (
-                      <td
-                        key={c.day}
-                        className={`mono timesheet-day-cell${
-                          hasNotes ? " has-notes" : ""
-                        }`}
-                        title={hasNotes ? c.notes : undefined}
-                      >
-                        {c.durationMs > 0 ? (
-                          <>
-                            {c.display}
-                            {hasNotes && (
-                              <span
-                                className="timesheet-note-mark"
-                                aria-hidden
-                              />
-                            )}
-                          </>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                    );
-                  })}
-                  <td className="mono total-cell">{row.totalDisplay}</td>
-                </tr>
-              ))}
+              {sheet.rows.map((row) => {
+                const selected = selectedTaskId === row.task.id;
+                return (
+                  <tr
+                    key={row.task.id}
+                    className={selected ? "timesheet-row-selected" : undefined}
+                    onClick={() =>
+                      setSelectedTaskId((prev) =>
+                        prev === row.task.id ? null : row.task.id,
+                      )
+                    }
+                  >
+                    <td>
+                      <div className="task-cell">
+                        <span
+                          className="dot"
+                          style={{ background: row.task.color }}
+                        />
+                        {row.task.name}
+                      </div>
+                    </td>
+                    {row.cells.map((c) => {
+                      const hasNotes = Boolean(c.notes?.trim());
+                      const weekend = isWeekendDay(c.day);
+                      return (
+                        <td
+                          key={c.day}
+                          className={`mono timesheet-day-cell${
+                            hasNotes ? " has-notes" : ""
+                          }${weekend ? " timesheet-weekend" : ""}`}
+                          title={hasNotes ? c.notes : undefined}
+                        >
+                          {c.durationMs > 0 ? (
+                            <>
+                              {fmt(c.durationMs, c.display)}
+                              {hasNotes && (
+                                <span
+                                  className="timesheet-note-mark"
+                                  aria-hidden
+                                />
+                              )}
+                            </>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="mono total-cell">
+                      {fmt(row.totalMs, row.totalDisplay)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
             <tfoot>
               <tr>
                 <th className="total-cell">Total</th>
-                {sheet.dayTotalsDisplay.map((d, i) => (
-                  <th key={sheet.days[i]} className="mono total-cell">
-                    {d}
-                  </th>
-                ))}
-                <th className="mono total-cell">{sheet.grandTotalDisplay}</th>
+                {sheet.dayTotalsDisplay.map((d, i) => {
+                  const day = sheet.days[i];
+                  const ms = sheet.dayTotalsMs[i] ?? 0;
+                  return (
+                    <th
+                      key={day}
+                      className={`mono total-cell${
+                        isWeekendDay(day) ? " timesheet-weekend" : ""
+                      }`}
+                    >
+                      {fmt(ms, d)}
+                    </th>
+                  );
+                })}
+                <th className="mono total-cell">
+                  {fmt(sheet.grandTotalMs, sheet.grandTotalDisplay)}
+                </th>
               </tr>
             </tfoot>
           </table>
