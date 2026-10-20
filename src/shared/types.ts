@@ -176,6 +176,14 @@ export interface Settings {
   githubActivityPollIntervalMins: number;
   githubActivityLastError: string | null;
   githubActivityLastSyncedAt: string | null;
+  /** OS notification when daily goal is reached. */
+  notifyDailyGoal: boolean;
+  /** OS notification when GitHub PR status/reviews change. */
+  notifyGithubPr: boolean;
+  /** OS notification when assigned Jira issues change. */
+  notifyJiraAssigned: boolean;
+  /** OS notification at Copilot 50/80/90/95% usage. */
+  notifyCopilotUsage: boolean;
 }
 
 export interface GithubPrSummary {

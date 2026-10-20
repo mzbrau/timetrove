@@ -167,8 +167,17 @@ pub fn list_assigned_at(
     let linked = db.list_tasks_with_jira_key()?;
 
     if crate::demo::enabled() {
+        let fixture = crate::demo::jira_fixture();
+        {
+            let mut cache = CACHE.lock().map_err(|e| e.to_string())?;
+            cache.fetched_at = Some(now);
+            cache.issues = fixture.clone();
+            cache.truncated = false;
+            cache.site_url = creds.site_url.clone();
+            cache.account_id = account_id;
+        }
         return Ok(JiraAssignedIssuesResult {
-            issues: enrich_issues(&crate::demo::jira_fixture(), &creds.site_url, &linked),
+            issues: enrich_issues(&fixture, &creds.site_url, &linked),
             fetched_at: Some(now),
             truncated: false,
             from_cache: false,
@@ -236,6 +245,25 @@ pub fn list_assigned_at(
             })
         }
     }
+}
+
+/// Identity-matched cache snapshot for notification diffing (includes comment fingerprints).
+/// Returns `None` when credentials are missing or the cache belongs to another account/site.
+pub fn assigned_issues_for_notify(db: &Db) -> Option<(String, Vec<JiraIssueDetails>, bool)> {
+    let creds = credentials_if_ready(db).ok().flatten()?;
+    let account_id = normalize_account_id(&creds.email);
+    let cache = CACHE.lock().ok()?;
+    if cache.site_url.is_empty() {
+        return None;
+    }
+    if !cache_matches_identity(&cache, &creds.site_url, &account_id) {
+        return None;
+    }
+    Some((
+        cache.site_url.clone(),
+        cache.issues.clone(),
+        cache.truncated,
+    ))
 }
 
 /// Clear the assigned-issues cache (tests).
@@ -306,6 +334,8 @@ mod tests {
                 assignee: "Ada".into(),
                 estimate_seconds: Some(7200),
                 total_spent_seconds: Some(0),
+                comment_total: 0,
+                latest_comment_id: String::new(),
             }),
         })
         .unwrap()
@@ -334,6 +364,8 @@ mod tests {
             assignee: "Ada".into(),
             estimate_seconds: Some(3600),
             total_spent_seconds: Some(0),
+                comment_total: 0,
+            latest_comment_id: String::new(),
         }];
         let enriched = enrich_issues(&issues, "https://example.atlassian.net", &linked);
         assert_eq!(enriched.len(), 1);
@@ -361,6 +393,8 @@ mod tests {
             assignee: "Ada".into(),
             estimate_seconds: Some(14_400),
             total_spent_seconds: Some(7_200),
+                comment_total: 0,
+            latest_comment_id: String::new(),
         }];
         let enriched = enrich_issues(&issues, "https://example.atlassian.net", &linked);
         assert_eq!(enriched[0].timetrove_booked_ms, Some(7_200_000));
@@ -426,6 +460,8 @@ mod tests {
                 assignee: "Ada".into(),
                 estimate_seconds: None,
                 total_spent_seconds: None,
+                comment_total: 0,
+                latest_comment_id: String::new(),
             }],
             t0,
         );
@@ -461,6 +497,8 @@ mod tests {
                 assignee: "Ada".into(),
                 estimate_seconds: None,
                 total_spent_seconds: None,
+                comment_total: 0,
+                latest_comment_id: String::new(),
             }],
             t0,
         );

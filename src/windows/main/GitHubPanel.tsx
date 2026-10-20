@@ -293,7 +293,7 @@ export function GitHubPanel() {
         <details
           key={digest?.lastSyncedAt ?? digest?.fetchedAt ?? "diag"}
           className="github-diagnostics"
-          defaultOpen={listsEmpty}
+          open={listsEmpty}
         >
           <summary className="github-diagnostics-summary">
             <span>Fetch diagnostics</span>

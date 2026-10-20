@@ -60,6 +60,8 @@ query($ids: [ID!]!) {
       }
       latestReviews(first: 100) {
         nodes {
+          id
+          submittedAt
           state
           author { login }
         }
@@ -341,6 +343,7 @@ fn parse_pr_identity(node: &Value) -> Option<PrIdentity> {
             reviews_summary: "No reviews".into(),
             needs_my_review: false,
             requested_reviewer_logins: Vec::new(),
+            reviews_fingerprint: String::new(),
         },
     })
 }
@@ -409,7 +412,9 @@ fn apply_hydration(pr: &mut GithubPrSummary, node: &Value) {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    pr.reviews_summary = summarize_reviews(node.pointer("/latestReviews/nodes"));
+    let reviews = node.pointer("/latestReviews/nodes");
+    pr.reviews_summary = summarize_reviews(reviews);
+    pr.reviews_fingerprint = reviews_fingerprint(reviews);
     pr.requested_reviewer_logins.clear();
     if let Some(reqs) = node.pointer("/reviewRequests/nodes").and_then(|v| v.as_array()) {
         for req in reqs {
@@ -517,6 +522,33 @@ fn fetch_review_threads_page(
     body.pointer("/data/repository/pullRequest/reviewThreads")
         .cloned()
         .ok_or_else(|| "GitHub GraphQL reviewThreads page missing connection".to_string())
+}
+
+/// Compact fingerprint of latest review nodes (IDs, falling back to submittedAt+login).
+fn reviews_fingerprint(nodes: Option<&Value>) -> String {
+    let Some(arr) = nodes.and_then(|v| v.as_array()) else {
+        return String::new();
+    };
+    let mut parts: Vec<String> = arr
+        .iter()
+        .map(|r| {
+            if let Some(id) = r.get("id").and_then(|v| v.as_str()) {
+                return id.to_string();
+            }
+            let submitted = r
+                .get("submittedAt")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let login = r
+                .pointer("/author/login")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            format!("{submitted}:{login}")
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    parts.sort_unstable();
+    parts.join("|")
 }
 
 fn summarize_reviews(nodes: Option<&Value>) -> String {

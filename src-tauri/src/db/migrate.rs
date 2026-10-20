@@ -382,5 +382,27 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         })?;
     }
 
+    // v15: optional OS notification toggles.
+    if version < 15 {
+        migrate_tx(conn, |conn| {
+            let defaults = [
+                ("notify_daily_goal", "false"),
+                ("notify_github_pr", "false"),
+                ("notify_jira_assigned", "false"),
+                ("notify_copilot_usage", "false"),
+            ];
+            for (k, v) in defaults {
+                conn.execute(
+                    "INSERT OR IGNORE INTO settings (key, value) VALUES (?1, ?2)",
+                    (k, v),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (15)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+    }
+
     Ok(())
 }

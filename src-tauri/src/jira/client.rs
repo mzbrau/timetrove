@@ -158,6 +158,7 @@ pub fn search_my_open_issues(
         "timetracking",
         "timeoriginalestimate",
         "aggregatetimespent",
+        "comment",
     ];
     // Prefer the current Cloud search/jql endpoint; fall back to classic /search.
     let body = match post_search_jql(&agent, &base, &auth, max, &fields) {
@@ -364,6 +365,22 @@ pub fn parse_issue_json(fallback_key: &str, body: &serde_json::Value) -> Result<
                 .and_then(|t| t.get("timeSpentSeconds"))
                 .and_then(|v| v.as_i64())
         });
+    let comment = fields.get("comment");
+    let comment_total = comment
+        .and_then(|c| c.get("total"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let latest_comment_id = comment
+        .and_then(|c| c.get("comments"))
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.last())
+        .and_then(|c| c.get("id"))
+        .and_then(|v| {
+            v.as_str()
+                .map(|s| s.to_string())
+                .or_else(|| v.as_i64().map(|n| n.to_string()))
+        })
+        .unwrap_or_default();
     Ok(JiraIssueDetails {
         issue_key: key,
         summary,
@@ -371,6 +388,8 @@ pub fn parse_issue_json(fallback_key: &str, body: &serde_json::Value) -> Result<
         assignee,
         estimate_seconds,
         total_spent_seconds,
+        comment_total,
+        latest_comment_id,
     })
 }
 
