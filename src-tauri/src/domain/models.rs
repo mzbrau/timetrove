@@ -58,6 +58,12 @@ pub struct JiraIssueDetails {
     pub estimate_seconds: Option<i64>,
     /// Aggregate work logged on the issue in Jira (all authors), seconds.
     pub total_spent_seconds: Option<i64>,
+    /// Comment count from Jira search (notify fingerprint; not shown in UI).
+    #[serde(default, skip_serializing)]
+    pub comment_total: u32,
+    /// Latest comment id from Jira search (notify fingerprint; not shown in UI).
+    #[serde(default, skip_serializing)]
+    pub latest_comment_id: String,
 }
 
 /// Assigned open issue enriched with optional TimeTrove task link.
@@ -191,6 +197,18 @@ pub struct Settings {
     /// ISO timestamp of last successful GitHub activity poll.
     #[serde(default)]
     pub github_activity_last_synced_at: Option<String>,
+    /// OS notification: daily goal reached (off by default).
+    #[serde(default)]
+    pub notify_daily_goal: bool,
+    /// OS notification: GitHub PR status / review changes (off by default).
+    #[serde(default)]
+    pub notify_github_pr: bool,
+    /// OS notification: Jira assigned-issue changes (off by default).
+    #[serde(default)]
+    pub notify_jira_assigned: bool,
+    /// OS notification: Copilot usage thresholds (off by default).
+    #[serde(default)]
+    pub notify_copilot_usage: bool,
 }
 
 fn default_copilot_github_host() -> String {
@@ -236,6 +254,10 @@ impl Default for Settings {
             github_activity_poll_interval_mins: default_github_activity_poll_interval_mins(),
             github_activity_last_error: None,
             github_activity_last_synced_at: None,
+            notify_daily_goal: false,
+            notify_github_pr: false,
+            notify_jira_assigned: false,
+            notify_copilot_usage: false,
         }
     }
 }
@@ -557,6 +579,10 @@ mod tests {
         assert_eq!(s.github_activity_poll_interval_mins, 30);
         assert!(s.github_activity_last_error.is_none());
         assert!(s.github_activity_last_synced_at.is_none());
+        assert!(!s.notify_daily_goal);
+        assert!(!s.notify_github_pr);
+        assert!(!s.notify_jira_assigned);
+        assert!(!s.notify_copilot_usage);
     }
 
     #[test]

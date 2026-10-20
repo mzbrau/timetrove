@@ -5,6 +5,7 @@ use crate::domain::GithubActivityDigest;
 use chrono::Utc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use tauri::AppHandle;
 
 static POLL_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static POLL_QUEUED: AtomicBool = AtomicBool::new(false);
@@ -117,7 +118,7 @@ pub fn poll_once(db: &Db) -> Result<Option<GithubActivityDigest>, String> {
     }
 }
 
-pub fn spawn_poll(db: Arc<Db>, on_done: impl FnOnce() + Send + 'static) {
+pub fn spawn_poll(db: Arc<Db>, app: AppHandle, on_done: impl FnOnce() + Send + 'static) {
     if POLL_IN_PROGRESS
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -127,7 +128,12 @@ pub fn spawn_poll(db: Arc<Db>, on_done: impl FnOnce() + Send + 'static) {
     }
     std::thread::spawn(move || {
         'poll: loop {
-            let _ = poll_once(&db);
+            match poll_once(&db) {
+                Ok(Some(digest)) => {
+                    crate::notify::check_github_activity(&app, &db, &digest);
+                }
+                _ => {}
+            }
             if POLL_QUEUED.swap(false, Ordering::SeqCst) {
                 continue;
             }

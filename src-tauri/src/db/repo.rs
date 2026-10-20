@@ -1216,6 +1216,18 @@ impl Db {
                         settings.github_activity_last_synced_at =
                             if v.is_empty() { None } else { Some(v) };
                     }
+                    "notify_daily_goal" => {
+                        settings.notify_daily_goal = v == "true" || v == "1";
+                    }
+                    "notify_github_pr" => {
+                        settings.notify_github_pr = v == "true" || v == "1";
+                    }
+                    "notify_jira_assigned" => {
+                        settings.notify_jira_assigned = v == "true" || v == "1";
+                    }
+                    "notify_copilot_usage" => {
+                        settings.notify_copilot_usage = v == "true" || v == "1";
+                    }
                     _ => {}
                 }
             }
@@ -1320,6 +1332,38 @@ impl Db {
                         .github_activity_poll_interval_mins
                         .clamp(5, 120)
                         .to_string(),
+                ),
+                (
+                    "notify_daily_goal",
+                    if settings.notify_daily_goal {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    },
+                ),
+                (
+                    "notify_github_pr",
+                    if settings.notify_github_pr {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    },
+                ),
+                (
+                    "notify_jira_assigned",
+                    if settings.notify_jira_assigned {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    },
+                ),
+                (
+                    "notify_copilot_usage",
+                    if settings.notify_copilot_usage {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    },
                 ),
             ];
             for (k, v) in pairs {
@@ -1519,6 +1563,34 @@ impl Db {
                 .map_err(|e| e.to_string())?;
                 Ok(())
             }
+        })
+    }
+
+    /// Read a raw settings key (side-channel notify snapshots, etc.).
+    pub fn get_setting_value(&self, key: &str) -> Result<Option<String>, String> {
+        self.with_conn(|conn| {
+            let value: Option<String> = conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key = ?1",
+                    params![key],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            Ok(value.filter(|s| !s.is_empty()))
+        })
+    }
+
+    /// Write a raw settings key (side-channel notify snapshots, etc.).
+    pub fn set_setting_value(&self, key: &str, value: &str) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![key, value],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
         })
     }
 
@@ -2075,7 +2147,9 @@ mod tests {
                     assignee: "Unassigned".into(),
                     estimate_seconds: Some(3600),
                     total_spent_seconds: Some(0),
-                }),
+                comment_total: 0,
+            latest_comment_id: String::new(),
+        }),
             })
             .unwrap();
         assert_eq!(linked.jira_issue_key, "THING-123");
@@ -2108,7 +2182,9 @@ mod tests {
                     assignee: "Ada".into(),
                     estimate_seconds: None,
                     total_spent_seconds: Some(1200),
-                }),
+                comment_total: 0,
+            latest_comment_id: String::new(),
+        }),
             })
             .unwrap();
         assert_eq!(relinked.jira_issue_key, "OTHER-9");
@@ -2161,7 +2237,9 @@ mod tests {
                 assignee: "Unassigned".into(),
                 estimate_seconds: None,
                 total_spent_seconds: None,
-            }),
+                comment_total: 0,
+            latest_comment_id: String::new(),
+        }),
         })
         .unwrap();
 
@@ -2210,7 +2288,9 @@ mod tests {
                 assignee: "Bob".into(),
                 estimate_seconds: None,
                 total_spent_seconds: None,
-            }),
+                comment_total: 0,
+            latest_comment_id: String::new(),
+        }),
         })
         .unwrap();
         // Simulate TimeTrove posting 2 minutes while linked.
@@ -2787,6 +2867,10 @@ mod tests {
         s.copilot_monthly_limit_override = Some(300.0);
         s.github_activity_enabled = true;
         s.github_activity_poll_interval_mins = 45;
+        s.notify_daily_goal = true;
+        s.notify_github_pr = true;
+        s.notify_jira_assigned = true;
+        s.notify_copilot_usage = true;
         db.update_settings(&s).unwrap();
         let loaded = db.get_settings().unwrap();
         assert_eq!(loaded.idle_threshold_mins, 15);
@@ -2810,6 +2894,10 @@ mod tests {
         assert_eq!(loaded.copilot_monthly_limit_override, Some(300.0));
         assert!(loaded.github_activity_enabled);
         assert_eq!(loaded.github_activity_poll_interval_mins, 45);
+        assert!(loaded.notify_daily_goal);
+        assert!(loaded.notify_github_pr);
+        assert!(loaded.notify_jira_assigned);
+        assert!(loaded.notify_copilot_usage);
     }
 
     #[test]

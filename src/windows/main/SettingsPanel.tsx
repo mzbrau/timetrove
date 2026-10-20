@@ -32,6 +32,10 @@ function editableSnapshot(s: Settings) {
     copilotMonthlyLimitOverride: s.copilotMonthlyLimitOverride,
     githubActivityEnabled: s.githubActivityEnabled,
     githubActivityPollIntervalMins: s.githubActivityPollIntervalMins,
+    notifyDailyGoal: s.notifyDailyGoal,
+    notifyGithubPr: s.notifyGithubPr,
+    notifyJiraAssigned: s.notifyJiraAssigned,
+    notifyCopilotUsage: s.notifyCopilotUsage,
   };
 }
 
@@ -706,6 +710,98 @@ export function SettingsPanel() {
                   )}
               </>
             )}
+          </div>
+        </section>
+
+        <section className="settings-card">
+          <div className="settings-card-header">
+            <h3>Notifications</h3>
+            <p className="hint">
+              Optional OS notifications. Each can be enabled independently.
+              Integration-backed alerts also require that feature to be enabled
+              above.
+            </p>
+          </div>
+          <div className="settings-card-fields">
+            <label className="settings-check">
+              <input
+                type="checkbox"
+                checked={settings.notifyDailyGoal}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    notifyDailyGoal: e.target.checked,
+                  })
+                }
+              />
+              <span>
+                Daily goal reached
+                <span className="hint">
+                  {" "}
+                  Once per day when you hit your daily goal minutes.
+                </span>
+              </span>
+            </label>
+            <label className="settings-check">
+              <input
+                type="checkbox"
+                checked={settings.notifyGithubPr}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    notifyGithubPr: e.target.checked,
+                  })
+                }
+              />
+              <span>
+                GitHub pull request updates
+                <span className="hint">
+                  {" "}
+                  Checks, review decision, new reviews, and PRs added to your
+                  review list (when GitHub activity is enabled).
+                </span>
+              </span>
+            </label>
+            <label className="settings-check">
+              <input
+                type="checkbox"
+                checked={settings.notifyJiraAssigned}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    notifyJiraAssigned: e.target.checked,
+                  })
+                }
+              />
+              <span>
+                Jira assigned ticket changes
+                <span className="hint">
+                  {" "}
+                  New assignments, status changes, new comments, and tickets
+                  leaving your open queue (when Jira is enabled).
+                </span>
+              </span>
+            </label>
+            <label className="settings-check">
+              <input
+                type="checkbox"
+                checked={settings.notifyCopilotUsage}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    notifyCopilotUsage: e.target.checked,
+                  })
+                }
+              />
+              <span>
+                Copilot usage thresholds
+                <span className="hint">
+                  {" "}
+                  At 50%, 80%, 90%, and 95% of monthly usage (when Copilot
+                  tracking is enabled).
+                </span>
+              </span>
+            </label>
           </div>
         </section>
 

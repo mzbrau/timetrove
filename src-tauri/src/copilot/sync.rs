@@ -4,6 +4,7 @@ use crate::domain::{CopilotUsageHistoryPoint, CopilotUsageSummary};
 use chrono::Utc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tauri::AppHandle;
 use uuid::Uuid;
 
 static POLL_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
@@ -170,7 +171,7 @@ pub fn poll_once(db: &Db) -> Result<Option<CopilotUsageSummary>, String> {
     }
 }
 
-pub fn spawn_poll(db: Arc<Db>, on_done: impl FnOnce() + Send + 'static) {
+pub fn spawn_poll(db: Arc<Db>, app: AppHandle, on_done: impl FnOnce() + Send + 'static) {
     if POLL_IN_PROGRESS
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -180,7 +181,12 @@ pub fn spawn_poll(db: Arc<Db>, on_done: impl FnOnce() + Send + 'static) {
     }
     std::thread::spawn(move || {
         'poll: loop {
-            let _ = poll_once(&db);
+            match poll_once(&db) {
+                Ok(Some(summary)) => {
+                    crate::notify::check_copilot_usage(&app, &db, summary.percent_used);
+                }
+                _ => {}
+            }
             if POLL_QUEUED.swap(false, Ordering::SeqCst) {
                 // Run again with fresh credentials from the queue request.
                 continue;

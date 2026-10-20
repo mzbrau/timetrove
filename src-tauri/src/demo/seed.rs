@@ -785,6 +785,8 @@ fn write_jira_fixture(db_path: &Path, specs: &[Spec], booked_ms: &HashMap<usize,
                 assignee: ASSIGNEE.into(),
                 estimate_seconds: Some(est * 3600),
                 total_spent_seconds: Some(booked_s * 115 / 100),
+                comment_total: 0,
+                latest_comment_id: String::new(),
             })
         })
         .collect();
@@ -802,6 +804,8 @@ fn write_jira_fixture(db_path: &Path, specs: &[Spec], booked_ms: &HashMap<usize,
             assignee: ASSIGNEE.into(),
             estimate_seconds: est.map(|h: i64| h * 3600),
             total_spent_seconds: spent,
+                comment_total: 0,
+            latest_comment_id: String::new(),
         });
     }
     let out = db_path.with_file_name("jira-assigned.json");

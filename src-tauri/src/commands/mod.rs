@@ -314,6 +314,8 @@ pub fn refresh_jira_issue(
             assignee: task.jira_issue_assignee.clone(),
             estimate_seconds: task.jira_issue_estimate_s,
             total_spent_seconds: task.jira_issue_total_spent_s,
+                comment_total: 0,
+            latest_comment_id: String::new(),
         }));
     }
     let creds = jira_creds_if_enabled(&engine)?;
@@ -402,22 +404,29 @@ pub fn update_settings(
     }
     apply_tracker_always_on_top(&app, settings.tracker_always_on_top);
     apply_tracker_size(&app, &engine);
+    if crate::notify::any_notify_enabled(&settings) {
+        crate::notify::request_permission_if_needed(&app);
+    }
     engine.emit_state(&app);
     let _ = app.emit("settings-changed", &settings);
     // Kick a Copilot poll when enabling / saving credentials.
     if settings.copilot_enabled && !settings.copilot_api_token.trim().is_empty() {
         let eng = engine.inner().clone();
         let handle = app.clone();
-        crate::copilot::spawn_poll(engine.db().clone(), move || {
+        crate::copilot::spawn_poll(engine.db().clone(), app.clone(), move || {
             eng.emit_state(&handle);
         });
     }
     // Kick a GitHub activity poll when enabling / saving credentials.
     if settings.github_activity_enabled && !settings.copilot_api_token.trim().is_empty() {
         let handle = app.clone();
-        crate::github::spawn_poll(engine.db().clone(), move || {
+        crate::github::spawn_poll(engine.db().clone(), app.clone(), move || {
             let _ = handle.emit("github-activity-updated", ());
         });
+    }
+    // Kick a Jira assigned notify poll when enabling notifications.
+    if settings.notify_jira_assigned && settings.jira_enabled {
+        crate::notify::spawn_jira_notify_poll(engine.db().clone(), app.clone());
     }
     Ok(settings)
 }
@@ -476,9 +485,16 @@ pub async fn refresh_copilot_usage(
     }
     let db = engine.db().clone();
     let eng = engine.inner().clone();
-    let result = tauri::async_runtime::spawn_blocking(move || crate::copilot::poll_once(&db))
-        .await
-        .map_err(|e| e.to_string())?;
+    let app_n = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let out = crate::copilot::poll_once(&db)?;
+        if let Some(ref summary) = out {
+            crate::notify::check_copilot_usage(&app_n, &db, summary.percent_used);
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     eng.emit_state(&app);
     result
 }
@@ -500,9 +516,16 @@ pub async fn refresh_github_activity(
         return Err("Enable GitHub activity first".into());
     }
     let db = engine.db().clone();
-    let result = tauri::async_runtime::spawn_blocking(move || crate::github::poll_once(&db))
-        .await
-        .map_err(|e| e.to_string())?;
+    let app_n = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let out = crate::github::poll_once(&db)?;
+        if let Some(ref digest) = out {
+            crate::notify::check_github_activity(&app_n, &db, digest);
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     let _ = app.emit("github-activity-updated", ());
     result
 }

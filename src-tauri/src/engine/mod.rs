@@ -234,6 +234,7 @@ impl Engine {
     pub fn emit_state(&self, app: &AppHandle) {
         match self.snapshot() {
             Ok(state) => {
+                crate::notify::check_daily_goal(app, &self.db, &state);
                 let _ = app.emit("tracker-state", &state);
             }
             Err(e) => {

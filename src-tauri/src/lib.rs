@@ -7,6 +7,7 @@ mod domain;
 mod engine;
 mod github;
 mod jira;
+mod notify;
 
 #[cfg(test)]
 mod test_support;
@@ -34,7 +35,9 @@ pub use demo::seed::seed_demo_db;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let demo_mode = demo::enabled();
-    let mut builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init());
     if !demo_mode {
         builder = builder.plugin(
             WindowStateBuilder::new()
@@ -133,8 +136,13 @@ pub fn run() {
 
         setup_tray(app.handle(), engine.clone())?;
 
-        // Register global shortcut from settings
+        notify::register_action_handler(app.handle());
         let settings = engine.db().get_settings().unwrap_or_default();
+        if notify::any_notify_enabled(&settings) {
+            notify::request_permission_if_needed(app.handle());
+        }
+
+        // Register global shortcut from settings
         let shortcut: Shortcut = settings
             .switch_shortcut
             .parse()
@@ -165,6 +173,7 @@ pub fn run() {
             let mut last_jira_sync = std::time::Instant::now();
             let mut last_copilot_sync = std::time::Instant::now();
             let mut last_github_activity_sync = std::time::Instant::now();
+            let mut last_jira_notify_sync = std::time::Instant::now();
             // Startup gap check shortly after launch
             std::thread::sleep(Duration::from_secs(1));
             if !demo_mode {
@@ -174,16 +183,20 @@ pub fn run() {
             {
                 let eng_c = eng.clone();
                 let handle_c = handle.clone();
-                copilot::spawn_poll(eng.db().clone(), move || {
+                copilot::spawn_poll(eng.db().clone(), handle.clone(), move || {
                     eng_c.emit_state(&handle_c);
                 });
             }
             // First GitHub activity poll soon after launch when enabled.
             {
                 let handle_g = handle.clone();
-                github::spawn_poll(eng.db().clone(), move || {
+                github::spawn_poll(eng.db().clone(), handle.clone(), move || {
                     let _ = handle_g.emit("github-activity-updated", ());
                 });
+            }
+            // First Jira assigned notify poll soon after launch when enabled.
+            {
+                notify::spawn_jira_notify_poll(eng.db().clone(), handle.clone());
             }
             loop {
                 std::thread::sleep(Duration::from_secs(5));
@@ -218,7 +231,7 @@ pub fn run() {
                     last_copilot_sync = std::time::Instant::now();
                     let eng_c = eng.clone();
                     let handle_c = handle.clone();
-                    copilot::spawn_poll(eng.db().clone(), move || {
+                    copilot::spawn_poll(eng.db().clone(), handle.clone(), move || {
                         eng_c.emit_state(&handle_c);
                     });
                 }
@@ -228,9 +241,16 @@ pub fn run() {
                 if last_github_activity_sync.elapsed() >= github_interval {
                     last_github_activity_sync = std::time::Instant::now();
                     let handle_g = handle.clone();
-                    github::spawn_poll(eng.db().clone(), move || {
+                    github::spawn_poll(eng.db().clone(), handle.clone(), move || {
                         let _ = handle_g.emit("github-activity-updated", ());
                     });
+                }
+
+                let jira_notify_interval =
+                    Duration::from_secs(notify::jira_poll_interval_secs());
+                if last_jira_notify_sync.elapsed() >= jira_notify_interval {
+                    last_jira_notify_sync = std::time::Instant::now();
+                    notify::spawn_jira_notify_poll(eng.db().clone(), handle.clone());
                 }
             }
         });
