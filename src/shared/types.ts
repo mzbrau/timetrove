@@ -215,8 +215,6 @@ export interface GithubActivityDigest {
   fetchedAt: string | null;
   lastSyncedAt: string | null;
   lastError: string | null;
-  /** Human-readable fetch log for diagnosing empty successful syncs. */
-  diagnostics?: string[];
 }
 
 export interface JiraConnectionTestEvent {

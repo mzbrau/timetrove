@@ -361,9 +361,6 @@ pub struct GithubActivityDigest {
     pub fetched_at: Option<String>,
     pub last_synced_at: Option<String>,
     pub last_error: Option<String>,
-    /// Human-readable fetch log for diagnosing empty successful syncs.
-    #[serde(default)]
-    pub diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
