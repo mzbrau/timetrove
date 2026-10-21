@@ -542,6 +542,20 @@
   gap: var(--s2);
 }
 
+.timesheet-table button.timesheet-row-toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .timesheet-format-toggle {
   display: inline-flex;
   border: 1px solid var(--line);
@@ -1613,15 +1627,17 @@
 }
 
 .jira-key-cell:hover .jira-key-copy,
-.jira-table tbody tr:hover .jira-key-copy {
+.jira-table tbody tr:hover .jira-key-copy,
+.jira-key-copy:focus,
+.jira-key-copy:focus-visible {
   opacity: 1;
 }
 
-.jira-key-copy:hover {
+.jira-key-copy:hover,
+.jira-key-copy:focus,
+.jira-key-copy:focus-visible {
   color: var(--ink);
   background: var(--accent-soft);
-}
-  cursor: default;
 }
 
 button.linkish {

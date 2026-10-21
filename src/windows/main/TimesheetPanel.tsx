@@ -261,13 +261,28 @@ export function TimesheetPanel() {
                     }
                   >
                     <td>
-                      <div className="task-cell">
+                      <button
+                        type="button"
+                        className="task-cell timesheet-row-toggle"
+                        aria-pressed={selected}
+                        aria-label={
+                          selected
+                            ? `Clear selection for ${row.task.name}`
+                            : `Select row for ${row.task.name}`
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedTaskId((prev) =>
+                            prev === row.task.id ? null : row.task.id,
+                          );
+                        }}
+                      >
                         <span
                           className="dot"
                           style={{ background: row.task.color }}
                         />
                         {row.task.name}
-                      </div>
+                      </button>
                     </td>
                     {row.cells.map((c) => {
                       const hasNotes = Boolean(c.notes?.trim());
