@@ -542,9 +542,75 @@
   gap: var(--s2);
 }
 
+.timesheet-table button.timesheet-row-toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.timesheet-format-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.timesheet-format-toggle button {
+  border: none;
+  border-radius: 0;
+  background: var(--control-bg);
+  color: var(--muted);
+  padding: var(--s2) var(--s3);
+  font-size: 0.82rem;
+}
+
+.timesheet-format-toggle button + button {
+  border-left: 1px solid var(--line);
+}
+
+.timesheet-format-toggle button.active {
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.timesheet-table tbody tr {
+  cursor: pointer;
+}
+
+.timesheet-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+}
+
+.timesheet-table tbody tr.timesheet-row-selected td {
+  background: var(--accent-soft);
+}
+
 .timesheet-table .total-cell {
   font-weight: 700;
   color: var(--ink);
+  background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
+}
+
+.timesheet-table tfoot th.total-cell {
+  background: color-mix(in srgb, var(--accent-soft) 70%, transparent);
+}
+
+.timesheet-table tbody tr.timesheet-row-selected td.total-cell {
+  background: color-mix(in srgb, var(--accent-soft) 85%, var(--panel));
+}
+
+.timesheet-table .timesheet-weekend {
+  color: var(--muted);
+  opacity: 0.65;
 }
 
 .timesheet-day-cell.has-notes {
@@ -1537,7 +1603,41 @@
 
 .jira-open-btn:disabled {
   opacity: 0.4;
-  cursor: default;
+}
+
+.jira-key-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.jira-key-copy {
+  appearance: none;
+  -webkit-appearance: none;
+  opacity: 0;
+  border: 1px solid var(--line);
+  background: var(--control-bg);
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+
+.jira-key-cell:hover .jira-key-copy,
+.jira-table tbody tr:hover .jira-key-copy,
+.jira-key-copy:focus,
+.jira-key-copy:focus-visible {
+  opacity: 1;
+}
+
+.jira-key-copy:hover,
+.jira-key-copy:focus,
+.jira-key-copy:focus-visible {
+  color: var(--ink);
+  background: var(--accent-soft);
 }
 
 button.linkish {

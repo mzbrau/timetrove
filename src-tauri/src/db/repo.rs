@@ -686,6 +686,25 @@ impl Db {
         })
     }
 
+    /// Closed slice for `task_id` whose end equals `boundary` (exact contiguous predecessor).
+    pub fn find_closed_ending_at(
+        &self,
+        task_id: &str,
+        boundary: DateTime<Utc>,
+    ) -> Result<Option<TimeSlice>, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT id, task_id, start, end, note FROM time_slices
+                 WHERE task_id = ?1 AND end = ?2
+                 LIMIT 1",
+                params![task_id, boundary.to_rfc3339()],
+                map_slice,
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+        })
+    }
+
     pub fn update_slice(&self, input: UpdateSliceInput) -> Result<TimeSlice, String> {
         let mut slice = self
             .get_slice(&input.id)?

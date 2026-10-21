@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatGap, formatHm, formatHms, normalizeHexColor } from "./format";
+import {
+  formatDecimalHours,
+  formatGap,
+  formatHm,
+  formatHms,
+  normalizeHexColor,
+} from "./format";
 
 describe("formatGap", () => {
   it("formats minutes only under an hour", () => {
@@ -36,6 +42,20 @@ describe("formatHms", () => {
     expect(formatHms(999)).toBe("00:00:00");
     expect(formatHms(25 * 3_600_000)).toBe("25:00:00");
     expect(formatHms(-1)).toBe("00:00:00");
+  });
+});
+
+describe("formatDecimalHours", () => {
+  it("formats floored minutes as decimal hours", () => {
+    expect(formatDecimalHours(0)).toBe("0");
+    expect(formatDecimalHours(3.5 * 60 * 60_000)).toBe("3.5");
+    expect(formatDecimalHours(3 * 60 * 60_000)).toBe("3");
+    expect(formatDecimalHours(3 * 60 * 60_000 + 20 * 60_000)).toBe("3.33");
+  });
+
+  it("floors partial minutes like format_hhmm", () => {
+    expect(formatDecimalHours(59_999)).toBe("0");
+    expect(formatDecimalHours(60_000)).toBe("0.02");
   });
 });
 

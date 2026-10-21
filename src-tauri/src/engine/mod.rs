@@ -73,7 +73,16 @@ impl Engine {
                 .get_last_good_at()?
                 .unwrap_or(slice.start);
             if cutoff < slice.start {
-                cutoff = slice.start;
+                // After midnight auto-split the running slice starts at midnight while
+                // last_good_at may still be earlier. Keep that checkpoint when a
+                // same-task closed predecessor ends exactly at slice.start.
+                let autosplit = self
+                    .db
+                    .find_closed_ending_at(&slice.task_id, slice.start)?
+                    .is_some();
+                if !autosplit {
+                    cutoff = slice.start;
+                }
             }
             if cutoff > now {
                 cutoff = now;
@@ -357,17 +366,56 @@ impl Engine {
             .db
             .get_slice(&slice_id)?
             .ok_or_else(|| "Missing running slice".to_string())?;
+        let running_start = slice.start;
         if gap_start > slice.start {
             self.db.close_slice(&slice_id, gap_start)?;
         } else {
             // gap starts at/before slice start — delete zero-length work
             self.db.delete_slice(&slice_id)?;
+            // Retract contiguous auto-split stubs (e.g. evening→midnight) that were
+            // booked past the true idle start while still Tracking.
+            self.retract_post_idle_slices(&task_id, gap_start, running_start)?;
         }
         *self.phase.lock() = EnginePhase::NeedsAttribution {
             gap_start,
             previous_task_id: task_id,
         };
         self.db.set_last_good_at(None)?;
+        Ok(())
+    }
+
+    /// Remove or truncate same-task closed slices that end at `boundary` and overlap
+    /// `[gap_start, …)` (walk predecessors while contiguous).
+    fn retract_post_idle_slices(
+        &self,
+        task_id: &str,
+        gap_start: chrono::DateTime<Utc>,
+        mut boundary: chrono::DateTime<Utc>,
+    ) -> Result<(), String> {
+        loop {
+            let Some(pred) = self.db.find_closed_ending_at(task_id, boundary)? else {
+                break;
+            };
+            let pred_end = pred
+                .end
+                .ok_or_else(|| "Expected closed predecessor slice".to_string())?;
+            if gap_start >= pred_end {
+                break;
+            }
+            if gap_start <= pred.start {
+                boundary = pred.start;
+                self.db.delete_slice(&pred.id)?;
+                continue;
+            }
+            self.db.update_slice(UpdateSliceInput {
+                id: pred.id,
+                task_id: None,
+                start: None,
+                end: Some(gap_start),
+                note: None,
+            })?;
+            break;
+        }
         Ok(())
     }
 
@@ -584,8 +632,8 @@ impl Engine {
             task_id,
             slice_id: new_slice.id,
         };
-        // Keep heartbeat aligned with continued tracking after the split.
-        let _ = self.db.set_last_good_at(Some(Utc::now()));
+        // Do not refresh last_good_at — preserve the real last-activity checkpoint so
+        // a morning gap can still start before midnight when the user was idle overnight.
         Ok(())
     }
 
@@ -1438,6 +1486,7 @@ mod tests {
         let today = Local::now().date_naive();
         let midnight = local_midnight_on(today);
         let before = midnight - Duration::hours(2);
+        let checkpoint = midnight - Duration::hours(1);
         let slice = eng
             .db()
             .replace_running_slice(None, &task.id, before, "overnight")
@@ -1446,10 +1495,12 @@ mod tests {
             task_id: task.id.clone(),
             slice_id: slice.id.clone(),
         };
+        eng.db().set_last_good_at(Some(checkpoint)).unwrap();
         eng.midnight_split().unwrap();
         let old = eng.db().get_slice(&slice.id).unwrap().unwrap();
         assert_eq!(old.end, Some(midnight));
         assert_eq!(old.note, "overnight");
+        assert_eq!(eng.db().get_last_good_at().unwrap(), Some(checkpoint));
         let phase = eng.phase.lock().clone();
         match phase {
             EnginePhase::Tracking { slice_id, .. } => {
@@ -1461,6 +1512,121 @@ mod tests {
             }
             other => panic!("unexpected phase {other:?}"),
         }
+    }
+
+    #[test]
+    fn midnight_split_then_discard_retracts_overnight_idle() {
+        let (_dir, eng) = engine_empty();
+        let task = make_task(eng.db(), "Overnight");
+        let today = Local::now().date_naive();
+        let midnight = local_midnight_on(today);
+        let evening_start = midnight - Duration::hours(3);
+        let last_good = midnight - Duration::hours(2);
+        let slice = eng
+            .db()
+            .replace_running_slice(None, &task.id, evening_start, "")
+            .unwrap();
+        *eng.phase.lock() = EnginePhase::Tracking {
+            task_id: task.id.clone(),
+            slice_id: slice.id.clone(),
+        };
+        eng.db().set_last_good_at(Some(last_good)).unwrap();
+        eng.midnight_split().unwrap();
+
+        eng.begin_gap(last_good).unwrap();
+        assert!(matches!(
+            eng.phase.lock().clone(),
+            EnginePhase::NeedsAttribution { gap_start, .. } if gap_start == last_good
+        ));
+
+        // Pre-idle evening work remains; idle through midnight is no longer booked.
+        let kept = eng.db().get_slice(&slice.id).unwrap().unwrap();
+        assert_eq!(kept.start, evening_start);
+        assert_eq!(kept.end, Some(last_good));
+        let after_gap: Vec<_> = eng
+            .db()
+            .list_slices_between(last_good, midnight + Duration::hours(1))
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.task_id == task.id)
+            .collect();
+        assert!(
+            after_gap.is_empty(),
+            "expected no task time after last_good, got {after_gap:?}"
+        );
+
+        eng.resolve_gap_discard().unwrap();
+        let discards = eng
+            .db()
+            .list_discards_between(last_good - Duration::seconds(1), Utc::now() + Duration::seconds(1))
+            .unwrap();
+        assert_eq!(discards.len(), 1);
+        assert_eq!(discards[0].start, last_good);
+        // Pre-idle slice still present after discard.
+        let kept_after = eng.db().get_slice(&slice.id).unwrap().unwrap();
+        assert_eq!(kept_after.end, Some(last_good));
+    }
+
+    #[test]
+    fn midnight_split_restart_preserves_pre_midnight_checkpoint() {
+        let (_dir, db) = test_db();
+        let eng = Engine::new(db.clone());
+        let task = make_task(eng.db(), "RestartOvernight");
+        let today = Local::now().date_naive();
+        let midnight = local_midnight_on(today);
+        let evening_start = midnight - Duration::hours(3);
+        let last_good = midnight - Duration::hours(2);
+        let slice = eng
+            .db()
+            .replace_running_slice(None, &task.id, evening_start, "")
+            .unwrap();
+        *eng.phase.lock() = EnginePhase::Tracking {
+            task_id: task.id.clone(),
+            slice_id: slice.id.clone(),
+        };
+        eng.db().set_last_good_at(Some(last_good)).unwrap();
+        eng.midnight_split().unwrap();
+        assert_eq!(eng.db().get_last_good_at().unwrap(), Some(last_good));
+
+        // Simulate app quit/restart after the split but before attribution.
+        drop(eng);
+        let eng2 = Engine::new(db);
+
+        match eng2.phase.lock().clone() {
+            EnginePhase::NeedsAttribution { gap_start, .. } => {
+                let delta = (gap_start - last_good).num_seconds().abs();
+                assert!(
+                    delta <= 1,
+                    "gap_start={gap_start} last_good={last_good}"
+                );
+            }
+            other => panic!("expected NeedsAttribution, got {other:?}"),
+        }
+
+        let kept = eng2.db().get_slice(&slice.id).unwrap().unwrap();
+        assert_eq!(kept.start, evening_start);
+        assert_eq!(kept.end, Some(last_good));
+        let after_gap: Vec<_> = eng2
+            .db()
+            .list_slices_between(last_good, midnight + Duration::hours(1))
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.task_id == task.id)
+            .collect();
+        assert!(
+            after_gap.is_empty(),
+            "expected no task time after last_good, got {after_gap:?}"
+        );
+
+        eng2.resolve_gap_discard().unwrap();
+        let discards = eng2
+            .db()
+            .list_discards_between(last_good - Duration::seconds(1), Utc::now() + Duration::seconds(1))
+            .unwrap();
+        assert_eq!(discards.len(), 1);
+        assert_eq!(discards[0].start, last_good);
+        let kept_after = eng2.db().get_slice(&slice.id).unwrap().unwrap();
+        assert_eq!(kept_after.end, Some(last_good));
     }
 
     #[test]

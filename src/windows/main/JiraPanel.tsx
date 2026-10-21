@@ -203,14 +203,28 @@ export function JiraPanel({ active }: Props) {
                         </button>
                       </td>
                       <td className="mono">
-                        <button
-                          type="button"
-                          className="linkish"
-                          onClick={() => openIssue(issue)}
-                          disabled={!issue.browseUrl}
-                        >
-                          {issue.issueKey}
-                        </button>
+                        <div className="jira-key-cell">
+                          <button
+                            type="button"
+                            className="linkish"
+                            onClick={() => openIssue(issue)}
+                            disabled={!issue.browseUrl}
+                          >
+                            {issue.issueKey}
+                          </button>
+                          <button
+                            type="button"
+                            className="jira-key-copy"
+                            title="Copy key"
+                            aria-label={`Copy ${issue.issueKey}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void navigator.clipboard.writeText(issue.issueKey);
+                            }}
+                          >
+                            Copy
+                          </button>
+                        </div>
                       </td>
                       <td>{issue.summary || "—"}</td>
                       <td>{issue.status || "—"}</td>
