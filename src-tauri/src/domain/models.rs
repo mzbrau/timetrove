@@ -345,6 +345,12 @@ pub struct GithubPrSummary {
     pub reviews_summary: String,
     /// True when the viewer still needs to submit a review.
     pub needs_my_review: bool,
+    /// Head commit OID (for notification diffing / optional UI).
+    #[serde(default)]
+    pub head_oid: String,
+    /// Total commits on the PR (for add/remove notification diffing).
+    #[serde(default)]
+    pub commit_count: u32,
     /// Internal: logins currently requested as reviewers (not sent to UI).
     #[serde(default, skip_serializing)]
     pub requested_reviewer_logins: Vec<String>,

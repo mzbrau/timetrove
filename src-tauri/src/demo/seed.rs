@@ -706,6 +706,8 @@ fn seed_github(db: &Db, now: DateTime<Utc>) -> Result<(), String> {
             unresolved_comment_count: comments,
             reviews_summary: reviews.into(),
             needs_my_review: needs,
+            head_oid: format!("seed{number:04x}"),
+            commit_count: 3 + (number as u32 % 5),
             requested_reviewer_logins: vec![],
             reviews_fingerprint: String::new(),
         }

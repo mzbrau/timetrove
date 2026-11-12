@@ -177,71 +177,142 @@ fn resolve_icon_path(app: &AppHandle, kind: NotifyKind) -> Option<PathBuf> {
             .join("notify")
             .join(file),
     );
-    candidates.into_iter().find(|p| p.is_file())
+    candidates.into_iter().find_map(|p| {
+        if !p.is_file() {
+            return None;
+        }
+        std::fs::canonicalize(&p).ok().or(Some(p))
+    })
 }
 
-#[allow(unused_variables)]
-fn configure_platform(notification: &mut notify_rust::Notification, app: &AppHandle) {
-    #[cfg(windows)]
-    {
-        let identifier = app.config().identifier.clone();
-        let sep = std::path::MAIN_SEPARATOR;
-        if let Ok(exe) = tauri::utils::platform::current_exe() {
-            if let Some(exe_dir) = exe.parent() {
-                let curr_dir = exe_dir.display().to_string();
-                let debug_suffix = format!("{sep}target{sep}debug");
-                let release_suffix = format!("{sep}target{sep}release");
-                if !(curr_dir.ends_with(&debug_suffix) || curr_dir.ends_with(&release_suffix)) {
-                    notification.app_id(&identifier);
-                }
+#[cfg(windows)]
+fn windows_app_id(app: &AppHandle) -> String {
+    let identifier = app.config().identifier.clone();
+    let sep = std::path::MAIN_SEPARATOR;
+    if let Ok(exe) = tauri::utils::platform::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            let curr_dir = exe_dir.display().to_string();
+            let debug_suffix = format!("{sep}target{sep}debug");
+            let release_suffix = format!("{sep}target{sep}release");
+            if curr_dir.ends_with(&debug_suffix) || curr_dir.ends_with(&release_suffix) {
+                // Dev builds: leave default (PowerShell) app id so toasts still appear.
+                return String::new();
             }
         }
     }
+    identifier
+}
+
+/// Show an OS notification with a left-hand per-kind icon.
+pub fn show(app: &AppHandle, title: &str, body: &str, action: ClickAction, kind: NotifyKind) {
+    let icon = resolve_icon_path(app, kind);
+    let handle = app.clone();
+    let title = title.to_string();
+    let body = body.to_string();
+
     #[cfg(target_os = "macos")]
     {
         let identifier = app.config().identifier.clone();
-        let _ = notify_rust::set_application(if tauri::is_dev() {
+        let _ = mac_notification_sys::set_application(if tauri::is_dev() {
             "com.apple.Terminal"
         } else {
             &identifier
         });
+        let _ = std::thread::Builder::new()
+            .name("timetrove-notify".into())
+            .spawn(move || {
+                show_macos(&title, &body, icon.as_deref(), &handle, &action);
+            });
+        return;
+    }
+
+    #[cfg(windows)]
+    {
+        let app_id = windows_app_id(app);
+        let _ = std::thread::Builder::new()
+            .name("timetrove-notify".into())
+            .spawn(move || {
+                show_windows(&title, &body, icon.as_deref(), &app_id, &handle, &action);
+            });
+        return;
+    }
+
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = (icon, handle, title, body, action, kind);
     }
 }
 
-/// Show an OS notification with a per-kind image (via notify-rust `image_path`).
-pub fn show(app: &AppHandle, title: &str, body: &str, action: ClickAction, kind: NotifyKind) {
-    let mut notification = notify_rust::Notification::new();
-    notification.summary(title).body(body);
-    // macOS NSUserNotification only waits for a response when there is a main/close
-    // button or wait_for_click; without this, wait_for_response returns Closed(Expired)
-    // immediately and banner taps never reach perform_click.
-    notification.action("default", "Open");
-    if let Some(path) = resolve_icon_path(app, kind) {
-        if let Some(s) = path.to_str() {
-            notification.image_path(s);
-        }
+#[cfg(target_os = "macos")]
+fn show_macos(
+    title: &str,
+    body: &str,
+    icon: Option<&Path>,
+    handle: &AppHandle,
+    action: &ClickAction,
+) {
+    let mut n = mac_notification_sys::Notification::default();
+    n.title(title)
+        .message(body)
+        .main_button(mac_notification_sys::MainButton::SingleAction("Open"));
+    let icon_str;
+    if let Some(path) = icon.and_then(|p| p.to_str()) {
+        icon_str = path.to_string();
+        // Left-hand identity image (private API via mac-notification-sys).
+        n.app_icon(&icon_str);
+        // Secondary right-side content image as a fallback cue.
+        n.content_image(&icon_str);
     }
-    configure_platform(&mut notification, app);
+    match n.send() {
+        Ok(mac_notification_sys::NotificationResponse::ActionButton(_))
+        | Ok(mac_notification_sys::NotificationResponse::Click) => {
+            perform_click(handle, action);
+        }
+        _ => {}
+    }
+}
 
-    let handle = app.clone();
-    let _ = std::thread::Builder::new()
-        .name("timetrove-notify".into())
-        .spawn(move || {
-            let Ok(shown) = notification.show() else {
-                return;
-            };
-            let _ = shown.wait_for_response(|response: &notify_rust::NotificationResponse| {
-                match response {
-                    notify_rust::NotificationResponse::Default => {
-                        perform_click(&handle, &action);
-                    }
-                    notify_rust::NotificationResponse::Action(id) if id == "default" => {
-                        perform_click(&handle, &action);
-                    }
-                    _ => {}
-                }
-            });
+#[cfg(windows)]
+fn show_windows(
+    title: &str,
+    body: &str,
+    icon: Option<&Path>,
+    app_id: &str,
+    handle: &AppHandle,
+    action: &ClickAction,
+) {
+    use std::sync::mpsc::channel;
+    use tauri_winrt_notification::{IconCrop, Toast};
+
+    let (tx, rx) = channel();
+    let activated_tx = tx.clone();
+
+    let app_id = if app_id.is_empty() {
+        Toast::POWERSHELL_APP_ID
+    } else {
+        app_id
+    };
+
+    let mut toast = Toast::new(app_id).title(title).text2(body);
+    if let Some(path) = icon {
+        toast = toast.icon(path, IconCrop::Rectangular, "");
+    }
+    toast = toast
+        .on_activated(move |_action| {
+            let _ = activated_tx.send(true);
+            Ok(())
+        })
+        .on_dismissed(move |_reason| {
+            let _ = tx.send(false);
+            Ok(())
         });
+
+    if toast.show().is_err() {
+        return;
+    }
+    if matches!(rx.recv(), Ok(true)) {
+        perform_click(handle, action);
+    }
 }
 
 /// Format a list of item labels for a notification body.
@@ -268,6 +339,28 @@ pub(crate) fn click_for_items(urls: &[String], multi_tab: &str) -> ClickAction {
         _ => ClickAction::Tab {
             tab: multi_tab.to_string(),
         },
+    }
+}
+
+/// Humanize GitHub check rollup states for notification copy.
+pub(crate) fn humanize_check_status(status: &str) -> String {
+    match status.trim().to_ascii_uppercase().as_str() {
+        "SUCCESS" => "Checks pass".into(),
+        "FAILURE" | "ERROR" => "Checks fail".into(),
+        "PENDING" | "EXPECTED" => "Checks pending".into(),
+        "" => "No checks".into(),
+        other => other.replace('_', " "),
+    }
+}
+
+/// Humanize GitHub review decision enums for notification copy.
+pub(crate) fn humanize_review_decision(decision: &str) -> String {
+    match decision.trim().to_ascii_uppercase().as_str() {
+        "APPROVED" => "Approved".into(),
+        "CHANGES_REQUESTED" => "Changes requested".into(),
+        "REVIEW_REQUIRED" => "Review required".into(),
+        "" => "No decision".into(),
+        other => other.replace('_', " "),
     }
 }
 
@@ -299,6 +392,9 @@ mod tests {
                 "missing notify icon {}",
                 path.display()
             );
+            let canon = std::fs::canonicalize(&path).expect("canonicalize icon");
+            assert!(canon.is_absolute());
+            assert!(Path::new(&canon).extension().is_some_and(|e| e == "png"));
         }
     }
 
@@ -311,5 +407,17 @@ mod tests {
             .join(NotifyKind::Goal.icon_file());
         assert!(path.is_file());
         assert!(Path::new(&path).extension().is_some_and(|e| e == "png"));
+    }
+
+    #[test]
+    fn humanizes_github_enums() {
+        assert_eq!(humanize_check_status("PENDING"), "Checks pending");
+        assert_eq!(humanize_check_status("SUCCESS"), "Checks pass");
+        assert_eq!(humanize_check_status("FAILURE"), "Checks fail");
+        assert_eq!(humanize_review_decision("REVIEW_REQUIRED"), "Review required");
+        assert_eq!(
+            humanize_review_decision("CHANGES_REQUESTED"),
+            "Changes requested"
+        );
     }
 }
