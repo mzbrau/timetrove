@@ -108,6 +108,8 @@ export const api = {
   getSettings: () => invokeManaged<Settings>("get_settings"),
   updateSettings: (settings: Settings) =>
     invokeManaged<Settings>("update_settings", { settings }),
+  setJiraBoardLaneOrder: (order: string[]) =>
+    invokeManaged<Settings>("set_jira_board_lane_order", { order }),
   getTimesheet: (weekStart: string) =>
     invokeManaged<Timesheet>("get_timesheet", { weekStart }),
   getInsights: (rangeStart: string, rangeEnd: string) =>

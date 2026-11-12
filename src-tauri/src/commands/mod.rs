@@ -437,6 +437,20 @@ pub fn update_settings(
     Ok(settings)
 }
 
+/// Persist Jira board lane order without kicking Copilot/GitHub/Jira polls.
+#[tauri::command]
+pub fn set_jira_board_lane_order(
+    engine: State<'_, Arc<Engine>>,
+    app: AppHandle,
+    order: Vec<String>,
+) -> Result<Settings, String> {
+    let mut settings = engine.db().get_settings()?;
+    settings.jira_board_lane_order = order;
+    engine.db().update_settings(&settings)?;
+    let _ = app.emit("settings-changed", &settings);
+    Ok(settings)
+}
+
 static COPILOT_CONNECTION_TEST_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Serialize)]
@@ -540,6 +554,9 @@ pub async fn get_github_pr_detail(
     }
     let db = engine.db().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        if crate::demo::enabled() {
+            return crate::github::demo_pr_detail(&db, &repo_full_name, number);
+        }
         let Some((config, _)) = crate::github::credentials_from_db(&db)? else {
             return Err("GitHub API token is required".into());
         };

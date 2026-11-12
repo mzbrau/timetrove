@@ -24,7 +24,6 @@ import {
 import type {
   JiraAssignedIssuesResult,
   JiraDashboardIssue,
-  Settings,
 } from "../../shared/types";
 import { JiraBoard } from "./JiraBoard";
 
@@ -188,9 +187,7 @@ export function JiraPanel({ active }: Props) {
   const persistLaneOrder = async (nextOrder: string[]) => {
     setLaneOrder(nextOrder);
     try {
-      const settings = await api.getSettings();
-      const next: Settings = { ...settings, jiraBoardLaneOrder: nextOrder };
-      const saved = await api.updateSettings(next);
+      const saved = await api.setJiraBoardLaneOrder(nextOrder);
       setLaneOrder(saved.jiraBoardLaneOrder ?? nextOrder);
     } catch (e) {
       setError(String(e));

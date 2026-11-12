@@ -1772,6 +1772,45 @@
   white-space: nowrap;
 }
 
+.jira-lane-header-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-shrink: 0;
+}
+
+.jira-lane-reorder {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.jira-lane-move {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  padding: 0 0.35rem;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-2, transparent);
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.jira-lane-move:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text-muted, var(--muted));
+}
+
+.jira-lane-move:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .jira-lane-count {
   font-size: 0.8rem;
 }

@@ -304,6 +304,7 @@ pub fn run() {
             commands::resolve_gap_discard,
             commands::get_settings,
             commands::update_settings,
+            commands::set_jira_board_lane_order,
             commands::start_jira_connection_test,
             commands::fetch_jira_issue,
             commands::refresh_jira_issue,
