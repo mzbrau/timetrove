@@ -89,7 +89,41 @@ export function JiraBoard({
               }}
             >
               <span className="jira-lane-title">{lane}</span>
-              <span className="jira-lane-count mono muted">{cards.length}</span>
+              <div className="jira-lane-header-meta">
+                <div className="jira-lane-reorder">
+                  <button
+                    type="button"
+                    className="jira-lane-move"
+                    aria-label={`Move ${lane} lane left`}
+                    title={`Move ${lane} left`}
+                    disabled={index === 0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      commitReorder(index, index - 1);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onDragStart={(e) => e.preventDefault()}
+                  >
+                    ←
+                  </button>
+                  <button
+                    type="button"
+                    className="jira-lane-move"
+                    aria-label={`Move ${lane} lane right`}
+                    title={`Move ${lane} right`}
+                    disabled={index === lanes.length - 1}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      commitReorder(index, index + 1);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onDragStart={(e) => e.preventDefault()}
+                  >
+                    →
+                  </button>
+                </div>
+                <span className="jira-lane-count mono muted">{cards.length}</span>
+              </div>
             </header>
             <div className="jira-lane-cards">
               {cards.map((issue) => {

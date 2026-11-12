@@ -168,7 +168,7 @@ query($owner: String!, $name: String!, $number: Int!) {
         itemTypes: [
           PULL_REQUEST_COMMIT
           ISSUE_COMMENT
-          PULL_REQUEST_REVIEW_COMMENT
+          PULL_REQUEST_REVIEW_THREAD
           PULL_REQUEST_REVIEW
           CLOSED_EVENT
           REOPENED_EVENT
@@ -191,11 +191,15 @@ query($owner: String!, $name: String!, $number: Int!) {
             createdAt
             url
           }
-          ... on PullRequestReviewComment {
-            author { login }
-            body
-            createdAt
-            url
+          ... on PullRequestReviewThread {
+            comments(first: 1) {
+              nodes {
+                author { login }
+                body
+                createdAt
+                url
+              }
+            }
           }
           ... on PullRequestReview {
             author { login }
@@ -988,17 +992,33 @@ fn parse_timeline_node(n: &Value) -> Option<GithubPrTimelineItem> {
             summary: truncate_body(n.get("body").and_then(|v| v.as_str()).unwrap_or("")),
             url: n.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         }),
-        "PullRequestReviewComment" => Some(GithubPrTimelineItem {
-            kind: GithubPrTimelineKind::ReviewComment,
-            at: n.get("createdAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            actor: n
-                .pointer("/author/login")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?")
-                .to_string(),
-            summary: truncate_body(n.get("body").and_then(|v| v.as_str()).unwrap_or("")),
-            url: n.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        }),
+        "PullRequestReviewThread" => {
+            let comment = n
+                .pointer("/comments/nodes")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.first())?;
+            Some(GithubPrTimelineItem {
+                kind: GithubPrTimelineKind::ReviewComment,
+                at: comment
+                    .get("createdAt")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                actor: comment
+                    .pointer("/author/login")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+                summary: truncate_body(
+                    comment.get("body").and_then(|v| v.as_str()).unwrap_or(""),
+                ),
+                url: comment
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            })
+        }
         "PullRequestReview" => {
             let state = n.get("state").and_then(|v| v.as_str()).unwrap_or("COMMENTED");
             let body = n.get("body").and_then(|v| v.as_str()).unwrap_or("");
@@ -1741,6 +1761,17 @@ mod tests {
                         "url": "https://github.com/acme/app/pull/42#issuecomment-1"
                     },
                     {
+                        "__typename": "PullRequestReviewThread",
+                        "comments": {
+                            "nodes": [{
+                                "author": { "login": "carol" },
+                                "body": "Nit: rename this helper",
+                                "createdAt": "2026-11-02T11:30:00Z",
+                                "url": "https://github.com/acme/app/pull/42#discussion_r1"
+                            }]
+                        }
+                    },
+                    {
                         "__typename": "ClosedEvent",
                         "createdAt": "2026-11-03T01:00:00Z",
                         "actor": { "login": "alice" }
@@ -1764,8 +1795,8 @@ mod tests {
         assert_eq!(detail.open_threads.len(), 1);
         assert_eq!(detail.open_threads[0].path, "src/b.rs");
         assert_eq!(detail.open_threads[0].line, Some(12));
-        // Synthetic Opened + 3 timeline items, newest first.
-        assert_eq!(detail.timeline.len(), 4);
+        // Synthetic Opened + 4 timeline items, newest first.
+        assert_eq!(detail.timeline.len(), 5);
         assert_eq!(detail.timeline[0].kind, GithubPrTimelineKind::Closed);
         assert!(detail
             .timeline
@@ -1776,6 +1807,11 @@ mod tests {
             .iter()
             .any(|t| t.kind == GithubPrTimelineKind::Commit
                 && t.summary.starts_with("abcdef0")));
+        assert!(detail.timeline.iter().any(|t| {
+            t.kind == GithubPrTimelineKind::ReviewComment
+                && t.actor == "carol"
+                && t.summary.contains("rename")
+        }));
     }
 
     #[test]

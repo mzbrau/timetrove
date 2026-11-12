@@ -173,24 +173,28 @@ pub fn diff_github(
                     ));
                 }
 
-                // Commit / head changes: prefer count deltas; OID-only when count unchanged.
-                if cur.commit_count > old.commit_count {
-                    let delta = i64::from(cur.commit_count) - i64::from(old.commit_count);
-                    commits_added.push((
-                        with_detail(&cur.label, &commit_delta_label(delta)),
-                        url.clone(),
-                    ));
-                } else if cur.commit_count < old.commit_count {
-                    let delta = i64::from(cur.commit_count) - i64::from(old.commit_count);
-                    commits_removed.push((
-                        with_detail(&cur.label, &commit_delta_label(delta)),
-                        url.clone(),
-                    ));
-                } else if !cur.head_oid.is_empty()
-                    && !old.head_oid.is_empty()
-                    && old.head_oid != cur.head_oid
-                {
-                    head_updated.push((with_detail(&cur.label, "head updated"), url.clone()));
+                // Commit / head changes: only after prior head metadata exists so upgrade
+                // snapshots (missing commitCount/headOid → 0/"") do not spam "new commits".
+                let had_head_meta = !old.head_oid.is_empty() || old.commit_count > 0;
+                if had_head_meta {
+                    if cur.commit_count > old.commit_count {
+                        let delta = i64::from(cur.commit_count) - i64::from(old.commit_count);
+                        commits_added.push((
+                            with_detail(&cur.label, &commit_delta_label(delta)),
+                            url.clone(),
+                        ));
+                    } else if cur.commit_count < old.commit_count {
+                        let delta = i64::from(cur.commit_count) - i64::from(old.commit_count);
+                        commits_removed.push((
+                            with_detail(&cur.label, &commit_delta_label(delta)),
+                            url.clone(),
+                        ));
+                    } else if !cur.head_oid.is_empty()
+                        && !old.head_oid.is_empty()
+                        && old.head_oid != cur.head_oid
+                    {
+                        head_updated.push((with_detail(&cur.label, "head updated"), url.clone()));
+                    }
                 }
             }
         }
@@ -408,5 +412,24 @@ mod tests {
         assert_eq!(cats.len(), 1);
         assert_eq!(cats[0].title, "PR head updated");
         assert!(cats[0].labels[0].contains("head updated"));
+    }
+
+    #[test]
+    fn ignores_commit_baseline_when_prior_head_metadata_missing() {
+        let mut prev = GithubNotifySnapshot::default();
+        let mut baseline = pr("u1", "SUCCESS", "REVIEW_REQUIRED", "id-a", false);
+        baseline.head_oid.clear();
+        baseline.commit_count = 0;
+        prev.prs.insert("u1".into(), baseline);
+        let mut next = prev.clone();
+        next.prs.get_mut("u1").unwrap().commit_count = 7;
+        next.prs.get_mut("u1").unwrap().head_oid = "abcdef0".into();
+        let cats = diff_github(&prev, &next);
+        assert!(
+            cats.iter().all(|c| c.title != "New commits on PR"
+                && c.title != "Commits removed from PR"
+                && c.title != "PR head updated"),
+            "expected silent baseline fill, got {cats:?}"
+        );
     }
 }

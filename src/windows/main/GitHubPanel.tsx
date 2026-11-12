@@ -199,8 +199,17 @@ function PrRow({ pr, emphasizeNeedsReview, note, onNoteChange }: PrRowProps) {
     setDraftNote(note);
   }, [note]);
 
+  const prSyncKey = [
+    pr.checkStatus,
+    pr.reviewDecision,
+    pr.reviewsSummary,
+    pr.unresolvedCommentCount,
+    pr.headOid ?? "",
+    pr.commitCount ?? 0,
+  ].join("|");
+
   useEffect(() => {
-    if (!expanded || detail) return;
+    if (!expanded) return;
     let cancelled = false;
     setDetailLoading(true);
     setDetailError(null);
@@ -212,6 +221,7 @@ function PrRow({ pr, emphasizeNeedsReview, note, onNoteChange }: PrRowProps) {
       })
       .catch((e) => {
         if (cancelled) return;
+        setDetail(null);
         setDetailError(String(e));
       })
       .finally(() => {
@@ -220,7 +230,7 @@ function PrRow({ pr, emphasizeNeedsReview, note, onNoteChange }: PrRowProps) {
     return () => {
       cancelled = true;
     };
-  }, [expanded, detail, pr.repoFullName, pr.number]);
+  }, [expanded, pr.repoFullName, pr.number, prSyncKey]);
 
   const saveNote = async (value: string) => {
     setSavingNote(true);

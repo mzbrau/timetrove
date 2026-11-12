@@ -1,7 +1,10 @@
 use super::client;
 use super::http::GithubHttpConfig;
 use crate::db::Db;
-use crate::domain::GithubActivityDigest;
+use crate::domain::{
+    GithubActivityDigest, GithubPrCheck, GithubPrDetail, GithubPrReview, GithubPrSummary,
+    GithubPrThread, GithubPrTimelineItem, GithubPrTimelineKind,
+};
 use chrono::Utc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -60,6 +63,111 @@ pub fn load_cached_digest(db: &Db) -> Result<Option<GithubActivityDigest>, Strin
         });
     }
     Ok(digest)
+}
+
+/// Local-only PR detail for demo mode (no network). Built from the cached digest summary.
+pub fn demo_pr_detail(
+    db: &Db,
+    repo_full_name: &str,
+    number: i32,
+) -> Result<GithubPrDetail, String> {
+    let digest = load_cached_digest(db)?
+        .ok_or_else(|| "No cached GitHub activity in demo mode".to_string())?;
+    let pr = digest
+        .authored_prs
+        .iter()
+        .chain(digest.review_prs.iter())
+        .find(|p| p.repo_full_name == repo_full_name && p.number == number)
+        .cloned()
+        .ok_or_else(|| {
+            format!("Demo PR {repo_full_name}#{number} not found in local cache")
+        })?;
+    Ok(detail_from_summary(&pr))
+}
+
+fn detail_from_summary(pr: &GithubPrSummary) -> GithubPrDetail {
+    let check_state = if pr.check_status.is_empty() {
+        "PENDING".to_string()
+    } else {
+        pr.check_status.clone()
+    };
+    let checks = vec![GithubPrCheck {
+        name: "CI".into(),
+        state: check_state,
+        description: "Demo check status from cached summary".into(),
+        url: pr.url.clone(),
+    }];
+
+    let mut reviews = Vec::new();
+    let decision = pr.review_decision.to_ascii_uppercase();
+    if decision == "APPROVED" || decision == "CHANGES_REQUESTED" {
+        reviews.push(GithubPrReview {
+            author: "demo-reviewer".into(),
+            state: decision,
+            submitted_at: pr.created_at.clone(),
+        });
+    }
+
+    let open_threads = (0..pr.unresolved_comment_count.min(3))
+        .map(|i| GithubPrThread {
+            path: format!("src/demo{i}.rs"),
+            line: Some(10 + i as i32),
+            author: "demo-reviewer".into(),
+            body: format!("Demo unresolved comment {}", i + 1),
+            created_at: pr.created_at.clone(),
+        })
+        .collect();
+
+    let mut timeline = vec![GithubPrTimelineItem {
+        kind: GithubPrTimelineKind::Opened,
+        at: pr.created_at.clone(),
+        actor: "demo".into(),
+        summary: "Pull request opened".into(),
+        url: pr.url.clone(),
+    }];
+    if pr.commit_count > 0 {
+        let short = if pr.head_oid.len() >= 7 {
+            pr.head_oid[..7].to_string()
+        } else if pr.head_oid.is_empty() {
+            "demo000".into()
+        } else {
+            pr.head_oid.clone()
+        };
+        timeline.push(GithubPrTimelineItem {
+            kind: GithubPrTimelineKind::Commit,
+            at: pr.created_at.clone(),
+            actor: String::new(),
+            summary: format!("{short} Latest demo commit ({})", pr.commit_count),
+            url: pr.url.clone(),
+        });
+    }
+    if !pr.reviews_summary.is_empty() && pr.reviews_summary != "No reviews" {
+        timeline.push(GithubPrTimelineItem {
+            kind: GithubPrTimelineKind::Review,
+            at: pr.created_at.clone(),
+            actor: "demo-reviewer".into(),
+            summary: format!("Review: {}", pr.reviews_summary),
+            url: pr.url.clone(),
+        });
+    }
+    timeline.reverse();
+
+    GithubPrDetail {
+        number: pr.number,
+        repo_full_name: pr.repo_full_name.clone(),
+        title: pr.title.clone(),
+        url: pr.url.clone(),
+        checks,
+        reviews,
+        pending_reviewers: if pr.needs_my_review {
+            vec!["you".into()]
+        } else {
+            vec![]
+        },
+        open_threads,
+        timeline,
+        fetched_at: Utc::now().to_rfc3339(),
+    }
 }
 
 pub fn persist_success(db: &Db, mut digest: GithubActivityDigest) -> Result<GithubActivityDigest, String> {
