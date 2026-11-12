@@ -155,6 +155,7 @@ pub fn search_my_open_issues(
         "summary",
         "status",
         "assignee",
+        "priority",
         "timetracking",
         "timeoriginalestimate",
         "aggregatetimespent",
@@ -290,7 +291,7 @@ pub fn fetch_issue(creds: &JiraCredentials, issue_key: &str) -> Result<JiraIssue
     let base = validate_creds(creds)?;
     let agent = build_agent(creds)?;
     let url = format!(
-        "{base}/rest/api/3/issue/{key}?fields=summary,status,assignee,timetracking,timeoriginalestimate,aggregatetimespent"
+        "{base}/rest/api/3/issue/{key}?fields=summary,status,assignee,priority,timetracking,timeoriginalestimate,aggregatetimespent"
     );
     let auth = basic_auth_header(creds.email.trim(), creds.api_token.trim());
     let resp = match agent
@@ -347,6 +348,16 @@ pub fn parse_issue_json(fallback_key: &str, body: &serde_json::Value) -> Result<
         })
         .unwrap_or("Unassigned")
         .to_string();
+    let priority_field = fields.get("priority").filter(|p| !p.is_null());
+    let priority = priority_field
+        .and_then(|p| p.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let priority_rank = priority_field.and_then(|p| p.get("id")).and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+    });
     let estimate_seconds = fields
         .get("timeoriginalestimate")
         .and_then(|v| v.as_i64())
@@ -386,6 +397,8 @@ pub fn parse_issue_json(fallback_key: &str, body: &serde_json::Value) -> Result<
         summary,
         status,
         assignee,
+        priority,
+        priority_rank,
         estimate_seconds,
         total_spent_seconds,
         comment_total,
@@ -436,6 +449,7 @@ mod tests {
                 "summary": "Fix the widget",
                 "status": { "name": "In Progress" },
                 "assignee": { "displayName": "Ada Lovelace" },
+                "priority": { "name": "High", "id": "2" },
                 "timeoriginalestimate": 7200,
                 "aggregatetimespent": 3600
             }
@@ -445,6 +459,8 @@ mod tests {
         assert_eq!(d.summary, "Fix the widget");
         assert_eq!(d.status, "In Progress");
         assert_eq!(d.assignee, "Ada Lovelace");
+        assert_eq!(d.priority, "High");
+        assert_eq!(d.priority_rank, Some(2));
         assert_eq!(d.estimate_seconds, Some(7200));
         assert_eq!(d.total_spent_seconds, Some(3600));
     }
@@ -465,6 +481,8 @@ mod tests {
         });
         let d = parse_issue_json("ABC-1", &body).unwrap();
         assert_eq!(d.assignee, "Unassigned");
+        assert_eq!(d.priority, "");
+        assert_eq!(d.priority_rank, None);
         assert_eq!(d.estimate_seconds, Some(1800));
         assert_eq!(d.total_spent_seconds, Some(900));
     }

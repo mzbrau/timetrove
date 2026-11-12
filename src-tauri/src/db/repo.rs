@@ -1247,6 +1247,10 @@ impl Db {
                     "notify_copilot_usage" => {
                         settings.notify_copilot_usage = v == "true" || v == "1";
                     }
+                    "jira_board_lane_order" => {
+                        settings.jira_board_lane_order =
+                            serde_json::from_str(&v).unwrap_or_default();
+                    }
                     _ => {}
                 }
             }
@@ -1383,6 +1387,11 @@ impl Db {
                     } else {
                         "false".into()
                     },
+                ),
+                (
+                    "jira_board_lane_order",
+                    serde_json::to_string(&settings.jira_board_lane_order)
+                        .unwrap_or_else(|_| "[]".into()),
                 ),
             ];
             for (k, v) in pairs {
@@ -2164,6 +2173,8 @@ mod tests {
                     summary: "Thing title".into(),
                     status: "Open".into(),
                     assignee: "Unassigned".into(),
+                    priority: String::new(),
+                    priority_rank: None,
                     estimate_seconds: Some(3600),
                     total_spent_seconds: Some(0),
                 comment_total: 0,
@@ -2199,6 +2210,8 @@ mod tests {
                     summary: "Other title".into(),
                     status: "In Progress".into(),
                     assignee: "Ada".into(),
+                    priority: String::new(),
+                    priority_rank: None,
                     estimate_seconds: None,
                     total_spent_seconds: Some(1200),
                 comment_total: 0,
@@ -2254,6 +2267,8 @@ mod tests {
                 summary: "Old".into(),
                 status: "Open".into(),
                 assignee: "Unassigned".into(),
+                priority: String::new(),
+                priority_rank: None,
                 estimate_seconds: None,
                 total_spent_seconds: None,
                 comment_total: 0,
@@ -2305,6 +2320,8 @@ mod tests {
                 summary: "Old issue".into(),
                 status: "Done".into(),
                 assignee: "Bob".into(),
+                priority: String::new(),
+                priority_rank: None,
                 estimate_seconds: None,
                 total_spent_seconds: None,
                 comment_total: 0,
@@ -2890,6 +2907,7 @@ mod tests {
         s.notify_github_pr = true;
         s.notify_jira_assigned = true;
         s.notify_copilot_usage = true;
+        s.jira_board_lane_order = vec!["To Do".into(), "In Progress".into(), "In Review".into()];
         db.update_settings(&s).unwrap();
         let loaded = db.get_settings().unwrap();
         assert_eq!(loaded.idle_threshold_mins, 15);
@@ -2917,6 +2935,10 @@ mod tests {
         assert!(loaded.notify_github_pr);
         assert!(loaded.notify_jira_assigned);
         assert!(loaded.notify_copilot_usage);
+        assert_eq!(
+            loaded.jira_board_lane_order,
+            vec!["To Do", "In Progress", "In Review"]
+        );
     }
 
     #[test]

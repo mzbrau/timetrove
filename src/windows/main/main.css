@@ -1456,10 +1456,81 @@
   flex-wrap: wrap;
 }
 
+.jira-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
 .jira-toolbar-meta {
   display: flex;
   align-items: center;
   gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+.jira-view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--control-bg);
+}
+
+.jira-view-toggle button {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.jira-view-toggle button + button {
+  border-left: 1px solid var(--line);
+}
+
+.jira-view-toggle button.active {
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.jira-filter {
+  min-width: 180px;
+  flex: 1;
+  max-width: 280px;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: var(--s2) var(--s3);
+  background: var(--control-bg);
+  color: var(--ink);
+  font: inherit;
+}
+
+.jira-sort-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  font-size: inherit;
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.jira-sort-btn:hover {
+  color: var(--ink);
 }
 
 .jira-spinner {
@@ -1638,6 +1709,126 @@
 .jira-key-copy:focus-visible {
   color: var(--ink);
   background: var(--accent-soft);
+}
+
+/* —— Jira board —— */
+.jira-board {
+  display: flex;
+  gap: var(--s3);
+  align-items: stretch;
+  overflow-x: auto;
+  padding-bottom: var(--s2);
+  min-height: 320px;
+}
+
+.jira-lane {
+  flex: 0 0 260px;
+  display: flex;
+  flex-direction: column;
+  min-height: 280px;
+  max-height: min(70vh, 720px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.jira-lane-drop {
+  border-color: var(--accent);
+}
+
+.jira-lane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding: var(--s3);
+  border-bottom: 1px solid var(--line);
+  cursor: grab;
+  user-select: none;
+}
+
+.jira-lane-header:active {
+  cursor: grabbing;
+}
+
+.jira-lane-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jira-lane-count {
+  font-size: 0.8rem;
+}
+
+.jira-lane-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s2);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.jira-lane-empty {
+  margin: var(--s3);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.jira-card {
+  appearance: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--control-bg);
+  padding: var(--s2) var(--s3);
+  cursor: pointer;
+  text-align: left;
+}
+
+.jira-card:hover,
+.jira-card:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.jira-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  margin-bottom: 4px;
+}
+
+.jira-card-key {
+  font-size: 0.8rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.jira-card-priority {
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.jira-card-summary {
+  margin: 0 0 6px;
+  font-size: 0.88rem;
+  line-height: 1.35;
+  color: var(--ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.jira-card-meta {
+  font-size: 0.75rem;
 }
 
 button.linkish {

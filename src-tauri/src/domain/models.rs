@@ -54,6 +54,12 @@ pub struct JiraIssueDetails {
     pub summary: String,
     pub status: String,
     pub assignee: String,
+    /// Priority display name from Jira (empty when unset).
+    #[serde(default)]
+    pub priority: String,
+    /// Jira priority id as a number when parseable (lower = higher urgency typically).
+    #[serde(default)]
+    pub priority_rank: Option<i64>,
     /// Original estimate in seconds, if set on the issue.
     pub estimate_seconds: Option<i64>,
     /// Aggregate work logged on the issue in Jira (all authors), seconds.
@@ -74,6 +80,10 @@ pub struct JiraDashboardIssue {
     pub summary: String,
     pub status: String,
     pub assignee: String,
+    #[serde(default)]
+    pub priority: String,
+    #[serde(default)]
+    pub priority_rank: Option<i64>,
     pub estimate_seconds: Option<i64>,
     pub total_spent_seconds: Option<i64>,
     /// `{site}/browse/{KEY}` when site URL is configured.
@@ -209,6 +219,9 @@ pub struct Settings {
     /// OS notification: Copilot usage thresholds (off by default).
     #[serde(default)]
     pub notify_copilot_usage: bool,
+    /// Preferred status-lane order for the Jira board view (status display names).
+    #[serde(default)]
+    pub jira_board_lane_order: Vec<String>,
 }
 
 fn default_copilot_github_host() -> String {
@@ -258,6 +271,7 @@ impl Default for Settings {
             notify_github_pr: false,
             notify_jira_assigned: false,
             notify_copilot_usage: false,
+            jira_board_lane_order: Vec::new(),
         }
     }
 }
@@ -583,6 +597,7 @@ mod tests {
         assert!(!s.notify_github_pr);
         assert!(!s.notify_jira_assigned);
         assert!(!s.notify_copilot_usage);
+        assert!(s.jira_board_lane_order.is_empty());
     }
 
     #[test]

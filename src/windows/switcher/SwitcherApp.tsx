@@ -263,6 +263,8 @@ export function SwitcherApp() {
           summary: issue.summary,
           status: issue.status,
           assignee: issue.assignee,
+          priority: issue.priority,
+          priorityRank: issue.priorityRank,
           estimateSeconds: issue.estimateSeconds,
           totalSpentSeconds: issue.totalSpentSeconds,
         },
