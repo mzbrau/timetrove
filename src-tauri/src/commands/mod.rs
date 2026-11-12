@@ -528,6 +528,44 @@ pub async fn refresh_github_activity(
     result
 }
 
+#[tauri::command]
+pub async fn get_github_pr_detail(
+    engine: State<'_, Arc<Engine>>,
+    repo_full_name: String,
+    number: i32,
+) -> Result<GithubPrDetail, String> {
+    let settings = engine.db().get_settings()?;
+    if !settings.github_activity_enabled {
+        return Err("Enable GitHub activity first".into());
+    }
+    let db = engine.db().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some((config, _)) = crate::github::credentials_from_db(&db)? else {
+            return Err("GitHub API token is required".into());
+        };
+        crate::github::fetch_pr_detail(&config, &repo_full_name, number)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn list_github_pr_notes(engine: State<'_, Arc<Engine>>) -> Result<Vec<GithubPrNote>, String> {
+    engine.db().list_github_pr_notes()
+}
+
+#[tauri::command]
+pub fn set_github_pr_note(
+    engine: State<'_, Arc<Engine>>,
+    repo_full_name: String,
+    pr_number: i32,
+    note: String,
+) -> Result<Option<GithubPrNote>, String> {
+    engine
+        .db()
+        .set_github_pr_note(&repo_full_name, pr_number, &note)
+}
+
 /// Starts a Copilot connection test on a background thread; emits `copilot-connection-test`.
 #[tauri::command]
 pub fn start_copilot_connection_test(

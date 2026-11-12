@@ -404,5 +404,25 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         })?;
     }
 
+    // v16: local free-text notes on GitHub PRs (never sent to GitHub).
+    if version < 16 {
+        migrate_tx(conn, |conn| {
+            conn.execute(
+                "CREATE TABLE github_pr_notes (
+                    repo_full_name TEXT NOT NULL,
+                    pr_number INTEGER NOT NULL,
+                    note TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (repo_full_name, pr_number)
+                )",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (16)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+    }
+
     Ok(())
 }

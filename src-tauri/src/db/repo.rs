@@ -1648,6 +1648,74 @@ impl Db {
         })
     }
 
+    pub fn list_github_pr_notes(&self) -> Result<Vec<GithubPrNote>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT repo_full_name, pr_number, note, updated_at
+                     FROM github_pr_notes
+                     ORDER BY updated_at DESC",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok(GithubPrNote {
+                        repo_full_name: r.get(0)?,
+                        pr_number: r.get(1)?,
+                        note: r.get(2)?,
+                        updated_at: r.get(3)?,
+                    })
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })
+    }
+
+    /// Upsert a local PR note. Empty/whitespace note deletes the row and returns `None`.
+    pub fn set_github_pr_note(
+        &self,
+        repo_full_name: &str,
+        pr_number: i32,
+        note: &str,
+    ) -> Result<Option<GithubPrNote>, String> {
+        let repo = repo_full_name.trim();
+        if repo.is_empty() {
+            return Err("Repository is required".into());
+        }
+        if pr_number <= 0 {
+            return Err("Pull request number is required".into());
+        }
+        let trimmed = note.trim();
+        self.with_conn(|conn| {
+            if trimmed.is_empty() {
+                conn.execute(
+                    "DELETE FROM github_pr_notes WHERE repo_full_name = ?1 AND pr_number = ?2",
+                    params![repo, pr_number],
+                )
+                .map_err(|e| e.to_string())?;
+                return Ok(None);
+            }
+            let updated_at = Utc::now().to_rfc3339();
+            conn.execute(
+                "INSERT INTO github_pr_notes (repo_full_name, pr_number, note, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(repo_full_name, pr_number) DO UPDATE SET
+                   note = excluded.note,
+                   updated_at = excluded.updated_at",
+                params![repo, pr_number, trimmed, updated_at],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(Some(GithubPrNote {
+                repo_full_name: repo.to_string(),
+                pr_number,
+                note: trimmed.to_string(),
+                updated_at,
+            }))
+        })
+    }
+
     pub fn set_copilot_usage_cache(&self, json: &str) -> Result<(), String> {
         self.with_conn(|conn| {
             conn.execute(
@@ -2105,6 +2173,29 @@ mod tests {
         assert_eq!(s.copilot_poll_interval_mins, 30);
         assert!(!s.github_activity_enabled);
         assert_eq!(s.github_activity_poll_interval_mins, 30);
+    }
+
+    #[test]
+    fn github_pr_notes_upsert_and_clear() {
+        let (_dir, db) = test_db();
+        assert!(db.list_github_pr_notes().unwrap().is_empty());
+        let saved = db
+            .set_github_pr_note("acme/app", 42, "  wait for CI  ")
+            .unwrap()
+            .expect("note saved");
+        assert_eq!(saved.repo_full_name, "acme/app");
+        assert_eq!(saved.pr_number, 42);
+        assert_eq!(saved.note, "wait for CI");
+        let list = db.list_github_pr_notes().unwrap();
+        assert_eq!(list.len(), 1);
+        let updated = db
+            .set_github_pr_note("acme/app", 42, "ship it")
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.note, "ship it");
+        assert_eq!(db.list_github_pr_notes().unwrap().len(), 1);
+        assert!(db.set_github_pr_note("acme/app", 42, "   ").unwrap().is_none());
+        assert!(db.list_github_pr_notes().unwrap().is_empty());
     }
 
     #[test]

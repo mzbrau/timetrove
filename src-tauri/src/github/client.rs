@@ -1,5 +1,9 @@
 use super::http::{self, GithubHttpConfig};
-use crate::domain::{GithubActivityDigest, GithubCommitSummary, GithubPrSummary};
+use crate::domain::{
+    GithubActivityDigest, GithubCommitSummary, GithubPrCheck, GithubPrDetail, GithubPrReview,
+    GithubPrSummary, GithubPrThread, GithubPrTimelineItem, GithubPrTimelineKind,
+};
+use chrono::Utc;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
@@ -91,9 +95,159 @@ query($owner: String!, $name: String!, $number: Int!, $after: String!) {
 }
 "#;
 
+/// On-demand PR detail for the expandable card (checks, reviews, threads, timeline).
+const PR_DETAIL_QUERY: &str = r#"
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number
+      title
+      url
+      createdAt
+      author { login }
+      commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              state
+              contexts(first: 100) {
+                nodes {
+                  __typename
+                  ... on CheckRun {
+                    name
+                    status
+                    conclusion
+                    detailsUrl
+                  }
+                  ... on StatusContext {
+                    context
+                    state
+                    description
+                    targetUrl
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      latestReviews(first: 100) {
+        nodes {
+          state
+          submittedAt
+          author { login }
+        }
+      }
+      reviewRequests(first: 30) {
+        nodes {
+          requestedReviewer {
+            ... on User { login }
+          }
+        }
+      }
+      reviewThreads(first: 100) {
+        nodes {
+          isResolved
+          path
+          line
+          comments(first: 1) {
+            nodes {
+              body
+              createdAt
+              author { login }
+            }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+      timelineItems(
+        last: 40
+        itemTypes: [
+          PULL_REQUEST_COMMIT
+          ISSUE_COMMENT
+          PULL_REQUEST_REVIEW_COMMENT
+          PULL_REQUEST_REVIEW
+          CLOSED_EVENT
+          REOPENED_EVENT
+          MERGED_EVENT
+        ]
+      ) {
+        nodes {
+          __typename
+          ... on PullRequestCommit {
+            commit {
+              oid
+              messageHeadline
+              committedDate
+              url
+            }
+          }
+          ... on IssueComment {
+            author { login }
+            body
+            createdAt
+            url
+          }
+          ... on PullRequestReviewComment {
+            author { login }
+            body
+            createdAt
+            url
+          }
+          ... on PullRequestReview {
+            author { login }
+            state
+            submittedAt
+            body
+            url
+          }
+          ... on ClosedEvent {
+            createdAt
+            actor { login }
+          }
+          ... on ReopenedEvent {
+            createdAt
+            actor { login }
+          }
+          ... on MergedEvent {
+            createdAt
+            actor { login }
+          }
+        }
+      }
+    }
+  }
+}
+"#;
+
+const DETAIL_THREADS_PAGE_QUERY: &str = r#"
+query($owner: String!, $name: String!, $number: Int!, $after: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $after) {
+        nodes {
+          isResolved
+          path
+          line
+          comments(first: 1) {
+            nodes {
+              body
+              createdAt
+              author { login }
+            }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}
+"#;
+
 /// Cap follow-up thread pages so a pathological PR cannot loop forever (100 × 50 = 5000 threads).
 const MAX_REVIEW_THREAD_PAGES: usize = 50;
 const MAX_RECENT_COMMITS: usize = 20;
+const BODY_PREVIEW_MAX: usize = 200;
 
 /// Fetch authored PRs, reviewer PRs, and recent commits for the authenticated user.
 pub fn fetch_activity(
@@ -437,6 +591,464 @@ fn fetch_review_threads_page(
     body.pointer("/data/repository/pullRequest/reviewThreads")
         .cloned()
         .ok_or_else(|| "GitHub GraphQL reviewThreads page missing connection".to_string())
+}
+
+/// Fetch on-demand PR detail for the expandable GitHub card.
+pub fn fetch_pr_detail(
+    config: &GithubHttpConfig,
+    repo_full_name: &str,
+    number: i32,
+) -> Result<GithubPrDetail, String> {
+    if config.api_token.trim().is_empty() {
+        return Err("GitHub API token is required".into());
+    }
+    let (owner, name) = split_owner_repo(repo_full_name).ok_or_else(|| {
+        format!("GitHub PR repo name is not owner/name: {repo_full_name}")
+    })?;
+    let base = http::api_base_url(&config.github_host)?;
+    let agent = http::build_agent(&config.proxy_url)?;
+    let body = http::post_graphql(
+        &agent,
+        &base,
+        &config.api_token,
+        PR_DETAIL_QUERY,
+        json!({
+            "owner": owner,
+            "name": name,
+            "number": number,
+        }),
+    )?;
+    let pr_node = body
+        .pointer("/data/repository/pullRequest")
+        .ok_or_else(|| {
+            if body.pointer("/data/repository").is_some() {
+                format!("Pull request #{number} not found in {repo_full_name}")
+            } else {
+                format!("Repository not found: {repo_full_name}")
+            }
+        })?;
+    if pr_node.is_null() {
+        return Err(format!("Pull request #{number} not found in {repo_full_name}"));
+    }
+    let mut detail = parse_pr_detail(pr_node, repo_full_name)?;
+
+    // Paginate unresolved threads if the first page is incomplete.
+    let first_page = pr_node
+        .get("reviewThreads")
+        .cloned()
+        .unwrap_or_else(|| json!({ "nodes": [] }));
+    let mut threads = parse_open_threads(first_page.get("nodes").and_then(|v| v.as_array()));
+    let mut cursor = next_thread_cursor(&first_page);
+    let mut pages = 1usize;
+    while let Some(after) = cursor {
+        if pages >= MAX_REVIEW_THREAD_PAGES {
+            break;
+        }
+        let page = fetch_detail_threads_page(
+            &agent,
+            &base,
+            &config.api_token,
+            repo_full_name,
+            number,
+            &after,
+        )?;
+        threads.extend(parse_open_threads(page.get("nodes").and_then(|v| v.as_array())));
+        cursor = next_thread_cursor(&page);
+        pages += 1;
+    }
+    detail.open_threads = threads;
+    detail.fetched_at = Utc::now().to_rfc3339();
+    Ok(detail)
+}
+
+fn fetch_detail_threads_page(
+    agent: &ureq::Agent,
+    api_base: &str,
+    token: &str,
+    repo_full_name: &str,
+    number: i32,
+    after: &str,
+) -> Result<Value, String> {
+    let (owner, name) = split_owner_repo(repo_full_name).ok_or_else(|| {
+        format!("GitHub PR repo name is not owner/name: {repo_full_name}")
+    })?;
+    let body = http::post_graphql(
+        agent,
+        api_base,
+        token,
+        DETAIL_THREADS_PAGE_QUERY,
+        json!({
+            "owner": owner,
+            "name": name,
+            "number": number,
+            "after": after,
+        }),
+    )?;
+    body.pointer("/data/repository/pullRequest/reviewThreads")
+        .cloned()
+        .ok_or_else(|| "GitHub GraphQL detail reviewThreads page missing connection".to_string())
+}
+
+fn parse_pr_detail(node: &Value, repo_full_name: &str) -> Result<GithubPrDetail, String> {
+    let number = node
+        .get("number")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| "PR detail missing number".to_string())? as i32;
+    let title = node
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let url = node
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let created_at = node
+        .get("createdAt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let author = node
+        .pointer("/author/login")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let checks = parse_checks(
+        node.pointer("/commits/nodes/0/commit/statusCheckRollup/contexts/nodes")
+            .and_then(|v| v.as_array()),
+    );
+    let reviews = parse_detail_reviews(node.pointer("/latestReviews/nodes").and_then(|v| v.as_array()));
+    let mut pending_reviewers = Vec::new();
+    if let Some(reqs) = node.pointer("/reviewRequests/nodes").and_then(|v| v.as_array()) {
+        for req in reqs {
+            if let Some(login) = req
+                .pointer("/requestedReviewer/login")
+                .and_then(|v| v.as_str())
+            {
+                pending_reviewers.push(login.to_string());
+            }
+        }
+    }
+    let open_threads =
+        parse_open_threads(node.pointer("/reviewThreads/nodes").and_then(|v| v.as_array()));
+    let mut timeline = parse_timeline(node.pointer("/timelineItems/nodes").and_then(|v| v.as_array()));
+
+    // Synthetic "Opened" event — GraphQL timeline has no dedicated open item type.
+    if !created_at.is_empty() {
+        timeline.push(GithubPrTimelineItem {
+            kind: GithubPrTimelineKind::Opened,
+            at: created_at,
+            actor: author,
+            summary: "Pull request opened".into(),
+            url: url.clone(),
+        });
+    }
+    // Newest first.
+    timeline.sort_by(|a, b| b.at.cmp(&a.at));
+
+    Ok(GithubPrDetail {
+        number,
+        repo_full_name: repo_full_name.to_string(),
+        title,
+        url,
+        checks,
+        reviews,
+        pending_reviewers,
+        open_threads,
+        timeline,
+        fetched_at: String::new(),
+    })
+}
+
+fn parse_checks(nodes: Option<&Vec<Value>>) -> Vec<GithubPrCheck> {
+    let Some(arr) = nodes else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|n| {
+            let typename = n.get("__typename").and_then(|v| v.as_str()).unwrap_or("");
+            match typename {
+                "CheckRun" => {
+                    let name = n.get("name").and_then(|v| v.as_str()).unwrap_or("Check").to_string();
+                    let status = n.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                    let conclusion = n.get("conclusion").and_then(|v| v.as_str()).unwrap_or("");
+                    let state = normalize_check_run_state(status, conclusion);
+                    let url = n
+                        .get("detailsUrl")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    Some(GithubPrCheck {
+                        name,
+                        state,
+                        description: conclusion.to_string(),
+                        url,
+                    })
+                }
+                "StatusContext" => {
+                    let name = n
+                        .get("context")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Status")
+                        .to_string();
+                    let state = n
+                        .get("state")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("PENDING")
+                        .to_string();
+                    let description = n
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let url = n
+                        .get("targetUrl")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    Some(GithubPrCheck {
+                        name,
+                        state,
+                        description,
+                        url,
+                    })
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn normalize_check_run_state(status: &str, conclusion: &str) -> String {
+    let status_u = status.to_ascii_uppercase();
+    if status_u != "COMPLETED" {
+        return match status_u.as_str() {
+            "QUEUED" | "IN_PROGRESS" | "WAITING" | "PENDING" | "REQUESTED" => {
+                "PENDING".into()
+            }
+            _ => {
+                if status_u.is_empty() {
+                    "PENDING".into()
+                } else {
+                    status_u
+                }
+            }
+        };
+    }
+    match conclusion.to_ascii_uppercase().as_str() {
+        "SUCCESS" => "SUCCESS".into(),
+        "FAILURE" | "TIMED_OUT" | "STARTUP_FAILURE" | "ACTION_REQUIRED" => "FAILURE".into(),
+        "CANCELLED" | "SKIPPED" | "NEUTRAL" | "STALE" => {
+            if conclusion.is_empty() {
+                "NEUTRAL".into()
+            } else {
+                conclusion.to_ascii_uppercase()
+            }
+        }
+        other if !other.is_empty() => other.to_string(),
+        _ => "PENDING".into(),
+    }
+}
+
+fn parse_detail_reviews(nodes: Option<&Vec<Value>>) -> Vec<GithubPrReview> {
+    let Some(arr) = nodes else {
+        return Vec::new();
+    };
+    // Latest review per author (API is roughly chronological; last wins).
+    let mut latest: HashMap<String, GithubPrReview> = HashMap::new();
+    for r in arr {
+        let author = r
+            .pointer("/author/login")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let state = r
+            .get("state")
+            .and_then(|v| v.as_str())
+            .unwrap_or("COMMENTED")
+            .to_string();
+        let submitted_at = r
+            .get("submittedAt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let key = author.to_ascii_lowercase();
+        latest.insert(
+            key,
+            GithubPrReview {
+                author,
+                state,
+                submitted_at,
+            },
+        );
+    }
+    let mut out: Vec<_> = latest.into_values().collect();
+    out.sort_by(|a, b| a.author.to_ascii_lowercase().cmp(&b.author.to_ascii_lowercase()));
+    out
+}
+
+fn parse_open_threads(nodes: Option<&Vec<Value>>) -> Vec<GithubPrThread> {
+    let Some(arr) = nodes else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter(|t| t.get("isResolved").and_then(|v| v.as_bool()) == Some(false))
+        .map(|t| {
+            let path = t.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let line = t.get("line").and_then(|v| v.as_i64()).map(|n| n as i32);
+            let comment = t.pointer("/comments/nodes/0");
+            let author = comment
+                .and_then(|c| c.pointer("/author/login"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string();
+            let body_raw = comment
+                .and_then(|c| c.get("body"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let created_at = comment
+                .and_then(|c| c.get("createdAt"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            GithubPrThread {
+                path,
+                line,
+                author,
+                body: truncate_body(body_raw),
+                created_at,
+            }
+        })
+        .collect()
+}
+
+fn parse_timeline(nodes: Option<&Vec<Value>>) -> Vec<GithubPrTimelineItem> {
+    let Some(arr) = nodes else {
+        return Vec::new();
+    };
+    arr.iter().filter_map(parse_timeline_node).collect()
+}
+
+fn parse_timeline_node(n: &Value) -> Option<GithubPrTimelineItem> {
+    let typename = n.get("__typename").and_then(|v| v.as_str())?;
+    match typename {
+        "PullRequestCommit" => {
+            let oid = n.pointer("/commit/oid").and_then(|v| v.as_str()).unwrap_or("");
+            let short = if oid.len() >= 7 { &oid[..7] } else { oid };
+            let message = n
+                .pointer("/commit/messageHeadline")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no message)");
+            let at = n
+                .pointer("/commit/committedDate")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let url = n
+                .pointer("/commit/url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(GithubPrTimelineItem {
+                kind: GithubPrTimelineKind::Commit,
+                at,
+                actor: String::new(),
+                summary: format!("{short} {message}"),
+                url,
+            })
+        }
+        "IssueComment" => Some(GithubPrTimelineItem {
+            kind: GithubPrTimelineKind::Comment,
+            at: n.get("createdAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            actor: n
+                .pointer("/author/login")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string(),
+            summary: truncate_body(n.get("body").and_then(|v| v.as_str()).unwrap_or("")),
+            url: n.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        }),
+        "PullRequestReviewComment" => Some(GithubPrTimelineItem {
+            kind: GithubPrTimelineKind::ReviewComment,
+            at: n.get("createdAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            actor: n
+                .pointer("/author/login")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string(),
+            summary: truncate_body(n.get("body").and_then(|v| v.as_str()).unwrap_or("")),
+            url: n.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        }),
+        "PullRequestReview" => {
+            let state = n.get("state").and_then(|v| v.as_str()).unwrap_or("COMMENTED");
+            let body = n.get("body").and_then(|v| v.as_str()).unwrap_or("");
+            let summary = if body.trim().is_empty() {
+                format!("Review: {state}")
+            } else {
+                format!("Review: {state} — {}", truncate_body(body))
+            };
+            Some(GithubPrTimelineItem {
+                kind: GithubPrTimelineKind::Review,
+                at: n
+                    .get("submittedAt")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                actor: n
+                    .pointer("/author/login")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+                summary,
+                url: n.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            })
+        }
+        "ClosedEvent" => Some(GithubPrTimelineItem {
+            kind: GithubPrTimelineKind::Closed,
+            at: n.get("createdAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            actor: n
+                .pointer("/actor/login")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string(),
+            summary: "Pull request closed".into(),
+            url: String::new(),
+        }),
+        "ReopenedEvent" => Some(GithubPrTimelineItem {
+            kind: GithubPrTimelineKind::Reopened,
+            at: n.get("createdAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            actor: n
+                .pointer("/actor/login")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string(),
+            summary: "Pull request reopened".into(),
+            url: String::new(),
+        }),
+        "MergedEvent" => Some(GithubPrTimelineItem {
+            kind: GithubPrTimelineKind::Merged,
+            at: n.get("createdAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            actor: n
+                .pointer("/actor/login")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string(),
+            summary: "Pull request merged".into(),
+            url: String::new(),
+        }),
+        _ => None,
+    }
+}
+
+fn truncate_body(s: &str) -> String {
+    let trimmed = s.trim();
+    if trimmed.chars().count() <= BODY_PREVIEW_MAX {
+        return trimmed.to_string();
+    }
+    let preview: String = trimmed.chars().take(BODY_PREVIEW_MAX).collect();
+    format!("{preview}…")
 }
 
 /// Compact fingerprint of latest review nodes (IDs, falling back to submittedAt+login).
@@ -990,5 +1602,166 @@ mod tests {
         assert_eq!(pr.check_status, "");
         assert_eq!(pr.unresolved_comment_count, 0);
         assert_eq!(pr.reviews_summary, "No reviews");
+    }
+
+    #[test]
+    fn parse_pr_detail_fixture() {
+        let node = json!({
+            "number": 42,
+            "title": "Expand PR cards",
+            "url": "https://github.com/acme/app/pull/42",
+            "createdAt": "2026-11-01T10:00:00Z",
+            "author": { "login": "alice" },
+            "commits": {
+                "nodes": [{
+                    "commit": {
+                        "statusCheckRollup": {
+                            "state": "FAILURE",
+                            "contexts": {
+                                "nodes": [
+                                    {
+                                        "__typename": "CheckRun",
+                                        "name": "CI",
+                                        "status": "COMPLETED",
+                                        "conclusion": "SUCCESS",
+                                        "detailsUrl": "https://example.com/ci"
+                                    },
+                                    {
+                                        "__typename": "CheckRun",
+                                        "name": "Lint",
+                                        "status": "COMPLETED",
+                                        "conclusion": "FAILURE",
+                                        "detailsUrl": "https://example.com/lint"
+                                    },
+                                    {
+                                        "__typename": "StatusContext",
+                                        "context": "coverage",
+                                        "state": "PENDING",
+                                        "description": "waiting",
+                                        "targetUrl": "https://example.com/cov"
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }]
+            },
+            "latestReviews": {
+                "nodes": [
+                    {
+                        "state": "COMMENTED",
+                        "submittedAt": "2026-11-02T09:00:00Z",
+                        "author": { "login": "bob" }
+                    },
+                    {
+                        "state": "APPROVED",
+                        "submittedAt": "2026-11-02T11:00:00Z",
+                        "author": { "login": "bob" }
+                    },
+                    {
+                        "state": "CHANGES_REQUESTED",
+                        "submittedAt": "2026-11-02T10:00:00Z",
+                        "author": { "login": "carol" }
+                    }
+                ]
+            },
+            "reviewRequests": {
+                "nodes": [
+                    { "requestedReviewer": { "login": "dave" } }
+                ]
+            },
+            "reviewThreads": {
+                "nodes": [
+                    {
+                        "isResolved": true,
+                        "path": "src/a.rs",
+                        "line": 1,
+                        "comments": {
+                            "nodes": [{
+                                "body": "resolved",
+                                "createdAt": "2026-11-02T08:00:00Z",
+                                "author": { "login": "bob" }
+                            }]
+                        }
+                    },
+                    {
+                        "isResolved": false,
+                        "path": "src/b.rs",
+                        "line": 12,
+                        "comments": {
+                            "nodes": [{
+                                "body": "Please fix this",
+                                "createdAt": "2026-11-02T09:30:00Z",
+                                "author": { "login": "carol" }
+                            }]
+                        }
+                    }
+                ],
+                "pageInfo": { "hasNextPage": false, "endCursor": null }
+            },
+            "timelineItems": {
+                "nodes": [
+                    {
+                        "__typename": "PullRequestCommit",
+                        "commit": {
+                            "oid": "abcdef0123456789",
+                            "messageHeadline": "Add expand",
+                            "committedDate": "2026-11-02T08:00:00Z",
+                            "url": "https://github.com/acme/app/commit/abcdef0123456789"
+                        }
+                    },
+                    {
+                        "__typename": "IssueComment",
+                        "author": { "login": "bob" },
+                        "body": "LGTM after fixes",
+                        "createdAt": "2026-11-02T12:00:00Z",
+                        "url": "https://github.com/acme/app/pull/42#issuecomment-1"
+                    },
+                    {
+                        "__typename": "ClosedEvent",
+                        "createdAt": "2026-11-03T01:00:00Z",
+                        "actor": { "login": "alice" }
+                    }
+                ]
+            }
+        });
+        let detail = parse_pr_detail(&node, "acme/app").unwrap();
+        assert_eq!(detail.number, 42);
+        assert_eq!(detail.repo_full_name, "acme/app");
+        assert_eq!(detail.checks.len(), 3);
+        assert_eq!(detail.checks[0].state, "SUCCESS");
+        assert_eq!(detail.checks[1].state, "FAILURE");
+        assert_eq!(detail.checks[2].name, "coverage");
+        assert_eq!(detail.checks[2].state, "PENDING");
+        // Latest review per author: bob approved, carol changes requested.
+        assert_eq!(detail.reviews.len(), 2);
+        let bob = detail.reviews.iter().find(|r| r.author == "bob").unwrap();
+        assert_eq!(bob.state, "APPROVED");
+        assert_eq!(detail.pending_reviewers, vec!["dave".to_string()]);
+        assert_eq!(detail.open_threads.len(), 1);
+        assert_eq!(detail.open_threads[0].path, "src/b.rs");
+        assert_eq!(detail.open_threads[0].line, Some(12));
+        // Synthetic Opened + 3 timeline items, newest first.
+        assert_eq!(detail.timeline.len(), 4);
+        assert_eq!(detail.timeline[0].kind, GithubPrTimelineKind::Closed);
+        assert!(detail
+            .timeline
+            .iter()
+            .any(|t| t.kind == GithubPrTimelineKind::Opened));
+        assert!(detail
+            .timeline
+            .iter()
+            .any(|t| t.kind == GithubPrTimelineKind::Commit
+                && t.summary.starts_with("abcdef0")));
+    }
+
+    #[test]
+    fn truncate_body_respects_max() {
+        let short = truncate_body("  hello  ");
+        assert_eq!(short, "hello");
+        let long: String = (0..BODY_PREVIEW_MAX + 20).map(|_| 'x').collect();
+        let trimmed = truncate_body(&long);
+        assert!(trimmed.ends_with('…'));
+        assert_eq!(trimmed.chars().count(), BODY_PREVIEW_MAX + 1);
     }
 }

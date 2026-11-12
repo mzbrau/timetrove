@@ -4,6 +4,8 @@ import type {
   CopilotUsageHistoryPoint,
   CopilotUsageSummary,
   GithubActivityDigest,
+  GithubPrDetail,
+  GithubPrNote,
   InsightsReport,
   JiraAssignedIssuesResult,
   JiraIssueDetails,
@@ -75,6 +77,19 @@ export const api = {
     invokeManaged<GithubActivityDigest | null>("get_github_activity"),
   refreshGithubActivity: () =>
     invokeManaged<GithubActivityDigest | null>("refresh_github_activity"),
+  getGithubPrDetail: (repoFullName: string, number: number) =>
+    invokeManaged<GithubPrDetail>("get_github_pr_detail", {
+      repoFullName,
+      number,
+    }),
+  listGithubPrNotes: () =>
+    invokeManaged<GithubPrNote[]>("list_github_pr_notes"),
+  setGithubPrNote: (repoFullName: string, prNumber: number, note: string) =>
+    invokeManaged<GithubPrNote | null>("set_github_pr_note", {
+      repoFullName,
+      prNumber,
+      note,
+    }),
   getTaskBookingSummary: (taskId: string) =>
     invokeManaged<TaskBookingSummary>("get_task_booking_summary", { taskId }),
   startTask: (taskId: string) =>

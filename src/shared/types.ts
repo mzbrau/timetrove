@@ -224,6 +224,65 @@ export interface GithubActivityDigest {
   lastError: string | null;
 }
 
+export interface GithubPrCheck {
+  name: string;
+  state: string;
+  description: string;
+  url: string;
+}
+
+export interface GithubPrReview {
+  author: string;
+  state: string;
+  submittedAt: string;
+}
+
+export interface GithubPrThread {
+  path: string;
+  line: number | null;
+  author: string;
+  body: string;
+  createdAt: string;
+}
+
+export type GithubPrTimelineKind =
+  | "opened"
+  | "commit"
+  | "comment"
+  | "reviewComment"
+  | "review"
+  | "closed"
+  | "reopened"
+  | "merged";
+
+export interface GithubPrTimelineItem {
+  kind: GithubPrTimelineKind;
+  at: string;
+  actor: string;
+  summary: string;
+  url: string;
+}
+
+export interface GithubPrDetail {
+  number: number;
+  repoFullName: string;
+  title: string;
+  url: string;
+  checks: GithubPrCheck[];
+  reviews: GithubPrReview[];
+  pendingReviewers: string[];
+  openThreads: GithubPrThread[];
+  timeline: GithubPrTimelineItem[];
+  fetchedAt: string;
+}
+
+export interface GithubPrNote {
+  repoFullName: string;
+  prNumber: number;
+  note: string;
+  updatedAt: string;
+}
+
 export interface JiraConnectionTestEvent {
   phase: "validating" | "connecting" | "verifying" | "succeeded" | "failed" | string;
   message: string;

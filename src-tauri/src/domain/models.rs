@@ -377,6 +377,89 @@ pub struct GithubActivityDigest {
     pub last_error: Option<String>,
 }
 
+/// Individual check run / status context on a PR tip commit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubPrCheck {
+    pub name: String,
+    /// Normalized: SUCCESS / FAILURE / ERROR / PENDING / EXPECTED / NEUTRAL / …
+    pub state: String,
+    pub description: String,
+    pub url: String,
+}
+
+/// One reviewer's latest review on a PR.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubPrReview {
+    pub author: String,
+    /// APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED / PENDING
+    pub state: String,
+    pub submitted_at: String,
+}
+
+/// Unresolved review thread on a PR.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubPrThread {
+    pub path: String,
+    pub line: Option<i32>,
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+}
+
+/// Timeline event kinds for the PR detail overview.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum GithubPrTimelineKind {
+    Opened,
+    Commit,
+    Comment,
+    ReviewComment,
+    Review,
+    Closed,
+    Reopened,
+    Merged,
+}
+
+/// One vertical-timeline row for PR detail.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubPrTimelineItem {
+    pub kind: GithubPrTimelineKind,
+    pub at: String,
+    pub actor: String,
+    pub summary: String,
+    pub url: String,
+}
+
+/// On-demand PR detail for the expandable GitHub card (read-only).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubPrDetail {
+    pub number: i32,
+    pub repo_full_name: String,
+    pub title: String,
+    pub url: String,
+    pub checks: Vec<GithubPrCheck>,
+    pub reviews: Vec<GithubPrReview>,
+    pub pending_reviewers: Vec<String>,
+    pub open_threads: Vec<GithubPrThread>,
+    pub timeline: Vec<GithubPrTimelineItem>,
+    pub fetched_at: String,
+}
+
+/// Local free-text note attached to a GitHub PR (never sent to GitHub).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubPrNote {
+    pub repo_full_name: String,
+    pub pr_number: i32,
+    pub note: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum EnginePhase {
