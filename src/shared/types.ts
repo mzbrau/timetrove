@@ -204,6 +204,8 @@ export interface GithubPrSummary {
   unresolvedCommentCount: number;
   reviewsSummary: string;
   needsMyReview: boolean;
+  headOid?: string;
+  commitCount?: number;
 }
 
 export interface GithubCommitSummary {

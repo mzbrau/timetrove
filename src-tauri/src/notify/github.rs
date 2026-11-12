@@ -1,4 +1,7 @@
-use super::{click_for_items, format_item_body, get_setting_string, set_setting_string, show};
+use super::{
+    click_for_items, format_item_body, get_setting_string, humanize_check_status,
+    humanize_review_decision, set_setting_string, show,
+};
 use crate::db::Db;
 use crate::domain::{GithubActivityDigest, GithubPrSummary};
 use serde::{Deserialize, Serialize};
@@ -15,7 +18,16 @@ pub struct PrSnap {
     /// Fingerprint of latest review node IDs (not the display summary).
     #[serde(default)]
     pub reviews_fingerprint: String,
+    /// Human review summary for notification copy.
+    #[serde(default)]
+    pub reviews_summary: String,
     pub needs_my_review: bool,
+    /// PR head commit OID.
+    #[serde(default)]
+    pub head_oid: String,
+    /// Total commits on the PR.
+    #[serde(default)]
+    pub commit_count: u32,
     pub label: String,
     pub url: String,
 }
@@ -34,8 +46,22 @@ pub struct GithubChangeCategory {
     pub urls: Vec<String>,
 }
 
-fn pr_label(pr: &GithubPrSummary) -> String {
+fn pr_identity(pr: &GithubPrSummary) -> String {
     format!("{}#{} — {}", pr.repo_full_name, pr.number, pr.title)
+}
+
+fn with_detail(identity: &str, detail: &str) -> String {
+    format!("{identity}: {detail}")
+}
+
+fn commit_delta_label(delta: i64) -> String {
+    let n = delta.unsigned_abs();
+    let noun = if n == 1 { "commit" } else { "commits" };
+    if delta > 0 {
+        format!("+{n} {noun}")
+    } else {
+        format!("−{n} {noun}")
+    }
 }
 
 fn snap_from_pr(pr: &GithubPrSummary) -> PrSnap {
@@ -43,8 +69,11 @@ fn snap_from_pr(pr: &GithubPrSummary) -> PrSnap {
         check_status: pr.check_status.clone(),
         review_decision: pr.review_decision.clone(),
         reviews_fingerprint: pr.reviews_fingerprint.clone(),
+        reviews_summary: pr.reviews_summary.clone(),
         needs_my_review: pr.needs_my_review,
-        label: pr_label(pr),
+        head_oid: pr.head_oid.clone(),
+        commit_count: pr.commit_count,
+        label: pr_identity(pr),
         url: pr.url.clone(),
     }
 }
@@ -64,11 +93,20 @@ pub fn snapshot_from_digest(digest: &GithubActivityDigest) -> GithubNotifySnapsh
                 if !pr.reviews_fingerprint.is_empty() {
                     s.reviews_fingerprint = pr.reviews_fingerprint.clone();
                 }
+                if !pr.reviews_summary.is_empty() {
+                    s.reviews_summary = pr.reviews_summary.clone();
+                }
                 if !pr.check_status.is_empty() {
                     s.check_status = pr.check_status.clone();
                 }
                 if !pr.review_decision.is_empty() {
                     s.review_decision = pr.review_decision.clone();
+                }
+                if !pr.head_oid.is_empty() {
+                    s.head_oid = pr.head_oid.clone();
+                }
+                if pr.commit_count > 0 {
+                    s.commit_count = pr.commit_count;
                 }
             })
             .or_insert_with(|| snap_from_pr(pr));
@@ -85,28 +123,74 @@ pub fn diff_github(
     let mut review_decision: Vec<(String, String)> = Vec::new();
     let mut reviews: Vec<(String, String)> = Vec::new();
     let mut appeared: Vec<(String, String)> = Vec::new();
+    let mut commits_added: Vec<(String, String)> = Vec::new();
+    let mut commits_removed: Vec<(String, String)> = Vec::new();
+    let mut head_updated: Vec<(String, String)> = Vec::new();
 
     for (url, cur) in &next.prs {
         match prev.prs.get(url) {
             None => {
                 if cur.needs_my_review {
-                    appeared.push((cur.label.clone(), url.clone()));
+                    appeared.push((
+                        with_detail(&cur.label, "review requested"),
+                        url.clone(),
+                    ));
                 }
             }
             Some(old) => {
                 if old.check_status != cur.check_status {
-                    check.push((cur.label.clone(), url.clone()));
+                    let detail = format!(
+                        "{} → {}",
+                        humanize_check_status(&old.check_status),
+                        humanize_check_status(&cur.check_status)
+                    );
+                    check.push((with_detail(&cur.label, &detail), url.clone()));
                 }
                 if old.review_decision != cur.review_decision {
-                    review_decision.push((cur.label.clone(), url.clone()));
+                    let detail = format!(
+                        "{} → {}",
+                        humanize_review_decision(&old.review_decision),
+                        humanize_review_decision(&cur.review_decision)
+                    );
+                    review_decision.push((with_detail(&cur.label, &detail), url.clone()));
                 }
                 if old.reviews_fingerprint != cur.reviews_fingerprint
                     && !cur.reviews_fingerprint.is_empty()
                 {
-                    reviews.push((cur.label.clone(), url.clone()));
+                    let detail = if cur.reviews_summary.is_empty()
+                        || cur.reviews_summary == "No reviews"
+                    {
+                        "reviews updated".into()
+                    } else {
+                        format!("reviews updated ({})", cur.reviews_summary)
+                    };
+                    reviews.push((with_detail(&cur.label, &detail), url.clone()));
                 }
                 if !old.needs_my_review && cur.needs_my_review {
-                    appeared.push((cur.label.clone(), url.clone()));
+                    appeared.push((
+                        with_detail(&cur.label, "review requested"),
+                        url.clone(),
+                    ));
+                }
+
+                // Commit / head changes: prefer count deltas; OID-only when count unchanged.
+                if cur.commit_count > old.commit_count {
+                    let delta = i64::from(cur.commit_count) - i64::from(old.commit_count);
+                    commits_added.push((
+                        with_detail(&cur.label, &commit_delta_label(delta)),
+                        url.clone(),
+                    ));
+                } else if cur.commit_count < old.commit_count {
+                    let delta = i64::from(cur.commit_count) - i64::from(old.commit_count);
+                    commits_removed.push((
+                        with_detail(&cur.label, &commit_delta_label(delta)),
+                        url.clone(),
+                    ));
+                } else if !cur.head_oid.is_empty()
+                    && !old.head_oid.is_empty()
+                    && old.head_oid != cur.head_oid
+                {
+                    head_updated.push((with_detail(&cur.label, "head updated"), url.clone()));
                 }
             }
         }
@@ -128,6 +212,9 @@ pub fn diff_github(
     push(&mut out, "PR review decision changed", review_decision);
     push(&mut out, "PR reviews updated", reviews);
     push(&mut out, "New PRs awaiting your review", appeared);
+    push(&mut out, "New commits on PR", commits_added);
+    push(&mut out, "Commits removed from PR", commits_removed);
+    push(&mut out, "PR head updated", head_updated);
     out
 }
 
@@ -172,19 +259,28 @@ pub fn check_github_activity(app: &AppHandle, db: &Db, digest: &GithubActivityDi
 mod tests {
     use super::*;
 
-    fn pr(url: &str, check: &str, decision: &str, fingerprint: &str, needs: bool) -> PrSnap {
+    fn pr(
+        url: &str,
+        check: &str,
+        decision: &str,
+        fingerprint: &str,
+        needs: bool,
+    ) -> PrSnap {
         PrSnap {
             check_status: check.into(),
             review_decision: decision.into(),
             reviews_fingerprint: fingerprint.into(),
+            reviews_summary: "1 approved".into(),
             needs_my_review: needs,
-            label: format!("label-{url}"),
+            head_oid: "abc".into(),
+            commit_count: 3,
+            label: format!("org/repo#1 — {url}"),
             url: url.into(),
         }
     }
 
     #[test]
-    fn aggregates_check_changes() {
+    fn aggregates_check_changes_with_before_after() {
         let mut prev = GithubNotifySnapshot::default();
         prev.prs.insert(
             "u1".into(),
@@ -201,6 +297,12 @@ mod tests {
         assert_eq!(cats.len(), 1);
         assert_eq!(cats[0].title, "PR checks updated");
         assert_eq!(cats[0].urls.len(), 2);
+        assert!(cats[0].labels[0].contains("Checks pending → Checks pass")
+            || cats[0].labels[1].contains("Checks pending → Checks pass"));
+        assert!(cats[0]
+            .labels
+            .iter()
+            .any(|l| l.contains("Checks pending → Checks fail")));
     }
 
     #[test]
@@ -225,10 +327,14 @@ mod tests {
             .find(|c| c.title.contains("awaiting"))
             .expect("appeared category");
         assert_eq!(appeared.urls.len(), 2);
+        assert!(appeared
+            .labels
+            .iter()
+            .all(|l| l.contains("review requested")));
     }
 
     #[test]
-    fn review_fingerprint_change() {
+    fn review_fingerprint_change_includes_summary() {
         let mut prev = GithubNotifySnapshot::default();
         prev.prs.insert(
             "u1".into(),
@@ -236,8 +342,71 @@ mod tests {
         );
         let mut next = prev.clone();
         next.prs.get_mut("u1").unwrap().reviews_fingerprint = "id-b".into();
+        next.prs.get_mut("u1").unwrap().reviews_summary = "1 approved, 1 commented".into();
         let cats = diff_github(&prev, &next);
         assert_eq!(cats.len(), 1);
         assert!(cats[0].title.contains("reviews"));
+        assert!(cats[0].labels[0].contains("reviews updated (1 approved, 1 commented)"));
+    }
+
+    #[test]
+    fn review_decision_before_after() {
+        let mut prev = GithubNotifySnapshot::default();
+        prev.prs.insert(
+            "u1".into(),
+            pr("u1", "SUCCESS", "REVIEW_REQUIRED", "id-a", false),
+        );
+        let mut next = prev.clone();
+        next.prs.get_mut("u1").unwrap().review_decision = "CHANGES_REQUESTED".into();
+        let cats = diff_github(&prev, &next);
+        assert_eq!(cats.len(), 1);
+        assert!(cats[0].labels[0].contains("Review required → Changes requested"));
+    }
+
+    #[test]
+    fn detects_commit_count_increase() {
+        let mut prev = GithubNotifySnapshot::default();
+        prev.prs.insert(
+            "u1".into(),
+            pr("u1", "SUCCESS", "REVIEW_REQUIRED", "id-a", false),
+        );
+        let mut next = prev.clone();
+        next.prs.get_mut("u1").unwrap().commit_count = 5;
+        next.prs.get_mut("u1").unwrap().head_oid = "def".into();
+        let cats = diff_github(&prev, &next);
+        assert_eq!(cats.len(), 1);
+        assert_eq!(cats[0].title, "New commits on PR");
+        assert!(cats[0].labels[0].contains("+2 commits"));
+    }
+
+    #[test]
+    fn detects_commit_count_decrease() {
+        let mut prev = GithubNotifySnapshot::default();
+        prev.prs.insert(
+            "u1".into(),
+            pr("u1", "SUCCESS", "REVIEW_REQUIRED", "id-a", false),
+        );
+        let mut next = prev.clone();
+        next.prs.get_mut("u1").unwrap().commit_count = 2;
+        next.prs.get_mut("u1").unwrap().head_oid = "def".into();
+        let cats = diff_github(&prev, &next);
+        assert_eq!(cats.len(), 1);
+        assert_eq!(cats[0].title, "Commits removed from PR");
+        assert!(cats[0].labels[0].contains("−1 commit"));
+    }
+
+    #[test]
+    fn detects_head_oid_only_change() {
+        let mut prev = GithubNotifySnapshot::default();
+        prev.prs.insert(
+            "u1".into(),
+            pr("u1", "SUCCESS", "REVIEW_REQUIRED", "id-a", false),
+        );
+        let mut next = prev.clone();
+        next.prs.get_mut("u1").unwrap().head_oid = "def".into();
+        let cats = diff_github(&prev, &next);
+        assert_eq!(cats.len(), 1);
+        assert_eq!(cats[0].title, "PR head updated");
+        assert!(cats[0].labels[0].contains("head updated"));
     }
 }

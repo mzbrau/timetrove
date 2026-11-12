@@ -51,9 +51,12 @@ query($ids: [ID!]!) {
   nodes(ids: $ids) {
     ... on PullRequest {
       id
+      headRefOid
       commits(last: 1) {
+        totalCount
         nodes {
           commit {
+            oid
             statusCheckRollup { state }
           }
         }
@@ -411,6 +414,8 @@ fn parse_pr_identity(node: &Value) -> Option<PrIdentity> {
             unresolved_comment_count: 0,
             reviews_summary: "No reviews".into(),
             needs_my_review: false,
+            head_oid: String::new(),
+            commit_count: 0,
             requested_reviewer_logins: Vec::new(),
             reviews_fingerprint: String::new(),
         },
@@ -481,6 +486,19 @@ fn apply_hydration(pr: &mut GithubPrSummary, node: &Value) {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    pr.head_oid = node
+        .get("headRefOid")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            node.pointer("/commits/nodes/0/commit/oid")
+                .and_then(|v| v.as_str())
+        })
+        .unwrap_or("")
+        .to_string();
+    pr.commit_count = node
+        .pointer("/commits/totalCount")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
     let reviews = node.pointer("/latestReviews/nodes");
     pr.reviews_summary = summarize_reviews(reviews);
     pr.reviews_fingerprint = reviews_fingerprint(reviews);
@@ -1375,9 +1393,12 @@ mod tests {
             "createdAt": "2026-10-01T12:00:00Z",
             "reviewDecision": "REVIEW_REQUIRED",
             "repository": { "nameWithOwner": "acme/app" },
+            "headRefOid": "deadbeef01",
             "commits": {
+                "totalCount": 4,
                 "nodes": [{
                     "commit": {
+                        "oid": "deadbeef01",
                         "statusCheckRollup": { "state": "SUCCESS" }
                     }
                 }]
@@ -1406,6 +1427,8 @@ mod tests {
         assert_eq!(pr.number, 42);
         assert_eq!(pr.repo_full_name, "acme/app");
         assert_eq!(pr.check_status, "SUCCESS");
+        assert_eq!(pr.head_oid, "deadbeef01");
+        assert_eq!(pr.commit_count, 4);
         assert_eq!(pr.unresolved_comment_count, 2);
         assert!(pr.reviews_summary.contains("approved"));
         assert_eq!(pr.requested_reviewer_logins, vec!["octocat".to_string()]);

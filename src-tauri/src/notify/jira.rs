@@ -39,11 +39,23 @@ pub struct JiraChangeCategory {
     pub urls: Vec<String>,
 }
 
-fn issue_label(key: &str, summary: &str) -> String {
+fn issue_identity(key: &str, summary: &str) -> String {
     if summary.is_empty() {
         key.to_string()
     } else {
         format!("{key} — {summary}")
+    }
+}
+
+fn with_detail(identity: &str, detail: &str) -> String {
+    format!("{identity}: {detail}")
+}
+
+fn comment_delta_label(added: u32) -> String {
+    if added == 1 {
+        "+1 comment".into()
+    } else {
+        format!("+{added} comments")
     }
 }
 
@@ -82,20 +94,28 @@ pub fn diff_jira(prev: &JiraNotifySnapshot, next: &JiraNotifySnapshot) -> Vec<Ji
     let skip_membership = prev.truncated || next.truncated;
 
     for (key, cur) in &next.issues {
-        let label = issue_label(key, &cur.summary);
+        let identity = issue_identity(key, &cur.summary);
         match prev.issues.get(key) {
             None => {
                 if !skip_membership {
-                    assigned.push((label, cur.browse_url.clone()));
+                    assigned.push((
+                        with_detail(&identity, "assigned to you"),
+                        cur.browse_url.clone(),
+                    ));
                 }
             }
             Some(old) => {
                 if old.status != cur.status {
-                    status.push((label.clone(), cur.browse_url.clone()));
+                    let detail = format!("{} → {}", old.status, cur.status);
+                    status.push((with_detail(&identity, &detail), cur.browse_url.clone()));
                 }
                 // Only count genuine additions (not deletions that change latest id).
                 if cur.comment_total > old.comment_total {
-                    comments.push((label, cur.browse_url.clone()));
+                    let added = cur.comment_total - old.comment_total;
+                    comments.push((
+                        with_detail(&identity, &comment_delta_label(added)),
+                        cur.browse_url.clone(),
+                    ));
                 }
             }
         }
@@ -104,7 +124,11 @@ pub fn diff_jira(prev: &JiraNotifySnapshot, next: &JiraNotifySnapshot) -> Vec<Ji
     if !skip_membership {
         for (key, old) in &prev.issues {
             if !next.issues.contains_key(key) {
-                left.push((issue_label(key, &old.summary), old.browse_url.clone()));
+                let identity = issue_identity(key, &old.summary);
+                left.push((
+                    with_detail(&identity, "left your queue"),
+                    old.browse_url.clone(),
+                ));
             }
         }
     }
@@ -227,14 +251,16 @@ mod tests {
     }
 
     #[test]
-    fn detects_new_assignment_and_left() {
+    fn detects_new_assignment_and_left_with_detail() {
         let mut prev = JiraNotifySnapshot::default();
         prev.issues.insert("A-1".into(), snap("To Do", 0, ""));
         let mut next = JiraNotifySnapshot::default();
         next.issues.insert("B-2".into(), snap("To Do", 0, ""));
         let cats = diff_jira(&prev, &next);
-        assert!(cats.iter().any(|c| c.title.contains("New")));
-        assert!(cats.iter().any(|c| c.title.contains("left")));
+        let assigned = cats.iter().find(|c| c.title.contains("New")).expect("new");
+        let left = cats.iter().find(|c| c.title.contains("left")).expect("left");
+        assert!(assigned.labels[0].contains("assigned to you"));
+        assert!(left.labels[0].contains("left your queue"));
     }
 
     #[test]
@@ -255,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_status_and_comment() {
+    fn detects_status_and_comment_with_detail() {
         let mut prev = JiraNotifySnapshot::default();
         prev.issues.insert("A-1".into(), snap("To Do", 1, "10"));
         let mut next = JiraNotifySnapshot::default();
@@ -263,8 +289,21 @@ mod tests {
             .insert("A-1".into(), snap("In Progress", 2, "11"));
         let cats = diff_jira(&prev, &next);
         assert_eq!(cats.len(), 2);
-        assert!(cats.iter().any(|c| c.title.contains("status")));
-        assert!(cats.iter().any(|c| c.title.contains("comments")));
+        let status = cats.iter().find(|c| c.title.contains("status")).unwrap();
+        let comments = cats.iter().find(|c| c.title.contains("comments")).unwrap();
+        assert!(status.labels[0].contains("To Do → In Progress"));
+        assert!(comments.labels[0].contains("+1 comment"));
+    }
+
+    #[test]
+    fn formats_multiple_new_comments() {
+        let mut prev = JiraNotifySnapshot::default();
+        prev.issues.insert("A-1".into(), snap("To Do", 1, "10"));
+        let mut next = JiraNotifySnapshot::default();
+        next.issues.insert("A-1".into(), snap("To Do", 4, "14"));
+        let cats = diff_jira(&prev, &next);
+        assert_eq!(cats.len(), 1);
+        assert!(cats[0].labels[0].contains("+3 comments"));
     }
 
     #[test]
