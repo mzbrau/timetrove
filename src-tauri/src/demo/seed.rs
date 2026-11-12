@@ -770,6 +770,15 @@ fn seed_github(db: &Db, now: DateTime<Utc>) -> Result<(), String> {
     db.set_github_activity_cache(&serde_json::to_string(&digest).map_err(|e| e.to_string())?)
 }
 
+fn demo_priority(i: usize) -> (&'static str, i64) {
+    match i % 4 {
+        0 => ("Highest", 1),
+        1 => ("High", 2),
+        2 => ("Medium", 3),
+        _ => ("Low", 4),
+    }
+}
+
 fn write_jira_fixture(db_path: &Path, specs: &[Spec], booked_ms: &HashMap<usize, i64>) -> Result<(), String> {
     let mut issues: Vec<JiraIssueDetails> = specs
         .iter()
@@ -778,11 +787,14 @@ fn write_jira_fixture(db_path: &Path, specs: &[Spec], booked_ms: &HashMap<usize,
         .filter_map(|(i, s)| {
             let (key, summary, est) = s.jira?;
             let booked_s = booked_ms.get(&i).copied().unwrap_or(0) / 1000;
+            let (priority, rank) = demo_priority(i);
             Some(JiraIssueDetails {
                 issue_key: key.into(),
                 summary: summary.into(),
                 status: if s.name == "Performance budget" { "In Review" } else { "In Progress" }.into(),
                 assignee: ASSIGNEE.into(),
+                priority: priority.into(),
+                priority_rank: Some(rank),
                 estimate_seconds: Some(est * 3600),
                 total_spent_seconds: Some(booked_s * 115 / 100),
                 comment_total: 0,
@@ -791,20 +803,22 @@ fn write_jira_fixture(db_path: &Path, specs: &[Spec], booked_ms: &HashMap<usize,
         })
         .collect();
     let extra = [
-        ("TT-219", "Flaky e2e tests on checkout payment step", "To Do", Some(8), None),
-        ("TT-222", "Upgrade services to Node 22 LTS", "To Do", Some(12), Some(2 * 3600)),
-        ("TT-225", "CSV export uses UTC instead of account timezone", "In Progress", Some(4), Some(3600 + 1800)),
-        ("TT-228", "Document export API rate limits", "To Do", None, None),
+        ("TT-219", "Flaky e2e tests on checkout payment step", "To Do", "Highest", 1_i64, Some(8), None),
+        ("TT-222", "Upgrade services to Node 22 LTS", "To Do", "Medium", 3, Some(12), Some(2 * 3600)),
+        ("TT-225", "CSV export uses UTC instead of account timezone", "In Progress", "High", 2, Some(4), Some(3600 + 1800)),
+        ("TT-228", "Document export API rate limits", "To Do", "Low", 4, None, None),
     ];
-    for (key, summary, status, est, spent) in extra {
+    for (key, summary, status, priority, rank, est, spent) in extra {
         issues.push(JiraIssueDetails {
             issue_key: key.into(),
             summary: summary.into(),
             status: status.into(),
             assignee: ASSIGNEE.into(),
+            priority: priority.into(),
+            priority_rank: Some(rank),
             estimate_seconds: est.map(|h: i64| h * 3600),
             total_spent_seconds: spent,
-                comment_total: 0,
+            comment_total: 0,
             latest_comment_id: String::new(),
         });
     }

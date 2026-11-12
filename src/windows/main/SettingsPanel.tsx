@@ -80,6 +80,7 @@ export function SettingsPanel() {
       const patch = {
         trackerAlwaysOnTop: e.payload.trackerAlwaysOnTop,
         trackerShowSeconds: e.payload.trackerShowSeconds,
+        jiraBoardLaneOrder: e.payload.jiraBoardLaneOrder,
       };
       setSettings((prev) => (prev ? { ...prev, ...patch } : prev));
       setSaved((prev) => (prev ? { ...prev, ...patch } : prev));

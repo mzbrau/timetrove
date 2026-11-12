@@ -30,6 +30,9 @@ export interface JiraIssueDetails {
   summary: string;
   status: string;
   assignee: string;
+  priority: string;
+  /** Jira priority id when parseable; lower usually means higher urgency. */
+  priorityRank: number | null;
   estimateSeconds: number | null;
   totalSpentSeconds: number | null;
 }
@@ -39,6 +42,8 @@ export interface JiraDashboardIssue {
   summary: string;
   status: string;
   assignee: string;
+  priority: string;
+  priorityRank: number | null;
   estimateSeconds: number | null;
   totalSpentSeconds: number | null;
   browseUrl: string;
@@ -184,6 +189,8 @@ export interface Settings {
   notifyJiraAssigned: boolean;
   /** OS notification at Copilot 50/80/90/95% usage. */
   notifyCopilotUsage: boolean;
+  /** Preferred Jira board lane order (status display names). */
+  jiraBoardLaneOrder: string[];
 }
 
 export interface GithubPrSummary {

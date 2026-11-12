@@ -312,6 +312,8 @@ pub fn refresh_jira_issue(
             summary: task.jira_issue_summary.clone(),
             status: task.jira_issue_status.clone(),
             assignee: task.jira_issue_assignee.clone(),
+            priority: String::new(),
+            priority_rank: None,
             estimate_seconds: task.jira_issue_estimate_s,
             total_spent_seconds: task.jira_issue_total_spent_s,
                 comment_total: 0,

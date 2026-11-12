@@ -37,6 +37,8 @@ function detailsFromTaskCache(task: Task): JiraIssueDetails | null {
     summary: task.jiraIssueSummary ?? "",
     status: task.jiraIssueStatus ?? "",
     assignee: task.jiraIssueAssignee || "Unassigned",
+    priority: "",
+    priorityRank: null,
     estimateSeconds: task.jiraIssueEstimateS ?? null,
     totalSpentSeconds: task.jiraIssueTotalSpentS ?? null,
   };
