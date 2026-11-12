@@ -4,7 +4,14 @@ import { api } from "../../shared/api";
 import type {
   GithubActivityDigest,
   GithubCommitSummary,
+  GithubPrCheck,
+  GithubPrDetail,
+  GithubPrNote,
+  GithubPrReview,
   GithubPrSummary,
+  GithubPrThread,
+  GithubPrTimelineItem,
+  GithubPrTimelineKind,
 } from "../../shared/types";
 
 const REPO_PALETTE = [
@@ -32,6 +39,10 @@ function repoAccent(repo: string): string {
     h = (h * 31 + repo.charCodeAt(i)) >>> 0;
   }
   return REPO_PALETTE[h % REPO_PALETTE.length] ?? REPO_PALETTE[0];
+}
+
+function noteKey(repo: string, number: number): string {
+  return `${repo}#${number}`;
 }
 
 function fmtWhen(iso: string | null | undefined): string {
@@ -112,53 +123,374 @@ function reviewClass(decision: string): string {
   }
 }
 
+function reviewStateLabel(state: string): string {
+  switch (state.toUpperCase()) {
+    case "APPROVED":
+      return "Approved";
+    case "CHANGES_REQUESTED":
+      return "Changes requested";
+    case "COMMENTED":
+      return "Commented";
+    case "DISMISSED":
+      return "Dismissed";
+    case "PENDING":
+      return "Pending";
+    default:
+      return state.replace(/_/g, " ") || "Review";
+  }
+}
+
+function timelineKindLabel(kind: GithubPrTimelineKind): string {
+  switch (kind) {
+    case "opened":
+      return "Opened";
+    case "commit":
+      return "Commit";
+    case "comment":
+      return "Comment";
+    case "reviewComment":
+      return "Review comment";
+    case "review":
+      return "Review";
+    case "closed":
+      return "Closed";
+    case "reopened":
+      return "Reopened";
+    case "merged":
+      return "Merged";
+    default:
+      return kind;
+  }
+}
+
 function openUrl(url: string) {
   if (!url) return;
   void api.openExternalUrl(url).catch(() => {});
 }
 
-function PrRow({ pr, emphasizeNeedsReview }: { pr: GithubPrSummary; emphasizeNeedsReview: boolean }) {
+function notesMapFromList(notes: GithubPrNote[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const n of notes) {
+    if (n.note.trim()) {
+      map[noteKey(n.repoFullName, n.prNumber)] = n.note;
+    }
+  }
+  return map;
+}
+
+type PrRowProps = {
+  pr: GithubPrSummary;
+  emphasizeNeedsReview: boolean;
+  note: string;
+  onNoteChange: (repoFullName: string, prNumber: number, note: string) => void;
+};
+
+function PrRow({ pr, emphasizeNeedsReview, note, onNoteChange }: PrRowProps) {
   const accent = repoAccent(pr.repoFullName);
   const needs = emphasizeNeedsReview && pr.needsMyReview;
+  const [expanded, setExpanded] = useState(false);
+  const [detail, setDetail] = useState<GithubPrDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [draftNote, setDraftNote] = useState(note);
+  const [savingNote, setSavingNote] = useState(false);
+
+  useEffect(() => {
+    setDraftNote(note);
+  }, [note]);
+
+  useEffect(() => {
+    if (!expanded || detail) return;
+    let cancelled = false;
+    setDetailLoading(true);
+    setDetailError(null);
+    void api
+      .getGithubPrDetail(pr.repoFullName, pr.number)
+      .then((d) => {
+        if (cancelled) return;
+        setDetail(d);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setDetailError(String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, detail, pr.repoFullName, pr.number]);
+
+  const saveNote = async (value: string) => {
+    setSavingNote(true);
+    try {
+      const saved = await api.setGithubPrNote(pr.repoFullName, pr.number, value);
+      const next = saved?.note ?? "";
+      setDraftNote(next);
+      onNoteChange(pr.repoFullName, pr.number, next);
+    } catch (e) {
+      setDetailError(String(e));
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
   return (
-    <button
-      type="button"
-      className={`gh-pr-row${needs ? " gh-pr-needs" : ""}`}
+    <div
+      className={`gh-pr-card${needs ? " gh-pr-needs" : ""}${expanded ? " gh-pr-expanded" : ""}`}
       style={{ ["--gh-accent" as string]: accent }}
-      onClick={() => openUrl(pr.url)}
     >
-      <span className="gh-pr-accent" aria-hidden />
-      <span className="gh-pr-main">
-        <span className="gh-pr-title-row">
-          <span className="gh-pr-title">{pr.title}</span>
-          <span className="gh-pr-num mono muted">#{pr.number}</span>
-        </span>
-        <span className="gh-pr-meta">
-          <span className="gh-repo" style={{ color: accent }}>
-            {pr.repoFullName}
-          </span>
-          <span className="muted">·</span>
-          <span className="muted" title={fmtWhen(pr.createdAt)}>
-            {relativeAge(pr.createdAt)}
-          </span>
-          {needs && <span className="gh-badge-needs">Needs your review</span>}
-        </span>
-        <span className="gh-pr-pills">
-          <span className={`gh-pill ${checkClass(pr.checkStatus)}`}>
-            {checkLabel(pr.checkStatus)}
-          </span>
-          <span className={`gh-pill ${reviewClass(pr.reviewDecision)}`}>
-            {reviewLabel(pr.reviewDecision)}
-          </span>
-          <span className="gh-pill gh-pill-muted">
-            {pr.unresolvedCommentCount === 0
-              ? "No open threads"
-              : `${pr.unresolvedCommentCount} unresolved`}
-          </span>
-          <span className="gh-pill gh-pill-muted">{pr.reviewsSummary}</span>
-        </span>
-      </span>
-    </button>
+      <div className="gh-pr-row-inner">
+        <span className="gh-pr-accent" aria-hidden />
+        <div className="gh-pr-main">
+          <button
+            type="button"
+            className="gh-pr-header"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((v) => !v)}
+          >
+            <span className="gh-pr-title-row">
+              <span className="gh-pr-chevron" aria-hidden>
+                {expanded ? "▾" : "▸"}
+              </span>
+              <span className="gh-pr-title">{pr.title}</span>
+              <span className="gh-pr-num mono muted">#{pr.number}</span>
+            </span>
+            <span className="gh-pr-meta">
+              <span className="gh-repo" style={{ color: accent }}>
+                {pr.repoFullName}
+              </span>
+              <span className="muted">·</span>
+              <span className="muted" title={fmtWhen(pr.createdAt)}>
+                {relativeAge(pr.createdAt)}
+              </span>
+              {needs && <span className="gh-badge-needs">Needs your review</span>}
+            </span>
+            <span className="gh-pr-pills">
+              <span className={`gh-pill ${checkClass(pr.checkStatus)}`}>
+                {checkLabel(pr.checkStatus)}
+              </span>
+              <span className={`gh-pill ${reviewClass(pr.reviewDecision)}`}>
+                {reviewLabel(pr.reviewDecision)}
+              </span>
+              <span className="gh-pill gh-pill-muted">
+                {pr.unresolvedCommentCount === 0
+                  ? "No open threads"
+                  : `${pr.unresolvedCommentCount} unresolved`}
+              </span>
+              <span className="gh-pill gh-pill-muted">{pr.reviewsSummary}</span>
+            </span>
+          </button>
+
+          {note.trim() && !expanded && (
+            <div className="gh-pr-note-strip">
+              <p className="gh-pr-note-text">{note}</p>
+              <button
+                type="button"
+                className="btn btn-ghost gh-pr-note-clear"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void saveNote("");
+                }}
+                disabled={savingNote}
+              >
+                Clear
+              </button>
+            </div>
+          )}
+
+          <div className="gh-pr-actions">
+            <button
+              type="button"
+              className="btn btn-ghost gh-pr-open"
+              onClick={(e) => {
+                e.stopPropagation();
+                openUrl(pr.url);
+              }}
+            >
+              Open on GitHub
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="gh-pr-detail">
+          {detailLoading && <p className="muted">Loading PR details…</p>}
+          {detailError && <p className="error-text">{detailError}</p>}
+          {detail && (
+            <>
+              <DetailChecks checks={detail.checks} />
+              <DetailReviews
+                reviews={detail.reviews}
+                pending={detail.pendingReviewers}
+              />
+              <DetailThreads threads={detail.openThreads} />
+              <DetailTimeline items={detail.timeline} />
+            </>
+          )}
+
+          <section className="gh-detail-section">
+            <h3 className="gh-detail-heading">Local note</h3>
+            <p className="muted gh-detail-hint">
+              Stored only in TimeTrove — not sent to GitHub.
+            </p>
+            <textarea
+              className="gh-pr-note-input"
+              rows={3}
+              value={draftNote}
+              onChange={(e) => setDraftNote(e.target.value)}
+              placeholder="Add a personal note about this PR…"
+            />
+            <div className="gh-pr-note-actions">
+              <button
+                type="button"
+                className="btn"
+                disabled={savingNote || draftNote.trim() === note.trim()}
+                onClick={() => void saveNote(draftNote)}
+              >
+                {savingNote ? "Saving…" : "Save"}
+              </button>
+              {(note.trim() || draftNote.trim()) && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={savingNote}
+                  onClick={() => void saveNote("")}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailChecks({ checks }: { checks: GithubPrCheck[] }) {
+  return (
+    <section className="gh-detail-section">
+      <h3 className="gh-detail-heading">Checks</h3>
+      {checks.length === 0 ? (
+        <p className="muted">No checks reported.</p>
+      ) : (
+        <ul className="gh-detail-list">
+          {checks.map((c, i) => (
+            <li key={`${c.name}-${i}`} className="gh-detail-row">
+              <span className={`gh-pill ${checkClass(c.state)}`}>
+                {c.state.replace(/_/g, " ") || "—"}
+              </span>
+              <span className="gh-detail-primary">{c.name}</span>
+              {c.description ? (
+                <span className="muted gh-detail-secondary">{c.description}</span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function DetailReviews({
+  reviews,
+  pending,
+}: {
+  reviews: GithubPrReview[];
+  pending: string[];
+}) {
+  return (
+    <section className="gh-detail-section">
+      <h3 className="gh-detail-heading">Reviews</h3>
+      {reviews.length === 0 && pending.length === 0 ? (
+        <p className="muted">No reviews yet.</p>
+      ) : (
+        <ul className="gh-detail-list">
+          {reviews.map((r) => (
+            <li key={r.author} className="gh-detail-row">
+              <span className={`gh-pill ${reviewClass(r.state)}`}>
+                {reviewStateLabel(r.state)}
+              </span>
+              <span className="gh-detail-primary">@{r.author}</span>
+              {r.submittedAt ? (
+                <span className="muted gh-detail-secondary" title={fmtWhen(r.submittedAt)}>
+                  {relativeAge(r.submittedAt)}
+                </span>
+              ) : null}
+            </li>
+          ))}
+          {pending.map((login) => (
+            <li key={`pending-${login}`} className="gh-detail-row">
+              <span className="gh-pill gh-pill-warn">Requested</span>
+              <span className="gh-detail-primary">@{login}</span>
+              <span className="muted gh-detail-secondary">Awaiting review</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function DetailThreads({ threads }: { threads: GithubPrThread[] }) {
+  return (
+    <section className="gh-detail-section">
+      <h3 className="gh-detail-heading">Open threads</h3>
+      {threads.length === 0 ? (
+        <p className="muted">No open review threads.</p>
+      ) : (
+        <ul className="gh-detail-list">
+          {threads.map((t, i) => (
+            <li key={`${t.path}-${t.line ?? "n"}-${i}`} className="gh-detail-thread">
+              <div className="gh-detail-row">
+                <span className="gh-detail-primary">@{t.author}</span>
+                <span className="muted gh-detail-secondary mono">
+                  {t.path}
+                  {t.line != null ? `:${t.line}` : ""}
+                </span>
+              </div>
+              {t.body ? <p className="gh-thread-body">{t.body}</p> : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function DetailTimeline({ items }: { items: GithubPrTimelineItem[] }) {
+  return (
+    <section className="gh-detail-section">
+      <h3 className="gh-detail-heading">Timeline</h3>
+      {items.length === 0 ? (
+        <p className="muted">No timeline events.</p>
+      ) : (
+        <ol className="gh-timeline">
+          {items.map((item, i) => (
+            <li key={`${item.kind}-${item.at}-${i}`} className="gh-timeline-item">
+              <span className="gh-timeline-dot" aria-hidden />
+              <div className="gh-timeline-body">
+                <div className="gh-timeline-meta">
+                  <span className="gh-timeline-when" title={fmtWhen(item.at)}>
+                    {fmtWhen(item.at)}
+                  </span>
+                  <span className="gh-pill gh-pill-muted">
+                    {timelineKindLabel(item.kind)}
+                  </span>
+                  {item.actor ? (
+                    <span className="muted">@{item.actor}</span>
+                  ) : null}
+                </div>
+                <p className="gh-timeline-summary">{item.summary}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
   );
 }
 
@@ -193,9 +525,19 @@ function CommitRow({ commit }: { commit: GithubCommitSummary }) {
 
 export function GitHubPanel() {
   const [digest, setDigest] = useState<GithubActivityDigest | null>(null);
+  const [notes, setNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const loadNotes = useCallback(async () => {
+    try {
+      const list = await api.listGithubPrNotes();
+      setNotes(notesMapFromList(list));
+    } catch {
+      // Notes are optional UX; don't block the activity list.
+    }
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -211,7 +553,8 @@ export function GitHubPanel() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadNotes();
+  }, [load, loadNotes]);
 
   useEffect(() => {
     let disposed = false;
@@ -246,6 +589,16 @@ export function GitHubPanel() {
     } finally {
       setRefreshing(false);
     }
+  };
+
+  const onNoteChange = (repoFullName: string, prNumber: number, note: string) => {
+    setNotes((prev) => {
+      const next = { ...prev };
+      const key = noteKey(repoFullName, prNumber);
+      if (note.trim()) next[key] = note;
+      else delete next[key];
+      return next;
+    });
   };
 
   const authored = digest?.authoredPrs ?? [];
@@ -289,7 +642,13 @@ export function GitHubPanel() {
             ) : (
               <div className="github-list">
                 {authored.map((pr) => (
-                  <PrRow key={pr.url} pr={pr} emphasizeNeedsReview={false} />
+                  <PrRow
+                    key={pr.url}
+                    pr={pr}
+                    emphasizeNeedsReview={false}
+                    note={notes[noteKey(pr.repoFullName, pr.number)] ?? ""}
+                    onNoteChange={onNoteChange}
+                  />
                 ))}
               </div>
             )}
@@ -308,7 +667,13 @@ export function GitHubPanel() {
             ) : (
               <div className="github-list">
                 {review.map((pr) => (
-                  <PrRow key={pr.url} pr={pr} emphasizeNeedsReview />
+                  <PrRow
+                    key={pr.url}
+                    pr={pr}
+                    emphasizeNeedsReview
+                    note={notes[noteKey(pr.repoFullName, pr.number)] ?? ""}
+                    onNoteChange={onNoteChange}
+                  />
                 ))}
               </div>
             )}
