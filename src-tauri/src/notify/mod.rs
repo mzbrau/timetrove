@@ -295,7 +295,7 @@ fn show_windows(
 
     let mut toast = Toast::new(app_id).title(title).text2(body);
     if let Some(path) = icon {
-        toast = toast.icon(path, IconCrop::Rectangular, "");
+        toast = toast.icon(path, IconCrop::Square, "");
     }
     toast = toast
         .on_activated(move |_action| {
