@@ -35,6 +35,10 @@ export interface JiraIssueDetails {
   priorityRank: number | null;
   estimateSeconds: number | null;
   totalSpentSeconds: number | null;
+  /** Jira created timestamp (ISO-8601); empty when unknown. */
+  createdAt: string;
+  /** Jira updated timestamp (ISO-8601); empty when unknown. */
+  updatedAt: string;
 }
 
 export interface JiraDashboardIssue {
@@ -46,6 +50,10 @@ export interface JiraDashboardIssue {
   priorityRank: number | null;
   estimateSeconds: number | null;
   totalSpentSeconds: number | null;
+  /** Jira created timestamp (ISO-8601); empty when unknown. */
+  createdAt: string;
+  /** Jira updated timestamp (ISO-8601); empty when unknown. */
+  updatedAt: string;
   browseUrl: string;
   taskId: string | null;
   taskName: string | null;
@@ -199,6 +207,8 @@ export interface GithubPrSummary {
   url: string;
   repoFullName: string;
   createdAt: string;
+  /** GitHub login of the PR author. */
+  authorLogin?: string;
   checkStatus: string;
   reviewDecision: string;
   unresolvedCommentCount: number;
@@ -282,6 +292,17 @@ export interface GithubPrNote {
   repoFullName: string;
   prNumber: number;
   note: string;
+  updatedAt: string;
+}
+
+/** Local Handled / Complete triage for a GitHub PR (never sent to GitHub). */
+export type GithubPrTriageStatus = "handled" | "complete";
+
+export interface GithubPrTriage {
+  repoFullName: string;
+  prNumber: number;
+  status: GithubPrTriageStatus | string;
+  activitySnapshot: string;
   updatedAt: string;
 }
 

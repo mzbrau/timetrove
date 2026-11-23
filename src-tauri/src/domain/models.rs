@@ -64,6 +64,12 @@ pub struct JiraIssueDetails {
     pub estimate_seconds: Option<i64>,
     /// Aggregate work logged on the issue in Jira (all authors), seconds.
     pub total_spent_seconds: Option<i64>,
+    /// Jira `created` field (ISO-8601), empty when unknown.
+    #[serde(default)]
+    pub created_at: String,
+    /// Jira `updated` field (ISO-8601), empty when unknown.
+    #[serde(default)]
+    pub updated_at: String,
     /// Comment count from Jira search (notify fingerprint; not shown in UI).
     #[serde(default, skip_serializing)]
     pub comment_total: u32,
@@ -86,6 +92,12 @@ pub struct JiraDashboardIssue {
     pub priority_rank: Option<i64>,
     pub estimate_seconds: Option<i64>,
     pub total_spent_seconds: Option<i64>,
+    /// Jira `created` field (ISO-8601), empty when unknown.
+    #[serde(default)]
+    pub created_at: String,
+    /// Jira `updated` field (ISO-8601), empty when unknown.
+    #[serde(default)]
+    pub updated_at: String,
     /// `{site}/browse/{KEY}` when site URL is configured.
     pub browse_url: String,
     pub task_id: Option<String>,
@@ -336,6 +348,9 @@ pub struct GithubPrSummary {
     pub url: String,
     pub repo_full_name: String,
     pub created_at: String,
+    /// GitHub login of the PR author.
+    #[serde(default)]
+    pub author_login: String,
     /// SUCCESS / FAILURE / PENDING / EXPECTED / ERROR / …
     pub check_status: String,
     /// APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED / …
@@ -354,8 +369,9 @@ pub struct GithubPrSummary {
     /// Internal: logins currently requested as reviewers (not sent to UI).
     #[serde(default, skip_serializing)]
     pub requested_reviewer_logins: Vec<String>,
-    /// Internal: sorted latest-review node IDs for notification diffing.
-    #[serde(default, skip_serializing)]
+    /// Sorted latest-review node IDs for notification / Handled-baseline diffing.
+    /// Persisted in the activity cache so Handled snapshots keep a real fingerprint.
+    #[serde(default)]
     pub reviews_fingerprint: String,
 }
 
@@ -463,6 +479,19 @@ pub struct GithubPrNote {
     pub repo_full_name: String,
     pub pr_number: i32,
     pub note: String,
+    pub updated_at: String,
+}
+
+/// Local triage status for a GitHub PR (`handled` or `complete`; never sent to GitHub).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubPrTriage {
+    pub repo_full_name: String,
+    pub pr_number: i32,
+    /// `handled` (clears on notify-style activity) or `complete` (sticky).
+    pub status: String,
+    /// JSON snapshot of notify-relevant fields when status was set (for handled clear).
+    pub activity_snapshot: String,
     pub updated_at: String,
 }
 
@@ -712,5 +741,50 @@ mod tests {
         assert_eq!(needs["kind"], "needsAttribution");
         assert_eq!(needs["previousTaskId"], "t2");
         assert!(needs["gapStart"].as_str().unwrap().contains("2026-01-01"));
+    }
+
+    #[test]
+    fn github_pr_summary_round_trips_reviews_fingerprint() {
+        let pr = GithubPrSummary {
+            number: 1,
+            title: "t".into(),
+            url: "https://github.com/acme/app/pull/1".into(),
+            repo_full_name: "acme/app".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            author_login: "ada".into(),
+            check_status: "SUCCESS".into(),
+            review_decision: "REVIEW_REQUIRED".into(),
+            unresolved_comment_count: 0,
+            reviews_summary: "No reviews".into(),
+            needs_my_review: false,
+            head_oid: "abc".into(),
+            commit_count: 1,
+            requested_reviewer_logins: vec!["bob".into()],
+            reviews_fingerprint: "review-node-1,review-node-2".into(),
+        };
+        let digest = GithubActivityDigest {
+            authored_prs: vec![pr],
+            review_prs: vec![],
+            recent_commits: vec![],
+            username: "me".into(),
+            fetched_at: None,
+            last_synced_at: None,
+            last_error: None,
+        };
+        let json = serde_json::to_string(&digest).unwrap();
+        assert!(
+            json.contains("reviewsFingerprint"),
+            "fingerprint must be serialized into the activity cache"
+        );
+        assert!(
+            !json.contains("requestedReviewerLogins"),
+            "reviewer logins stay internal-only"
+        );
+        let round: GithubActivityDigest = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            round.authored_prs[0].reviews_fingerprint,
+            "review-node-1,review-node-2"
+        );
+        assert!(round.authored_prs[0].requested_reviewer_logins.is_empty());
     }
 }

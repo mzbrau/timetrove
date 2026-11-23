@@ -6,6 +6,7 @@ import type {
   GithubActivityDigest,
   GithubPrDetail,
   GithubPrNote,
+  GithubPrTriage,
   InsightsReport,
   JiraAssignedIssuesResult,
   JiraIssueDetails,
@@ -89,6 +90,18 @@ export const api = {
       repoFullName,
       prNumber,
       note,
+    }),
+  listGithubPrTriage: () =>
+    invokeManaged<GithubPrTriage[]>("list_github_pr_triage"),
+  setGithubPrTriage: (
+    repoFullName: string,
+    prNumber: number,
+    status: string,
+  ) =>
+    invokeManaged<GithubPrTriage | null>("set_github_pr_triage", {
+      repoFullName,
+      prNumber,
+      status,
     }),
   getTaskBookingSummary: (taskId: string) =>
     invokeManaged<TaskBookingSummary>("get_task_booking_summary", { taskId }),

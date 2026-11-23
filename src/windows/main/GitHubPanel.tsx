@@ -12,6 +12,8 @@ import type {
   GithubPrThread,
   GithubPrTimelineItem,
   GithubPrTimelineKind,
+  GithubPrTriage,
+  GithubPrTriageStatus,
 } from "../../shared/types";
 
 const REPO_PALETTE = [
@@ -178,22 +180,50 @@ function notesMapFromList(notes: GithubPrNote[]): Record<string, string> {
   return map;
 }
 
+function triageMapFromList(
+  rows: GithubPrTriage[],
+): Record<string, GithubPrTriageStatus> {
+  const map: Record<string, GithubPrTriageStatus> = {};
+  for (const row of rows) {
+    if (row.status === "handled" || row.status === "complete") {
+      map[noteKey(row.repoFullName, row.prNumber)] = row.status;
+    }
+  }
+  return map;
+}
+
 type PrRowProps = {
   pr: GithubPrSummary;
   emphasizeNeedsReview: boolean;
   note: string;
+  triageStatus: GithubPrTriageStatus | null;
   onNoteChange: (repoFullName: string, prNumber: number, note: string) => void;
+  onTriageChange: (
+    repoFullName: string,
+    prNumber: number,
+    status: GithubPrTriageStatus | null,
+  ) => void;
 };
 
-function PrRow({ pr, emphasizeNeedsReview, note, onNoteChange }: PrRowProps) {
+function PrRow({
+  pr,
+  emphasizeNeedsReview,
+  note,
+  triageStatus,
+  onNoteChange,
+  onTriageChange,
+}: PrRowProps) {
   const accent = repoAccent(pr.repoFullName);
   const needs = emphasizeNeedsReview && pr.needsMyReview;
+  const dimmed = triageStatus === "handled" || triageStatus === "complete";
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<GithubPrDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [triageError, setTriageError] = useState<string | null>(null);
   const [draftNote, setDraftNote] = useState(note);
   const [savingNote, setSavingNote] = useState(false);
+  const [savingTriage, setSavingTriage] = useState(false);
 
   useEffect(() => {
     setDraftNote(note);
@@ -246,9 +276,31 @@ function PrRow({ pr, emphasizeNeedsReview, note, onNoteChange }: PrRowProps) {
     }
   };
 
+  const setTriage = async (next: GithubPrTriageStatus | null) => {
+    setSavingTriage(true);
+    setTriageError(null);
+    try {
+      const statusArg = next ?? "";
+      const saved = await api.setGithubPrTriage(
+        pr.repoFullName,
+        pr.number,
+        statusArg,
+      );
+      const resolved =
+        saved?.status === "handled" || saved?.status === "complete"
+          ? saved.status
+          : null;
+      onTriageChange(pr.repoFullName, pr.number, resolved);
+    } catch (e) {
+      setTriageError(String(e));
+    } finally {
+      setSavingTriage(false);
+    }
+  };
+
   return (
     <div
-      className={`gh-pr-card${needs ? " gh-pr-needs" : ""}${expanded ? " gh-pr-expanded" : ""}`}
+      className={`gh-pr-card${needs ? " gh-pr-needs" : ""}${expanded ? " gh-pr-expanded" : ""}${dimmed ? " gh-pr-dimmed" : ""}`}
       style={{ ["--gh-accent" as string]: accent }}
     >
       <div className="gh-pr-row-inner">
@@ -275,7 +327,19 @@ function PrRow({ pr, emphasizeNeedsReview, note, onNoteChange }: PrRowProps) {
               <span className="muted" title={fmtWhen(pr.createdAt)}>
                 {relativeAge(pr.createdAt)}
               </span>
+              {emphasizeNeedsReview && pr.authorLogin?.trim() ? (
+                <>
+                  <span className="muted">·</span>
+                  <span className="muted">by {pr.authorLogin.trim()}</span>
+                </>
+              ) : null}
               {needs && <span className="gh-badge-needs">Needs your review</span>}
+              {triageStatus === "handled" && (
+                <span className="gh-badge-triage">Handled</span>
+              )}
+              {triageStatus === "complete" && (
+                <span className="gh-badge-triage">Complete</span>
+              )}
             </span>
             <span className="gh-pr-pills">
               <span className={`gh-pill ${checkClass(pr.checkStatus)}`}>
@@ -313,6 +377,30 @@ function PrRow({ pr, emphasizeNeedsReview, note, onNoteChange }: PrRowProps) {
           <div className="gh-pr-actions">
             <button
               type="button"
+              className={`btn btn-ghost gh-pr-triage${triageStatus === "handled" ? " gh-pr-triage-active" : ""}`}
+              disabled={savingTriage}
+              aria-pressed={triageStatus === "handled"}
+              onClick={(e) => {
+                e.stopPropagation();
+                void setTriage(triageStatus === "handled" ? null : "handled");
+              }}
+            >
+              Handled
+            </button>
+            <button
+              type="button"
+              className={`btn btn-ghost gh-pr-triage${triageStatus === "complete" ? " gh-pr-triage-active" : ""}`}
+              disabled={savingTriage}
+              aria-pressed={triageStatus === "complete"}
+              onClick={(e) => {
+                e.stopPropagation();
+                void setTriage(triageStatus === "complete" ? null : "complete");
+              }}
+            >
+              Complete
+            </button>
+            <button
+              type="button"
               className="btn btn-ghost gh-pr-open"
               onClick={(e) => {
                 e.stopPropagation();
@@ -322,6 +410,7 @@ function PrRow({ pr, emphasizeNeedsReview, note, onNoteChange }: PrRowProps) {
               Open on GitHub
             </button>
           </div>
+          {triageError && <p className="error-text gh-pr-triage-error">{triageError}</p>}
         </div>
       </div>
 
@@ -536,6 +625,7 @@ function CommitRow({ commit }: { commit: GithubCommitSummary }) {
 export function GitHubPanel() {
   const [digest, setDigest] = useState<GithubActivityDigest | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [triage, setTriage] = useState<Record<string, GithubPrTriageStatus>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -546,6 +636,15 @@ export function GitHubPanel() {
       setNotes(notesMapFromList(list));
     } catch {
       // Notes are optional UX; don't block the activity list.
+    }
+  }, []);
+
+  const loadTriage = useCallback(async () => {
+    try {
+      const list = await api.listGithubPrTriage();
+      setTriage(triageMapFromList(list));
+    } catch {
+      // Triage is optional UX; don't block the activity list.
     }
   }, []);
 
@@ -564,13 +663,15 @@ export function GitHubPanel() {
   useEffect(() => {
     void load();
     void loadNotes();
-  }, [load, loadNotes]);
+    void loadTriage();
+  }, [load, loadNotes, loadTriage]);
 
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     listen("github-activity-updated", () => {
       void load();
+      void loadTriage();
     })
       .then((fn) => {
         if (disposed) {
@@ -584,7 +685,7 @@ export function GitHubPanel() {
       disposed = true;
       unlisten?.();
     };
-  }, [load]);
+  }, [load, loadTriage]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -593,6 +694,7 @@ export function GitHubPanel() {
       const d = await api.refreshGithubActivity();
       setDigest(d);
       setError(d?.lastError ?? null);
+      void loadTriage();
     } catch (e) {
       setError(String(e));
       void load();
@@ -606,6 +708,20 @@ export function GitHubPanel() {
       const next = { ...prev };
       const key = noteKey(repoFullName, prNumber);
       if (note.trim()) next[key] = note;
+      else delete next[key];
+      return next;
+    });
+  };
+
+  const onTriageChange = (
+    repoFullName: string,
+    prNumber: number,
+    status: GithubPrTriageStatus | null,
+  ) => {
+    setTriage((prev) => {
+      const next = { ...prev };
+      const key = noteKey(repoFullName, prNumber);
+      if (status) next[key] = status;
       else delete next[key];
       return next;
     });
@@ -657,7 +773,11 @@ export function GitHubPanel() {
                     pr={pr}
                     emphasizeNeedsReview={false}
                     note={notes[noteKey(pr.repoFullName, pr.number)] ?? ""}
+                    triageStatus={
+                      triage[noteKey(pr.repoFullName, pr.number)] ?? null
+                    }
                     onNoteChange={onNoteChange}
+                    onTriageChange={onTriageChange}
                   />
                 ))}
               </div>
@@ -682,7 +802,11 @@ export function GitHubPanel() {
                     pr={pr}
                     emphasizeNeedsReview
                     note={notes[noteKey(pr.repoFullName, pr.number)] ?? ""}
+                    triageStatus={
+                      triage[noteKey(pr.repoFullName, pr.number)] ?? null
+                    }
                     onNoteChange={onNoteChange}
+                    onTriageChange={onTriageChange}
                   />
                 ))}
               </div>

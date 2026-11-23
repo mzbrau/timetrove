@@ -41,6 +41,8 @@ function detailsFromTaskCache(task: Task): JiraIssueDetails | null {
     priorityRank: null,
     estimateSeconds: task.jiraIssueEstimateS ?? null,
     totalSpentSeconds: task.jiraIssueTotalSpentS ?? null,
+    createdAt: "",
+    updatedAt: "",
   };
 }
 

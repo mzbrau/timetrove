@@ -206,8 +206,11 @@ pub fn poll_once(db: &Db, app: Option<&AppHandle>) -> Result<Option<GithubActivi
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if crate::demo::enabled() {
         let digest = load_cached_digest(db)?;
-        if let (Some(app), Some(ref d)) = (app, &digest) {
-            crate::notify::check_github_activity(app, db, d);
+        if let Some(ref d) = digest {
+            let _ = crate::notify::reconcile_handled_triage(db, d);
+            if let Some(app) = app {
+                crate::notify::check_github_activity(app, db, d);
+            }
         }
         return Ok(digest);
     }
@@ -220,6 +223,7 @@ pub fn poll_once(db: &Db, app: Option<&AppHandle>) -> Result<Option<GithubActivi
                 return Ok(None);
             }
             let digest = persist_success(db, digest)?;
+            let _ = crate::notify::reconcile_handled_triage(db, &digest);
             if let Some(app) = app {
                 crate::notify::check_github_activity(app, db, &digest);
             }

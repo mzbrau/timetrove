@@ -6,7 +6,9 @@ mod goal;
 mod jira;
 
 pub use copilot::check_copilot_usage;
-pub use github::check_github_activity;
+pub use github::{
+    check_github_activity, find_pr_in_digest, reconcile_handled_triage, snap_from_pr,
+};
 pub use goal::check_daily_goal;
 pub use jira::{jira_poll_interval_secs, spawn_jira_notify_poll};
 

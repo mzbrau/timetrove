@@ -316,7 +316,9 @@ pub fn refresh_jira_issue(
             priority_rank: None,
             estimate_seconds: task.jira_issue_estimate_s,
             total_spent_seconds: task.jira_issue_total_spent_s,
-                comment_total: 0,
+                created_at: String::new(),
+            updated_at: String::new(),
+            comment_total: 0,
             latest_comment_id: String::new(),
         }));
     }
@@ -581,6 +583,53 @@ pub fn set_github_pr_note(
     engine
         .db()
         .set_github_pr_note(&repo_full_name, pr_number, &note)
+}
+
+#[tauri::command]
+pub fn list_github_pr_triage(
+    engine: State<'_, Arc<Engine>>,
+) -> Result<Vec<GithubPrTriage>, String> {
+    engine.db().list_github_pr_triage()
+}
+
+/// Set or clear local Handled / Complete triage. Pass empty `status` to clear.
+#[tauri::command]
+pub fn set_github_pr_triage(
+    engine: State<'_, Arc<Engine>>,
+    repo_full_name: String,
+    pr_number: i32,
+    status: String,
+) -> Result<Option<GithubPrTriage>, String> {
+    let trimmed = status.trim();
+    if trimmed.is_empty() {
+        engine
+            .db()
+            .clear_github_pr_triage(&repo_full_name, pr_number)?;
+        return Ok(None);
+    }
+    if trimmed != "handled" && trimmed != "complete" {
+        return Err("Status must be handled or complete".into());
+    }
+    let snapshot = if trimmed == "handled" {
+        let digest = crate::github::load_cached_digest(engine.db())?;
+        match digest.and_then(|d| {
+            crate::notify::find_pr_in_digest(&d, &repo_full_name, pr_number)
+        }) {
+            Some(pr) => {
+                let snap = crate::notify::snap_from_pr(&pr);
+                serde_json::to_string(&snap).unwrap_or_default()
+            }
+            None => String::new(),
+        }
+    } else {
+        String::new()
+    };
+    Ok(Some(engine.db().set_github_pr_triage(
+        &repo_full_name,
+        pr_number,
+        trimmed,
+        &snapshot,
+    )?))
 }
 
 /// Starts a Copilot connection test on a background thread; emits `copilot-connection-test`.

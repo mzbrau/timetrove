@@ -159,6 +159,8 @@ pub fn search_my_open_issues(
         "timetracking",
         "timeoriginalestimate",
         "aggregatetimespent",
+        "created",
+        "updated",
         "comment",
     ];
     // Prefer the current Cloud search/jql endpoint; fall back to classic /search.
@@ -291,7 +293,7 @@ pub fn fetch_issue(creds: &JiraCredentials, issue_key: &str) -> Result<JiraIssue
     let base = validate_creds(creds)?;
     let agent = build_agent(creds)?;
     let url = format!(
-        "{base}/rest/api/3/issue/{key}?fields=summary,status,assignee,priority,timetracking,timeoriginalestimate,aggregatetimespent"
+        "{base}/rest/api/3/issue/{key}?fields=summary,status,assignee,priority,timetracking,timeoriginalestimate,aggregatetimespent,created,updated"
     );
     let auth = basic_auth_header(creds.email.trim(), creds.api_token.trim());
     let resp = match agent
@@ -376,6 +378,16 @@ pub fn parse_issue_json(fallback_key: &str, body: &serde_json::Value) -> Result<
                 .and_then(|t| t.get("timeSpentSeconds"))
                 .and_then(|v| v.as_i64())
         });
+    let created_at = fields
+        .get("created")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let updated_at = fields
+        .get("updated")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let comment = fields.get("comment");
     let comment_total = comment
         .and_then(|c| c.get("total"))
@@ -401,6 +413,8 @@ pub fn parse_issue_json(fallback_key: &str, body: &serde_json::Value) -> Result<
         priority_rank,
         estimate_seconds,
         total_spent_seconds,
+        created_at,
+        updated_at,
         comment_total,
         latest_comment_id,
     })
@@ -451,7 +465,9 @@ mod tests {
                 "assignee": { "displayName": "Ada Lovelace" },
                 "priority": { "name": "High", "id": "2" },
                 "timeoriginalestimate": 7200,
-                "aggregatetimespent": 3600
+                "aggregatetimespent": 3600,
+                "created": "2026-01-10T09:00:00.000+0000",
+                "updated": "2026-03-15T14:30:00.000+0000"
             }
         });
         let d = parse_issue_json("THING-42", &body).unwrap();
@@ -463,6 +479,8 @@ mod tests {
         assert_eq!(d.priority_rank, Some(2));
         assert_eq!(d.estimate_seconds, Some(7200));
         assert_eq!(d.total_spent_seconds, Some(3600));
+        assert_eq!(d.created_at, "2026-01-10T09:00:00.000+0000");
+        assert_eq!(d.updated_at, "2026-03-15T14:30:00.000+0000");
     }
 
     #[test]

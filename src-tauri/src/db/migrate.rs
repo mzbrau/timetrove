@@ -424,5 +424,26 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         })?;
     }
 
+    // v17: local Handled / Complete triage on GitHub PRs (never sent to GitHub).
+    if version < 17 {
+        migrate_tx(conn, |conn| {
+            conn.execute(
+                "CREATE TABLE github_pr_triage (
+                    repo_full_name TEXT NOT NULL,
+                    pr_number INTEGER NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('handled', 'complete')),
+                    activity_snapshot TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (repo_full_name, pr_number)
+                )",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (17)", [])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
+    }
+
     Ok(())
 }
