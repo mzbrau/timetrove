@@ -369,8 +369,9 @@ pub struct GithubPrSummary {
     /// Internal: logins currently requested as reviewers (not sent to UI).
     #[serde(default, skip_serializing)]
     pub requested_reviewer_logins: Vec<String>,
-    /// Internal: sorted latest-review node IDs for notification diffing.
-    #[serde(default, skip_serializing)]
+    /// Sorted latest-review node IDs for notification / Handled-baseline diffing.
+    /// Persisted in the activity cache so Handled snapshots keep a real fingerprint.
+    #[serde(default)]
     pub reviews_fingerprint: String,
 }
 
@@ -740,5 +741,50 @@ mod tests {
         assert_eq!(needs["kind"], "needsAttribution");
         assert_eq!(needs["previousTaskId"], "t2");
         assert!(needs["gapStart"].as_str().unwrap().contains("2026-01-01"));
+    }
+
+    #[test]
+    fn github_pr_summary_round_trips_reviews_fingerprint() {
+        let pr = GithubPrSummary {
+            number: 1,
+            title: "t".into(),
+            url: "https://github.com/acme/app/pull/1".into(),
+            repo_full_name: "acme/app".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            author_login: "ada".into(),
+            check_status: "SUCCESS".into(),
+            review_decision: "REVIEW_REQUIRED".into(),
+            unresolved_comment_count: 0,
+            reviews_summary: "No reviews".into(),
+            needs_my_review: false,
+            head_oid: "abc".into(),
+            commit_count: 1,
+            requested_reviewer_logins: vec!["bob".into()],
+            reviews_fingerprint: "review-node-1,review-node-2".into(),
+        };
+        let digest = GithubActivityDigest {
+            authored_prs: vec![pr],
+            review_prs: vec![],
+            recent_commits: vec![],
+            username: "me".into(),
+            fetched_at: None,
+            last_synced_at: None,
+            last_error: None,
+        };
+        let json = serde_json::to_string(&digest).unwrap();
+        assert!(
+            json.contains("reviewsFingerprint"),
+            "fingerprint must be serialized into the activity cache"
+        );
+        assert!(
+            !json.contains("requestedReviewerLogins"),
+            "reviewer logins stay internal-only"
+        );
+        let round: GithubActivityDigest = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            round.authored_prs[0].reviews_fingerprint,
+            "review-node-1,review-node-2"
+        );
+        assert!(round.authored_prs[0].requested_reviewer_logins.is_empty());
     }
 }

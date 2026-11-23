@@ -166,7 +166,13 @@ pub fn reconcile_handled_triage(db: &Db, digest: &GithubActivityDigest) -> Resul
         };
         let cur = snap_from_pr(&pr);
         if pr_activity_changed(&old, &cur) {
-            db.clear_github_pr_triage(&row.repo_full_name, row.pr_number)?;
+            db.clear_github_pr_triage_if_unchanged(
+                &row.repo_full_name,
+                row.pr_number,
+                "handled",
+                &row.activity_snapshot,
+                &row.updated_at,
+            )?;
         }
     }
     Ok(())
@@ -597,6 +603,64 @@ mod tests {
         let rows = db.list_github_pr_triage().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].pr_number, 8);
+        assert_eq!(rows[0].status, "complete");
+    }
+
+    #[test]
+    fn reconcile_does_not_erase_complete_set_after_list() {
+        let (_dir, db) = crate::test_support::test_db();
+
+        let mut summary = GithubPrSummary {
+            number: 7,
+            title: "Fix".into(),
+            url: "https://github.com/acme/app/pull/7".into(),
+            repo_full_name: "acme/app".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            author_login: "ada".into(),
+            check_status: "SUCCESS".into(),
+            review_decision: "REVIEW_REQUIRED".into(),
+            unresolved_comment_count: 0,
+            reviews_summary: "No reviews".into(),
+            needs_my_review: true,
+            head_oid: "abc".into(),
+            commit_count: 3,
+            requested_reviewer_logins: vec![],
+            reviews_fingerprint: "r1".into(),
+        };
+        let snap_json = serde_json::to_string(&snap_from_pr(&summary)).unwrap();
+        let handled = db
+            .set_github_pr_triage("acme/app", 7, "handled", &snap_json)
+            .unwrap();
+
+        // Simulate activity that would clear Handled, but user already marked Complete
+        // with the same captured baseline still in memory for an unconditional delete.
+        summary.check_status = "FAILURE".into();
+        db.set_github_pr_triage("acme/app", 7, "complete", "")
+            .unwrap();
+
+        let digest = GithubActivityDigest {
+            authored_prs: vec![],
+            review_prs: vec![summary],
+            recent_commits: vec![],
+            username: "me".into(),
+            fetched_at: None,
+            last_synced_at: None,
+            last_error: None,
+        };
+        // Conditional clear must not delete Complete even if reconcile still sees
+        // the old handled snapshot values from before the race.
+        assert!(!db
+            .clear_github_pr_triage_if_unchanged(
+                "acme/app",
+                7,
+                "handled",
+                &handled.activity_snapshot,
+                &handled.updated_at,
+            )
+            .unwrap());
+        reconcile_handled_triage(&db, &digest).unwrap();
+        let rows = db.list_github_pr_triage().unwrap();
+        assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].status, "complete");
     }
 }

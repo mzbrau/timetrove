@@ -1758,6 +1758,40 @@ impl Db {
         })
     }
 
+    /// Delete a triage row only when it still matches the captured Handled baseline.
+    /// Returns true when a row was deleted. Used by poll reconciliation so a newer
+    /// Complete (or any other update) is not wiped by a stale clear.
+    pub fn clear_github_pr_triage_if_unchanged(
+        &self,
+        repo_full_name: &str,
+        pr_number: i32,
+        expected_status: &str,
+        expected_snapshot: &str,
+        expected_updated_at: &str,
+    ) -> Result<bool, String> {
+        let repo = repo_full_name.trim();
+        self.with_conn(|conn| {
+            let n = conn
+                .execute(
+                    "DELETE FROM github_pr_triage
+                     WHERE repo_full_name = ?1
+                       AND pr_number = ?2
+                       AND status = ?3
+                       AND activity_snapshot = ?4
+                       AND updated_at = ?5",
+                    params![
+                        repo,
+                        pr_number,
+                        expected_status,
+                        expected_snapshot,
+                        expected_updated_at
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            Ok(n > 0)
+        })
+    }
+
     /// Upsert local Handled / Complete triage. `activity_snapshot` is JSON used to clear Handled.
     pub fn set_github_pr_triage(
         &self,
@@ -2298,6 +2332,45 @@ mod tests {
         assert_eq!(db.list_github_pr_triage().unwrap().len(), 1);
         db.clear_github_pr_triage("acme/app", 42).unwrap();
         assert!(db.list_github_pr_triage().unwrap().is_empty());
+    }
+
+    #[test]
+    fn github_pr_triage_conditional_clear_skips_complete_race() {
+        let (_dir, db) = test_db();
+        let handled = db
+            .set_github_pr_triage("acme/app", 9, "handled", "{\"checkStatus\":\"SUCCESS\"}")
+            .unwrap();
+        assert!(db
+            .clear_github_pr_triage_if_unchanged(
+                "acme/app",
+                9,
+                "handled",
+                &handled.activity_snapshot,
+                &handled.updated_at,
+            )
+            .unwrap());
+        assert!(db.list_github_pr_triage().unwrap().is_empty());
+
+        let handled = db
+            .set_github_pr_triage("acme/app", 9, "handled", "{\"checkStatus\":\"SUCCESS\"}")
+            .unwrap();
+        // User flips to Complete before reconcile deletes.
+        let complete = db
+            .set_github_pr_triage("acme/app", 9, "complete", "")
+            .unwrap();
+        assert!(!db
+            .clear_github_pr_triage_if_unchanged(
+                "acme/app",
+                9,
+                "handled",
+                &handled.activity_snapshot,
+                &handled.updated_at,
+            )
+            .unwrap());
+        let rows = db.list_github_pr_triage().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, "complete");
+        assert_eq!(rows[0].updated_at, complete.updated_at);
     }
 
     #[test]

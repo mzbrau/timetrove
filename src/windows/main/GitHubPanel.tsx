@@ -220,6 +220,7 @@ function PrRow({
   const [detail, setDetail] = useState<GithubPrDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [triageError, setTriageError] = useState<string | null>(null);
   const [draftNote, setDraftNote] = useState(note);
   const [savingNote, setSavingNote] = useState(false);
   const [savingTriage, setSavingTriage] = useState(false);
@@ -277,6 +278,7 @@ function PrRow({
 
   const setTriage = async (next: GithubPrTriageStatus | null) => {
     setSavingTriage(true);
+    setTriageError(null);
     try {
       const statusArg = next ?? "";
       const saved = await api.setGithubPrTriage(
@@ -290,7 +292,7 @@ function PrRow({
           : null;
       onTriageChange(pr.repoFullName, pr.number, resolved);
     } catch (e) {
-      setDetailError(String(e));
+      setTriageError(String(e));
     } finally {
       setSavingTriage(false);
     }
@@ -408,6 +410,7 @@ function PrRow({
               Open on GitHub
             </button>
           </div>
+          {triageError && <p className="error-text gh-pr-triage-error">{triageError}</p>}
         </div>
       </div>
 

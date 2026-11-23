@@ -48,6 +48,12 @@ function cmpNullableNumber(
   return (a as number) - (b as number);
 }
 
+function parseTimestampMs(iso: string | null | undefined): number | null {
+  if (!iso?.trim()) return null;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 function cmpText(a: string, b: string): number {
   return a.localeCompare(b, undefined, { sensitivity: "base" });
 }
@@ -66,9 +72,9 @@ function sortValue(
     case "priority":
       return issue.priority;
     case "created":
-      return issue.createdAt || null;
+      return parseTimestampMs(issue.createdAt);
     case "updated":
-      return issue.updatedAt || null;
+      return parseTimestampMs(issue.updatedAt);
     case "estimate":
       return issue.estimateSeconds;
     case "timetrove":

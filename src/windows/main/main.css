@@ -2084,6 +2084,12 @@ button.linkish:disabled {
   border-color: color-mix(in srgb, var(--muted) 40%, var(--line));
 }
 
+.gh-pr-triage-error {
+  margin: 4px 0 0;
+  text-align: right;
+  font-size: 12px;
+}
+
 .gh-pr-note-strip {
   display: flex;
   align-items: flex-start;
