@@ -8,6 +8,8 @@ export type JiraSortKey =
   | "summary"
   | "status"
   | "priority"
+  | "created"
+  | "updated"
   | "estimate"
   | "timetrove"
   | "jiraSpent"
@@ -63,6 +65,10 @@ function sortValue(
       return issueStatusLabel(issue);
     case "priority":
       return issue.priority;
+    case "created":
+      return issue.createdAt || null;
+    case "updated":
+      return issue.updatedAt || null;
     case "estimate":
       return issue.estimateSeconds;
     case "timetrove":

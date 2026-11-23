@@ -19,6 +19,7 @@ query($q: String!) {
         title
         url
         createdAt
+        author { login }
         reviewDecision
         repository { nameWithOwner }
       }
@@ -38,6 +39,7 @@ query {
         title
         url
         createdAt
+        author { login }
         reviewDecision
         repository { nameWithOwner }
       }
@@ -404,6 +406,11 @@ fn parse_pr_identity(node: &Value) -> Option<PrIdentity> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let author_login = node
+        .pointer("/author/login")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     Some(PrIdentity {
         id,
@@ -413,6 +420,7 @@ fn parse_pr_identity(node: &Value) -> Option<PrIdentity> {
             url,
             repo_full_name,
             created_at,
+            author_login,
             check_status: String::new(),
             review_decision,
             unresolved_comment_count: 0,

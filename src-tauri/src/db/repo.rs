@@ -1716,6 +1716,90 @@ impl Db {
         })
     }
 
+    pub fn list_github_pr_triage(&self) -> Result<Vec<GithubPrTriage>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT repo_full_name, pr_number, status, activity_snapshot, updated_at
+                     FROM github_pr_triage
+                     ORDER BY updated_at DESC",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok(GithubPrTriage {
+                        repo_full_name: r.get(0)?,
+                        pr_number: r.get(1)?,
+                        status: r.get(2)?,
+                        activity_snapshot: r.get(3)?,
+                        updated_at: r.get(4)?,
+                    })
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })
+    }
+
+    pub fn clear_github_pr_triage(
+        &self,
+        repo_full_name: &str,
+        pr_number: i32,
+    ) -> Result<(), String> {
+        let repo = repo_full_name.trim();
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM github_pr_triage WHERE repo_full_name = ?1 AND pr_number = ?2",
+                params![repo, pr_number],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+    }
+
+    /// Upsert local Handled / Complete triage. `activity_snapshot` is JSON used to clear Handled.
+    pub fn set_github_pr_triage(
+        &self,
+        repo_full_name: &str,
+        pr_number: i32,
+        status: &str,
+        activity_snapshot: &str,
+    ) -> Result<GithubPrTriage, String> {
+        let repo = repo_full_name.trim();
+        if repo.is_empty() {
+            return Err("Repository is required".into());
+        }
+        if pr_number <= 0 {
+            return Err("Pull request number is required".into());
+        }
+        let status = status.trim();
+        if status != "handled" && status != "complete" {
+            return Err("Status must be handled or complete".into());
+        }
+        let updated_at = Utc::now().to_rfc3339();
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO github_pr_triage
+                   (repo_full_name, pr_number, status, activity_snapshot, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(repo_full_name, pr_number) DO UPDATE SET
+                   status = excluded.status,
+                   activity_snapshot = excluded.activity_snapshot,
+                   updated_at = excluded.updated_at",
+                params![repo, pr_number, status, activity_snapshot, updated_at],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(GithubPrTriage {
+                repo_full_name: repo.to_string(),
+                pr_number,
+                status: status.to_string(),
+                activity_snapshot: activity_snapshot.to_string(),
+                updated_at,
+            })
+        })
+    }
+
     pub fn set_copilot_usage_cache(&self, json: &str) -> Result<(), String> {
         self.with_conn(|conn| {
             conn.execute(
@@ -2199,6 +2283,24 @@ mod tests {
     }
 
     #[test]
+    fn github_pr_triage_upsert_and_clear() {
+        let (_dir, db) = test_db();
+        assert!(db.list_github_pr_triage().unwrap().is_empty());
+        let saved = db
+            .set_github_pr_triage("acme/app", 42, "handled", "{\"checkStatus\":\"SUCCESS\"}")
+            .unwrap();
+        assert_eq!(saved.status, "handled");
+        assert_eq!(db.list_github_pr_triage().unwrap().len(), 1);
+        let complete = db
+            .set_github_pr_triage("acme/app", 42, "complete", "")
+            .unwrap();
+        assert_eq!(complete.status, "complete");
+        assert_eq!(db.list_github_pr_triage().unwrap().len(), 1);
+        db.clear_github_pr_triage("acme/app", 42).unwrap();
+        assert!(db.list_github_pr_triage().unwrap().is_empty());
+    }
+
+    #[test]
     fn task_crud_and_unique_name() {
         let (_dir, db) = test_db();
         let t = sample_task(&db, "Alpha");
@@ -2268,7 +2370,9 @@ mod tests {
                     priority_rank: None,
                     estimate_seconds: Some(3600),
                     total_spent_seconds: Some(0),
-                comment_total: 0,
+                created_at: String::new(),
+            updated_at: String::new(),
+            comment_total: 0,
             latest_comment_id: String::new(),
         }),
             })
@@ -2305,7 +2409,9 @@ mod tests {
                     priority_rank: None,
                     estimate_seconds: None,
                     total_spent_seconds: Some(1200),
-                comment_total: 0,
+                created_at: String::new(),
+            updated_at: String::new(),
+            comment_total: 0,
             latest_comment_id: String::new(),
         }),
             })
@@ -2362,7 +2468,9 @@ mod tests {
                 priority_rank: None,
                 estimate_seconds: None,
                 total_spent_seconds: None,
-                comment_total: 0,
+                created_at: String::new(),
+            updated_at: String::new(),
+            comment_total: 0,
             latest_comment_id: String::new(),
         }),
         })
@@ -2415,7 +2523,9 @@ mod tests {
                 priority_rank: None,
                 estimate_seconds: None,
                 total_spent_seconds: None,
-                comment_total: 0,
+                created_at: String::new(),
+            updated_at: String::new(),
+            comment_total: 0,
             latest_comment_id: String::new(),
         }),
         })

@@ -267,6 +267,8 @@ export function SwitcherApp() {
           priorityRank: issue.priorityRank,
           estimateSeconds: issue.estimateSeconds,
           totalSpentSeconds: issue.totalSpentSeconds,
+          createdAt: issue.createdAt,
+          updatedAt: issue.updatedAt,
         },
       });
       await api.closeSwitcher();

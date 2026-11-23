@@ -320,6 +320,8 @@ pub fn run() {
             commands::get_github_pr_detail,
             commands::list_github_pr_notes,
             commands::set_github_pr_note,
+            commands::list_github_pr_triage,
+            commands::set_github_pr_triage,
             commands::get_timesheet,
             commands::get_insights,
             commands::list_slices_for_day,

@@ -19,6 +19,8 @@ function issue(
     priorityRank: null,
     estimateSeconds: null,
     totalSpentSeconds: null,
+    createdAt: "",
+    updatedAt: "",
     browseUrl: "",
     taskId: null,
     taskName: null,
@@ -67,6 +69,27 @@ describe("sortJiraIssues", () => {
     expect(
       sortJiraIssues(issues, "summary", "asc").map((i) => i.issueKey),
     ).toEqual(["A-1", "B-2"]);
+  });
+
+  it("sorts created and updated by ISO timestamp", () => {
+    const issues = [
+      issue({
+        issueKey: "B",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-10T00:00:00.000Z",
+      }),
+      issue({
+        issueKey: "A",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-03-15T00:00:00.000Z",
+      }),
+    ];
+    expect(
+      sortJiraIssues(issues, "created", "asc").map((i) => i.issueKey),
+    ).toEqual(["A", "B"]);
+    expect(
+      sortJiraIssues(issues, "updated", "desc").map((i) => i.issueKey),
+    ).toEqual(["A", "B"]);
   });
 });
 

@@ -1698,15 +1698,19 @@
   appearance: none;
   -webkit-appearance: none;
   opacity: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
   border: 1px solid var(--line);
   background: var(--control-bg);
   color: var(--muted);
-  font-size: 0.72rem;
-  line-height: 1;
-  padding: 3px 6px;
   border-radius: 4px;
   cursor: pointer;
   transition: opacity 0.12s ease;
+  flex-shrink: 0;
 }
 
 .jira-key-cell:hover .jira-key-copy,
@@ -2008,6 +2012,26 @@ button.linkish:disabled {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
+.gh-pr-dimmed {
+  opacity: 0.55;
+}
+
+.gh-pr-dimmed:hover {
+  opacity: 0.78;
+}
+
+.gh-badge-triage {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--muted) 28%, var(--line));
+}
+
 .gh-pr-row-inner {
   display: flex;
   gap: 0;
@@ -2041,13 +2065,23 @@ button.linkish:disabled {
 
 .gh-pr-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
   margin-top: 2px;
 }
 
-.gh-pr-open {
+.gh-pr-open,
+.gh-pr-triage {
   font-size: 12px;
   padding: 2px 8px;
+}
+
+.gh-pr-triage-active {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  border-color: color-mix(in srgb, var(--muted) 40%, var(--line));
 }
 
 .gh-pr-note-strip {

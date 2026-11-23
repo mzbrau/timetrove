@@ -694,13 +694,14 @@ fn seed_copilot(db: &Db, rng: &mut Rng, now: DateTime<Utc>) -> Result<(), String
 }
 
 fn seed_github(db: &Db, now: DateTime<Utc>) -> Result<(), String> {
-    let pr = |number: i32, title: &str, repo: &str, days: i64, check: &str, decision: &str, comments: u32, reviews: &str, needs: bool| {
+    let pr = |number: i32, title: &str, repo: &str, days: i64, check: &str, decision: &str, comments: u32, reviews: &str, needs: bool, author: &str| {
         GithubPrSummary {
             number,
             title: title.into(),
             url: format!("https://github.com/{repo}/pull/{number}"),
             repo_full_name: repo.into(),
             created_at: (now - Duration::hours(days * 24 + 3)).to_rfc3339(),
+            author_login: author.into(),
             check_status: check.into(),
             review_decision: decision.into(),
             unresolved_comment_count: comments,
@@ -713,15 +714,15 @@ fn seed_github(db: &Db, now: DateTime<Utc>) -> Result<(), String> {
         }
     };
     let authored = vec![
-        pr(1482, "Data export: stream CSV rows instead of buffering", "acme/exports", 1, "SUCCESS", "APPROVED", 0, "2 approvals", false),
-        pr(1479, "Data export: Parquet writer behind feature flag", "acme/exports", 3, "PENDING", "REVIEW_REQUIRED", 2, "1 comment", false),
-        pr(912, "Onboarding: guided setup checklist component", "acme/web", 2, "FAILURE", "CHANGES_REQUESTED", 4, "Changes requested by priya", false),
-        pr(388, "CI: enforce Lighthouse performance budget", "acme/platform", 5, "SUCCESS", "REVIEW_REQUIRED", 0, "Awaiting review", false),
+        pr(1482, "Data export: stream CSV rows instead of buffering", "acme/exports", 1, "SUCCESS", "APPROVED", 0, "2 approvals", false, GITHUB_USER),
+        pr(1479, "Data export: Parquet writer behind feature flag", "acme/exports", 3, "PENDING", "REVIEW_REQUIRED", 2, "1 comment", false, GITHUB_USER),
+        pr(912, "Onboarding: guided setup checklist component", "acme/web", 2, "FAILURE", "CHANGES_REQUESTED", 4, "Changes requested by priya", false, GITHUB_USER),
+        pr(388, "CI: enforce Lighthouse performance budget", "acme/platform", 5, "SUCCESS", "REVIEW_REQUIRED", 0, "Awaiting review", false, GITHUB_USER),
     ];
     let reviews = vec![
-        pr(2210, "Payments: retry webhooks with exponential backoff", "acme/payments-api", 0, "SUCCESS", "REVIEW_REQUIRED", 0, "Review requested", true),
-        pr(915, "Checkout: lazy-load address autocomplete", "acme/web", 1, "SUCCESS", "REVIEW_REQUIRED", 1, "1 approval", true),
-        pr(1475, "Exports: S3 lifecycle rules for expired files", "acme/exports", 2, "PENDING", "REVIEW_REQUIRED", 0, "Review requested", true),
+        pr(2210, "Payments: retry webhooks with exponential backoff", "acme/payments-api", 0, "SUCCESS", "REVIEW_REQUIRED", 0, "Review requested", true, "sam-chen"),
+        pr(915, "Checkout: lazy-load address autocomplete", "acme/web", 1, "SUCCESS", "REVIEW_REQUIRED", 1, "1 approval", true, "priya-nair"),
+        pr(1475, "Exports: S3 lifecycle rules for expired files", "acme/exports", 2, "PENDING", "REVIEW_REQUIRED", 0, "Review requested", true, "jordan-lee"),
     ];
     let messages = [
         ("acme/exports", "Stream CSV rows through a bounded channel"),
@@ -799,6 +800,8 @@ fn write_jira_fixture(db_path: &Path, specs: &[Spec], booked_ms: &HashMap<usize,
                 priority_rank: Some(rank),
                 estimate_seconds: Some(est * 3600),
                 total_spent_seconds: Some(booked_s * 115 / 100),
+                created_at: String::new(),
+                updated_at: String::new(),
                 comment_total: 0,
                 latest_comment_id: String::new(),
             })
@@ -820,6 +823,8 @@ fn write_jira_fixture(db_path: &Path, specs: &[Spec], booked_ms: &HashMap<usize,
             priority_rank: Some(rank),
             estimate_seconds: est.map(|h: i64| h * 3600),
             total_spent_seconds: spent,
+            created_at: String::new(),
+            updated_at: String::new(),
             comment_total: 0,
             latest_comment_id: String::new(),
         });

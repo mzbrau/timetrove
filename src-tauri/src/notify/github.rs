@@ -64,7 +64,7 @@ fn commit_delta_label(delta: i64) -> String {
     }
 }
 
-fn snap_from_pr(pr: &GithubPrSummary) -> PrSnap {
+pub fn snap_from_pr(pr: &GithubPrSummary) -> PrSnap {
     PrSnap {
         check_status: pr.check_status.clone(),
         review_decision: pr.review_decision.clone(),
@@ -76,6 +76,100 @@ fn snap_from_pr(pr: &GithubPrSummary) -> PrSnap {
         label: pr_identity(pr),
         url: pr.url.clone(),
     }
+}
+
+/// True when `cur` differs from `old` in a notify-worthy way (same rules as `diff_github`
+/// for an existing PR). Used to auto-clear local Handled triage.
+pub fn pr_activity_changed(old: &PrSnap, cur: &PrSnap) -> bool {
+    if old.check_status != cur.check_status {
+        return true;
+    }
+    if old.review_decision != cur.review_decision {
+        return true;
+    }
+    if old.reviews_fingerprint != cur.reviews_fingerprint && !cur.reviews_fingerprint.is_empty()
+    {
+        return true;
+    }
+    if !old.needs_my_review && cur.needs_my_review {
+        return true;
+    }
+    let had_head_meta = !old.head_oid.is_empty() || old.commit_count > 0;
+    if had_head_meta {
+        if cur.commit_count != old.commit_count {
+            return true;
+        }
+        if !cur.head_oid.is_empty()
+            && !old.head_oid.is_empty()
+            && old.head_oid != cur.head_oid
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Merge authored + review list entries for the same repo/number (prefer richer notify fields).
+pub fn find_pr_in_digest(
+    digest: &GithubActivityDigest,
+    repo_full_name: &str,
+    pr_number: i32,
+) -> Option<GithubPrSummary> {
+    let mut found: Option<GithubPrSummary> = None;
+    for pr in digest.authored_prs.iter().chain(digest.review_prs.iter()) {
+        if pr.repo_full_name != repo_full_name || pr.number != pr_number {
+            continue;
+        }
+        match &mut found {
+            None => found = Some(pr.clone()),
+            Some(existing) => {
+                if pr.needs_my_review {
+                    existing.needs_my_review = true;
+                }
+                if !pr.reviews_fingerprint.is_empty() {
+                    existing.reviews_fingerprint = pr.reviews_fingerprint.clone();
+                }
+                if !pr.reviews_summary.is_empty() {
+                    existing.reviews_summary = pr.reviews_summary.clone();
+                }
+                if !pr.check_status.is_empty() {
+                    existing.check_status = pr.check_status.clone();
+                }
+                if !pr.review_decision.is_empty() {
+                    existing.review_decision = pr.review_decision.clone();
+                }
+                if !pr.head_oid.is_empty() {
+                    existing.head_oid = pr.head_oid.clone();
+                }
+                if pr.commit_count > 0 {
+                    existing.commit_count = pr.commit_count;
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Clear Handled triage rows when the matching open PR has notify-style activity.
+/// Complete rows are never auto-cleared.
+pub fn reconcile_handled_triage(db: &Db, digest: &GithubActivityDigest) -> Result<(), String> {
+    let rows = db.list_github_pr_triage()?;
+    for row in rows {
+        if row.status != "handled" {
+            continue;
+        }
+        let Some(pr) = find_pr_in_digest(digest, &row.repo_full_name, row.pr_number) else {
+            continue;
+        };
+        let Ok(old) = serde_json::from_str::<PrSnap>(&row.activity_snapshot) else {
+            continue;
+        };
+        let cur = snap_from_pr(&pr);
+        if pr_activity_changed(&old, &cur) {
+            db.clear_github_pr_triage(&row.repo_full_name, row.pr_number)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn snapshot_from_digest(digest: &GithubActivityDigest) -> GithubNotifySnapshot {
@@ -431,5 +525,78 @@ mod tests {
                 && c.title != "PR head updated"),
             "expected silent baseline fill, got {cats:?}"
         );
+    }
+
+    #[test]
+    fn pr_activity_changed_matches_notify_signals() {
+        let old = pr("u1", "SUCCESS", "REVIEW_REQUIRED", "id-a", false);
+        let mut cur = old.clone();
+        assert!(!pr_activity_changed(&old, &cur));
+        cur.reviews_summary = "different text only".into();
+        assert!(
+            !pr_activity_changed(&old, &cur),
+            "summary-only change is not notify-worthy"
+        );
+        cur.check_status = "FAILURE".into();
+        assert!(pr_activity_changed(&old, &cur));
+    }
+
+    #[test]
+    fn reconcile_clears_handled_not_complete() {
+        let (_dir, db) = crate::test_support::test_db();
+
+        let mut summary = GithubPrSummary {
+            number: 7,
+            title: "Fix".into(),
+            url: "https://github.com/acme/app/pull/7".into(),
+            repo_full_name: "acme/app".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            author_login: "ada".into(),
+            check_status: "SUCCESS".into(),
+            review_decision: "REVIEW_REQUIRED".into(),
+            unresolved_comment_count: 0,
+            reviews_summary: "No reviews".into(),
+            needs_my_review: true,
+            head_oid: "abc".into(),
+            commit_count: 3,
+            requested_reviewer_logins: vec![],
+            reviews_fingerprint: "r1".into(),
+        };
+        let snap = snap_from_pr(&summary);
+        let snap_json = serde_json::to_string(&snap).unwrap();
+        db.set_github_pr_triage("acme/app", 7, "handled", &snap_json)
+            .unwrap();
+        db.set_github_pr_triage("acme/app", 8, "complete", "")
+            .unwrap();
+
+        // No activity change → handled stays.
+        let digest = GithubActivityDigest {
+            authored_prs: vec![],
+            review_prs: vec![summary.clone()],
+            recent_commits: vec![],
+            username: "me".into(),
+            fetched_at: None,
+            last_synced_at: None,
+            last_error: None,
+        };
+        reconcile_handled_triage(&db, &digest).unwrap();
+        assert_eq!(db.list_github_pr_triage().unwrap().len(), 2);
+
+        // Notify-style change → handled cleared; complete stays.
+        summary.check_status = "FAILURE".into();
+        let digest = GithubActivityDigest {
+            authored_prs: vec![],
+            review_prs: vec![summary],
+            recent_commits: vec![],
+            username: "me".into(),
+            fetched_at: None,
+            last_synced_at: None,
+            last_error: None,
+        };
+        reconcile_handled_triage(&db, &digest).unwrap();
+        let rows = db.list_github_pr_triage().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].pr_number, 8);
+        assert_eq!(rows[0].status, "complete");
     }
 }

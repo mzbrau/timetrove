@@ -41,6 +41,12 @@ function fmtDate(iso: string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
+function fmtDateShort(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
+}
+
 function fmtHoursFromSeconds(s: number | null | undefined): string {
   if (s == null || !Number.isFinite(s)) return "—";
   return formatHm(s * 1000);
@@ -67,6 +73,8 @@ const SORTABLE_COLUMNS: { key: JiraSortKey; label: string }[] = [
   { key: "summary", label: "Summary" },
   { key: "status", label: "Status" },
   { key: "priority", label: "Priority" },
+  { key: "created", label: "Created" },
+  { key: "updated", label: "Updated" },
   { key: "estimate", label: "Estimate" },
   { key: "timetrove", label: "TimeTrove" },
   { key: "jiraSpent", label: "Jira spent" },
@@ -340,13 +348,41 @@ export function JiraPanel({ active }: Props) {
                                   void navigator.clipboard.writeText(issue.issueKey);
                                 }}
                               >
-                                Copy
+                                <svg
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 16 16"
+                                  fill="none"
+                                  aria-hidden
+                                >
+                                  <rect
+                                    x="5.5"
+                                    y="5.5"
+                                    width="8"
+                                    height="8"
+                                    rx="1.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.5"
+                                  />
+                                  <path
+                                    d="M3.5 10.5V3.5A1 1 0 0 1 4.5 2.5h7"
+                                    stroke="currentColor"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                  />
+                                </svg>
                               </button>
                             </div>
                           </td>
                           <td>{issue.summary || "—"}</td>
                           <td>{issue.status || "—"}</td>
                           <td>{issue.priority || "—"}</td>
+                          <td className="mono" title={fmtDate(issue.createdAt)}>
+                            {fmtDateShort(issue.createdAt)}
+                          </td>
+                          <td className="mono" title={fmtDate(issue.updatedAt)}>
+                            {fmtDateShort(issue.updatedAt)}
+                          </td>
                           <td className="mono">
                             {fmtHoursFromSeconds(issue.estimateSeconds)}
                           </td>
